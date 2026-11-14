@@ -2,9 +2,12 @@
 
 ## Processes managed by PM2
 
-The reviewed ecosystem contains exactly seven registrations. The four retired
-source-specific Research and Entity registrations must not remain alongside
-the two shared Feed V3 owners.
+The tracked `ecosystem.config.cjs` holds two groups: apps that are always
+registered, and the gated V4 apps, which join the process list only when the
+invoking shell sets `MYBOON_V4_RUNTIME_ENABLED=1` (without that flag they are
+absent from the list).
+
+### Always-registered apps (the ungated `apps` list)
 
 | Name | Package | Schedule |
 |------|---------|---------|
@@ -12,9 +15,35 @@ the two shared Feed V3 owners.
 | `myboon-polymarket-data-engineer` | `packages/collectors` | Polymarket markets Data Engineer |
 | `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
 | `myboon-feed-v3-research` | `packages/collectors` | Shared News + Polymarket Research worker |
-| `myboon-feed-v3-entity-manager` | `packages/collectors` | Shared ResearchPacket to Entity Memory worker |
 | `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
 | `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
+| `myboon-feed-v3-entity-manager` | `packages/collectors` | no longer a live worker (still declared in the tracked file) |
+
+`myboon-editor-draft` and `myboon-publisher` remain registered, each with
+`autorestart: true`, even if they are currently stopped. Retiring them is a
+separate issue.
+
+`myboon-feed-v3-entity-manager` is no longer a live process, but its app block
+is still declared in the tracked ecosystem file, so a plain `pm2 start` or
+`pm2 restart` of `ecosystem.config.cjs` would revive it — together with the
+stopped publisher and editor-draft registrations. That is why every PM2
+command in this guide uses `--only`: never start or restart the ecosystem file
+without `--only`.
+
+### Gated V4 apps (registered only when `MYBOON_V4_RUNTIME_ENABLED=1`)
+
+Each V4 app runs one cycle and exits; PM2 starts it again at the next cron
+tick (`cron_restart`, `autorestart` off). Every gate flag defaults to false in
+the tracked file, so a plain start/reload never registers or enables them.
+
+| Name | Package | Schedule |
+|------|---------|---------|
+| `myboon-scout` | `packages/scout-news` | `*/15 * * * *` |
+| `myboon-analyst` | `packages/analyst` | `*/30 * * * *` |
+| `myboon-entity-manager` | `packages/entity-manager` | `0,45 * * * *` |
+| `myboon-entity-manager-retry` | `packages/entity-manager` | `15 20 * * *` |
+| `myboon-web-reader` | `packages/web-reader` | `*/15 * * * *` |
+| `myboon-latest-updates` | `packages/latest-updates` | `25,55 * * * *` (added in #634; gate off, visibility `dark`) |
 
 The orphan sweeper, entity-catalogue maintenance and classification-shadow services were retired on 6 October 2026. Their dedicated application code and commands are removed. Historical migrations and audit records remain intact. Required live Jev decisions and per-call Hermes process cleanup remain enabled.
 
@@ -88,6 +117,42 @@ pm2 save
 ENTITY_MANAGER_ENABLED=true MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env && pm2 save
 ENTITY_MANAGER_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env && pm2 save
 ```
+
+---
+
+## Latest updates (myboon-latest-updates)
+
+`myboon-latest-updates` (`packages/latest-updates`) runs one cycle and exits;
+PM2 starts it again at the :25 and :55 ticks (`25,55 * * * *`, `autorestart`
+off). Like the other gated V4 apps, it joins the process list only when
+`MYBOON_V4_RUNTIME_ENABLED=1`; a plain `pm2 start/reload` of the ecosystem file
+never registers it. Secrets (`LATEST_UPDATES_DATABASE_URL`, `OLLAMA_API_KEY`)
+come only from the sourced `.env`; they are never set in the ecosystem file.
+Config check: `pnpm exec tsx scripts/check-ecosystem.ts`.
+
+Visibility stays `dark`, the default in the tracked file. Going live
+(`LATEST_UPDATES_VISIBILITY=live`) is a separate later step and is not done
+here.
+
+```bash
+# Go-live (register). Back up the process list BEFORE anything else:
+cp ~/.pm2/dump.pm2 ~/.pm2/dump.pm2.bak-$(date +%Y%m%d%H%M)
+
+# From the repo root as the PM2 user. Source the .env silently —
+# never echo it; secrets must stay out of history and the ecosystem file:
+set -a; . ./.env; set +a
+MYBOON_V4_RUNTIME_ENABLED=1 pm2 start ecosystem.config.cjs --only myboon-latest-updates
+pm2 save
+
+# Switch on / off (LATEST_UPDATES_ENABLED defaults to false; set in the shell,
+# never by editing the tracked ecosystem file):
+LATEST_UPDATES_ENABLED=true MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-latest-updates --update-env && pm2 save
+LATEST_UPDATES_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.config.cjs --only myboon-latest-updates --update-env && pm2 save
+```
+
+A plain `pm2 start` or `pm2 restart` of `ecosystem.config.cjs` without
+`--only` would also revive the legacy registrations (`myboon-feed-v3-entity-manager`,
+and the stopped publisher and editor-draft); always use `--only`.
 
 ---
 

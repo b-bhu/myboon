@@ -3,11 +3,12 @@
  *
  * Verifies, with MYBOON_V4_RUNTIME_ENABLED=1 forced on:
  *  - the gated V4 apps (myboon-scout, myboon-analyst, myboon-entity-manager,
- *    myboon-web-reader) are registered, with their cwd and entry points
- *    present on disk;
+ *    myboon-entity-manager-retry, myboon-web-reader, myboon-latest-updates)
+ *    are registered, with their cwd and entry points present on disk;
  *  - the myboon-analyst env block covers every non-secret config key that
  *    packages/analyst/src/config.ts reads optionally, plus ANALYST_ENABLED;
  *  - the myboon-entity-manager env block declares ENTITY_MANAGER_ENABLED (#593).
+ *  - the myboon-latest-updates env block declares LATEST_UPDATES_ENABLED (#634).
  *
  * Run:  pnpm exec tsx scripts/check-ecosystem.ts
  *
@@ -25,9 +26,17 @@ type EcosystemApp = {
   env?: Record<string, string | undefined>;
 };
 
-const V4_NAMES = ['myboon-scout', 'myboon-analyst', 'myboon-entity-manager', 'myboon-web-reader'];
+const V4_NAMES = [
+  'myboon-scout',
+  'myboon-analyst',
+  'myboon-entity-manager',
+  'myboon-entity-manager-retry',
+  'myboon-web-reader',
+  'myboon-latest-updates',
+];
 const ANALYST_NAME = 'myboon-analyst';
 const ENTITY_MANAGER_NAME = 'myboon-entity-manager';
+const LATEST_UPDATES_NAME = 'myboon-latest-updates';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
 const ANALYST_CONFIG_PATH = path.join(here(), '..', 'packages', 'analyst', 'src', 'config.ts');
@@ -102,6 +111,16 @@ function main(): void {
     const entityManagerEnv = entityManagerApp.env ?? {};
     if (entityManagerEnv['ENTITY_MANAGER_ENABLED'] === undefined) {
       failures.push(`${ENTITY_MANAGER_NAME} env: missing ENTITY_MANAGER_ENABLED`);
+    }
+  }
+
+  // #634 latest updates: the gate flag must be declared in the tracked env
+  // (same style as the ENTITY_MANAGER_ENABLED check). Secrets stay out of this file.
+  const latestUpdatesApp = apps.find((candidate) => candidate.name === LATEST_UPDATES_NAME);
+  if (latestUpdatesApp) {
+    const latestUpdatesEnv = latestUpdatesApp.env ?? {};
+    if (latestUpdatesEnv['LATEST_UPDATES_ENABLED'] === undefined) {
+      failures.push(`${LATEST_UPDATES_NAME} env: missing LATEST_UPDATES_ENABLED`);
     }
   }
 
