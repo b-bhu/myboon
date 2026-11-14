@@ -13,6 +13,7 @@ import { createInternalAtlasBrowseRoutes } from '../internal/atlas-browse.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createEntityKnowledgeRoutes } from '../entity-knowledge.js'
+import { createLatestUpdateRoutes } from '../latest-updates.js'
 import { createNarrativeRoutes } from '../narratives.js'
 import { pacificaRoutes } from '../pacifica.js'
 import { phoenixRoutes } from '../phoenix.js'
@@ -124,6 +125,10 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
     memoryReader: entityKnowledgeReader,
     source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
+  }))
+  app.route('/latest-updates', createLatestUpdateRoutes({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
   }))
   app.route('/narratives', createNarrativeRoutes({
     supabaseUrl: config.supabaseUrl,
