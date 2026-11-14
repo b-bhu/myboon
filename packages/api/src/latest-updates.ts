@@ -46,7 +46,8 @@ interface UpdateRow {
   visibility: unknown
 }
 
-interface EntityRow { id: unknown, slug: unknown, name: unknown, type: unknown }
+interface EntityRow { id: unknown, slug: unknown, name: unknown, type: unknown, status: unknown }
+interface EntityInfo { slug: string, name: string, type: string }
 interface UpdateItemRow { latest_update_id: unknown, entity_item_id: unknown }
 interface ItemRow { id: unknown, title: unknown, occurred_at: unknown, signal_id: unknown }
 interface ItemSignalRow { item_id: unknown, signal_id: unknown }
@@ -97,9 +98,13 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
     return pages.flat()
   }
 
-  /** Newest live row per entity, newest first, at most `limit`. */
-  async function newestLivePerEntity(limit: number): Promise<ValidUpdate[]> {
+  /**
+   * Newest live row per ACTIVE entity, newest first, at most `limit`. Inactive entities are hidden
+   * here, before the limit, so they never use up a slot. Returns the active entities it read.
+   */
+  async function newestLivePerActiveEntity(limit: number): Promise<{ picked: ValidUpdate[], entities: Map<string, EntityInfo> }> {
     const picked: ValidUpdate[] = []
+    const entities = new Map<string, EntityInfo>()
     const seen = new Set<string>()
     for (let page = 0; page < UPDATE_MAX_PAGES && picked.length < limit; page += 1) {
       const rows = await readRows<UpdateRow>('latest_updates', new URLSearchParams({
@@ -109,37 +114,45 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
         limit: String(UPDATE_PAGE_SIZE),
         offset: String(page * UPDATE_PAGE_SIZE),
       }))
+      const candidates: ValidUpdate[] = []
       for (const row of rows) {
         // Defence in depth: the filter above already excludes dark rows.
         if (row.visibility !== 'live') continue
         const update = validUpdate(row)
         if (!update || seen.has(update.entityId)) continue
         seen.add(update.entityId)
-        picked.push(update)
-        if (picked.length >= limit) break
+        candidates.push(update)
+      }
+      if (candidates.length > 0) {
+        const entityRows = await readIn<EntityRow>('entities', 'id', candidates.map((u) => u.entityId), UUID_CHUNK, {
+          select: 'id,slug,name,type,status',
+          status: 'eq.active',
+        })
+        for (const row of entityRows) {
+          // Defence in depth: the filter above already excludes inactive entities.
+          if (row.status !== 'active') continue
+          if (isUuid(row.id) && nonEmpty(row.slug) && nonEmpty(row.name) && nonEmpty(row.type)) {
+            entities.set(row.id, { slug: row.slug, name: row.name, type: row.type })
+          }
+        }
+        for (const update of candidates) {
+          if (picked.length >= limit) break
+          if (entities.has(update.entityId)) picked.push(update)
+        }
       }
       if (rows.length < UPDATE_PAGE_SIZE) break
     }
-    return picked
+    return { picked, entities }
   }
 
   async function load(limit: number): Promise<LatestUpdatesResponse> {
-    const updates = await newestLivePerEntity(limit)
+    const { picked: updates, entities } = await newestLivePerActiveEntity(limit)
     if (updates.length === 0) return { updates: [] }
 
-    const [entityRows, updateItemRows] = await Promise.all([
-      readIn<EntityRow>('entities', 'id', updates.map((u) => u.entityId), UUID_CHUNK, { select: 'id,slug,name,type' }),
-      readIn<UpdateItemRow>('latest_update_items', 'latest_update_id', updates.map((u) => u.id), UUID_CHUNK, {
-        select: 'latest_update_id,entity_item_id',
-        limit: String(ITEMS_ROW_LIMIT),
-      }),
-    ])
-    const entities = new Map<string, { slug: string, name: string, type: string }>()
-    for (const row of entityRows) {
-      if (isUuid(row.id) && nonEmpty(row.slug) && nonEmpty(row.name) && nonEmpty(row.type)) {
-        entities.set(row.id, { slug: row.slug, name: row.name, type: row.type })
-      }
-    }
+    const updateItemRows = await readIn<UpdateItemRow>('latest_update_items', 'latest_update_id', updates.map((u) => u.id), UUID_CHUNK, {
+      select: 'latest_update_id,entity_item_id',
+      limit: String(ITEMS_ROW_LIMIT),
+    })
     const itemIdsByUpdate = new Map<string, string[]>()
     for (const row of updateItemRows) {
       if (!isUuid(row.latest_update_id) || !isUuid(row.entity_item_id)) continue
