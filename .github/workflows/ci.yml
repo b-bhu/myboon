@@ -103,6 +103,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec tsx scripts/check-ecosystem.ts
       - run: pnpm --filter @myboon/shared test
+      - run: pnpm --filter @myboon/shared typecheck
 
   tx-parser:
     needs: detect

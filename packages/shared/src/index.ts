@@ -35,3 +35,9 @@ export type {
   MeteoraPosition,
   MeteoraTransactionBundle,
 } from './meteora/index.js'
+
+export type {
+  LatestUpdate,
+  LatestUpdateSource,
+  LatestUpdatesResponse,
+} from './latest-updates/index.js'
