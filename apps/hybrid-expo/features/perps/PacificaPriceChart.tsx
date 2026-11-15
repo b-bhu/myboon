@@ -8,8 +8,15 @@
  * timeframeIndex/onTimeframeIndexChange.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { MarketChart, type MarketChartSelection, type MarketCandle, type MarketChartStatus } from '@/features/charts';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  buildRsiPaneData,
+  MarketChart,
+  type MarketChartSelection,
+  type MarketCandle,
+  type MarketChartStatus,
+  type RsiPaneData,
+} from '@/features/charts';
 import { fetchCandles, formatPrice } from '@/features/perps/perps.public-api';
 import type { CandleInterval } from '@/features/perps/perps.public-api';
 
@@ -35,6 +42,8 @@ interface PacificaPriceChartProps {
   timeframeIndex?: number;
   onTimeframeIndexChange?: (index: number) => void;
   onScrub?: (price: number | null, time: number | null) => void;
+  /** Reports the RSI pane inputs computed from this chart's candles (#656). */
+  onRsiData?: (data: RsiPaneData) => void;
 }
 
 export function PacificaPriceChart({
@@ -42,6 +51,7 @@ export function PacificaPriceChart({
   timeframeIndex: controlledTimeframeIndex,
   onTimeframeIndexChange,
   onScrub,
+  onRsiData,
 }: PacificaPriceChartProps) {
   const [internalTimeframeIndex] = useState(
     DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX,
@@ -104,6 +114,17 @@ export function PacificaPriceChart({
       selection.candle?.timeMs ?? null,
     );
   }, []);
+
+  const rsiData = useMemo(
+    () => buildRsiPaneData(candles, status.kind),
+    [candles, status.kind],
+  );
+  const rsiDataCallbackRef = useRef(onRsiData);
+  rsiDataCallbackRef.current = onRsiData;
+
+  useEffect(() => {
+    rsiDataCallbackRef.current?.(rsiData);
+  }, [rsiData]);
 
   const handleRetry = useCallback(() => {
     setReloadSignal((value) => value + 1);

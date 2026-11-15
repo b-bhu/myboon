@@ -89,10 +89,6 @@ export function RangeNewsStrip({ vm }: { vm: MarketDetailRangeVM }) {
   );
 }
 
-export function RsiSlot() {
-  return <View style={styles.rsiSlot} />;
-}
-
 export function NewsRailSection({ stories }: { stories: readonly NewsStoryCard[] }) {
   if (stories.length === 0) return null;
   return (
@@ -356,10 +352,6 @@ const styles = StyleSheet.create({
   },
   newsToggleTextOff: {
     color: semantic.text.faint,
-  },
-  rsiSlot: {
-    // Reserved vertical room for the RSI pane (#656) — nothing renders here yet.
-    height: 112,
   },
   newsRail: {
     paddingHorizontal: tokens.spacing.md,

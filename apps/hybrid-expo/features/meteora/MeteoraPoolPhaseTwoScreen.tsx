@@ -112,6 +112,7 @@ import { walletBalanceClient } from '@/features/wallet/wallet.balance-client';
 import { notifyWalletDataChanged, subscribeWalletDataChanged } from '@/features/wallet/wallet.refresh';
 import { MarketScreen } from '@/features/markets/MarketScreen';
 import type { MarketDetailViewModel } from '@/features/markets/detail-view-model';
+import type { RsiPaneData } from '@/features/charts';
 
 const PREVIEW_DEBOUNCE_MS = 450;
 
@@ -254,6 +255,9 @@ export function MeteoraPoolPhaseTwoScreen({
   const [operationExplorerUrl, setOperationExplorerUrl] = useState<string | null>(null);
   const [recoveryNonce, setRecoveryNonce] = useState(0);
   const [priceInverted, setPriceInverted] = useState(false);
+  // RSI pane inputs reported by MeteoraPriceChart once its chart is expanded
+  // and candles are loaded; null until then hides the pane (#656).
+  const [rsiData, setRsiData] = useState<RsiPaneData | null>(null);
   const [priceInputText, setPriceInputText] = useState<Partial<Record<'min' | 'max', string>>>({});
   const [clock, setClock] = useState(Date.now());
   const [walletBalanceNonce, setWalletBalanceNonce] = useState(0);
@@ -1453,6 +1457,7 @@ export function MeteoraPoolPhaseTwoScreen({
         inverted={priceInverted}
         defaultMode="line"
         height={208}
+        onRsiData={setRsiData}
       />
     </View>
   ) : (
@@ -1862,6 +1867,7 @@ export function MeteoraPoolPhaseTwoScreen({
     },
     notice,
     chartBody,
+    rsi: rsiData ?? undefined,
     newsStories: [] as readonly never[],
     positionsTitle: 'Your position',
     positionRows: [] as readonly never[],

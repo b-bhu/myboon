@@ -1,4 +1,13 @@
 export { MarketChart } from '@/features/charts/market-chart';
+export {
+  buildRsiPaneData,
+  computeRsiValues,
+  RSI_MIN_CANDLES,
+  RSI_PERIOD,
+  type RsiPaneData,
+  type RsiPoint,
+} from '@/features/charts/market-chart.rsi';
+export { RsiPane, useRsiPaneOpen } from '@/features/charts/market-chart.rsi-pane';
 export { normalizeMarketCandles } from '@/features/charts/market-chart.normalization';
 export {
   chartStoryMarkersToAnnotations,
