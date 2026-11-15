@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet · per-token Spot entry — design proof</title>
+<style>
+  :root{
+    --bg:#021B26; --card:#03232F; --edge:#185A70; --edge2:#0F3F4F;
+    --gold:#FFD166; --ink:#F5FAFC; --dim:#9CB8C2; --up:#5AE09B; --dn:#FF8FA3;
+    --mono:"SFMono-Regular",ui-monospace,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#010E14;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  .wrap{display:flex;gap:28px;padding:28px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:0 0 auto}
+  .cap{font-size:12px;color:var(--dim);margin:0 0 10px;max-width:390px;line-height:1.45}
+  .cap b{color:var(--ink)}
+  .phone{width:390px;height:844px;background:var(--bg);border-radius:28px;overflow:hidden;
+    position:relative;border:1px solid var(--edge2);box-shadow:0 20px 60px #000A}
+  .scroll{position:absolute;inset:0;overflow-y:auto}
+
+  /* ---- Home wallet section (context) ---- */
+  .sect{padding:18px 16px 8px}
+  .shead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+  .lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  .lnk{font-size:12px;color:var(--gold);font-weight:600}
+  .total{font:700 26px/1.1 var(--mono);letter-spacing:-.02em}
+  .totmeta{font-size:11px;color:var(--dim);margin-top:4px}
+
+  /* ---- #238 compact account row ---- */
+  .row{display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+    background:var(--card);border:1px solid var(--edge2);border-radius:12px;
+    padding:12px;margin:0 0 8px;color:inherit;font:inherit;cursor:pointer;
+    min-height:64px}
+  .row:active{background:#04303F}
+  .row .mark{flex:0 0 36px;height:36px;border-radius:10px;display:grid;place-items:center;
+    font:700 11px/1 var(--mono);letter-spacing:-.02em}
+  .sol{background:linear-gradient(135deg,#9945FF,#14F195);color:#021B26}
+  .met{background:#0B3A4A;color:#7FD8FF;border:1px solid #1B5E77}
+  .phx{background:#0B3A4A;color:#C9A7FF;border:1px solid #4A3376}
+  .pac{background:#0B3A4A;color:#8FE3C0;border:1px solid #1F6A55}
+  .mid{flex:1;min-width:0}
+  .nmrow{display:flex;align-items:center;gap:6px}
+  .nm{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .sub{font-size:11px;color:var(--dim);margin-top:3px;display:flex;align-items:center;gap:6px}
+  .val{font:700 17px/1 var(--mono);text-align:right;letter-spacing:-.02em}
+  .val small{display:block;font:600 10px/1 var(--mono);color:var(--dim);margin-top:5px;letter-spacing:0}
+  .chev{flex:0 0 16px;color:#5E8494;font-size:16px;text-align:center}
+
+  /* overlapping token chips — decorative, unchanged */
+  .chips{display:flex;align-items:center}
+  .chip{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--card);
+    margin-left:-7px;display:grid;place-items:center;font:700 8px/1 var(--mono);color:#021B26}
+  .chip:first-child{margin-left:0}
+  .chip.more{background:#0B3A4A;color:var(--dim);border-color:#1B5E77;font-size:9px}
+  .pill{font:600 10px/1 var(--mono);padding:4px 6px;border-radius:999;
+    border:1px solid #1B5E77;color:#BFE6F2;background:#062B38}
+  .pill i{font-style:normal;margin-left:4px}
+  .ring-o{border-color:var(--gold);color:var(--gold);background:#2A2410}
+
+  /* ---- sheet ---- */
+  .scrim{position:absolute;inset:0;background:#01131BDD;opacity:0;pointer-events:none;
+    transition:opacity .18s}
+  .sheet{position:absolute;left:0;right:0;bottom:0;height:78%;background:var(--bg);
+    border:1px solid var(--edge);border-bottom:0;border-radius:20px 20px 0 0;
+    transform:translateY(101%);transition:transform .22s ease;display:flex;flex-direction:column}
+  .open .scrim{opacity:1;pointer-events:auto}
+  .open .sheet{transform:translateY(0)}
+  .grab{width:38px;height:4px;border-radius:999;background:#3A6474;margin:8px auto 0}
+  .shead2{padding:10px 16px 4px}
+  .stitle{font-size:18px;font-weight:700;letter-spacing:-.02em}
+  .smeta{font-size:11px;color:var(--dim);margin-top:3px}
+  .list{flex:1;overflow-y:auto;padding:6px 12px 8px}
+  .trow{display:flex;align-items:center;gap:12px;padding:0 4px;height:60px;
+    border-bottom:1px solid var(--edge2)}
+  .trow:last-child{border-bottom:0}
+  .tmark{flex:0 0 32px;height:32px;border-radius:50%;display:grid;place-items:center;
+    font:700 10px/1 var(--mono);color:#021B26}
+  .tmid{flex:1;min-width:0}
+  .tname{font-size:14px;font-weight:600}
+  .tamt{font:600 11px/1 var(--mono);color:var(--dim);margin-top:3px}
+  .tval{font:700 13px/1 var(--mono);text-align:right;margin-right:2px}
+  .trade{flex:0 0 auto;display:grid;place-items:center;min-width:44px;height:44px;
+    padding:0 10px;border-radius:999px;background:#2A2410;border:1px solid var(--gold);
+    color:var(--gold);font-size:12px;font-weight:700;text-decoration:none}
+  .trade:active{background:#3A310F}
+  .noTrade{flex:0 0 auto;min-width:44px;text-align:right;font:600 9px/1.2 var(--mono);
+    color:#5E8494;letter-spacing:.04em}
+  .sfoot{padding:10px 16px 22px;border-top:1px solid var(--edge2);background:#02202B}
+  .btn{display:block;width:100%;height:50px;border-radius:12px;background:var(--gold);
+    color:#021B26;font-size:15px;font-weight:700;border:0;cursor:pointer}
+  .footnote{font-size:10px;color:var(--dim);text-align:center;margin-top:8px}
+
+  /* ---- annotation overlay ---- */
+  .target{outline:1px dashed #FF8FA300;outline-offset:1px}
+  .showtargets .target{outline-color:#FF8FA3}
+  .showtargets .trade{outline-color:#5AE09B;outline-width:1px}
+  .bar2{display:flex;gap:6px;margin:0 0 8px}
+  .bar2 button{font:600 11px/1 -apple-system,sans-serif;color:var(--ink);background:#0B3A4A;
+    border:1px solid var(--edge);border-radius:999px;padding:8px 10px;cursor:pointer}
+  .bar2 button.on{background:var(--gold);color:#021B26;border-color:var(--gold)}
+  .legend{font:600 10px/1.5 var(--mono);color:var(--dim);margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="col">
+    <p class="cap"><b>1 · Home wallet section — resting</b><br>
+      The Spot row is one pressable row (64pt) with the existing chips. Chips stay decorative: they are never individually pressable.</p>
+    <div class="bar2"><button data-act="targets" data-phone="p1" class="ghost">show tap targets</button></div>
+    <div class="phone" id="p1">
+      <div class="scroll">
+        <div class="sect">
+          <div class="shead"><span class="lab">Wallet</span><span class="lnk">See all →</span></div>
+          <div class="total">$4,382.06</div>
+          <div class="totmeta">1 wallet · Solana · updated 12s ago</div>
+        </div>
+        <div class="sect" style="padding-top:4px">
+          <!-- Spot row: the whole row is the target -->
+          <button class="row target" id="spotRow" aria-label="Spot, $1,284.31, 6 tokens. Opens holdings.">
+            <span class="mark sol">SOL</span>
+            <span class="mid">
+              <span class="nmrow"><span class="nm">Spot</span></span>
+              <span class="sub">
+                <span class="chips">
+                  <span class="chip" style="background:#9945FF">S</span>
+                  <span class="chip" style="background:#2775CA">U</span>
+                  <span class="chip" style="background:#F5A623">B</span>
+                  <span class="chip more">+3</span>
+                </span>
+              </span>
+            </span>
+            <span class="val">$1,284.31<small>SPOT</small></span>
+            <span class="chev">›</span>
+          </button>
+
+          <button class="row target">
+            <span class="mark met">M</span>
+            <span class="mid"><span class="nmrow"><span class="nm">Meteora</span></span>
+              <span class="sub"><span class="pill">SOL/USDC<i style="color:#5AE09B">●</i></span><span class="pill ring-o">JUP/SOL<i>●</i></span></span>
+            </span>
+            <span class="val">$2,640.00<small>LP</small></span><span class="chev">›</span>
+          </button>
+
+          <button class="row target">
+            <span class="mark phx">PH</span>
+            <span class="mid"><span class="nmrow"><span class="nm">Phoenix</span></span>
+              <span class="sub"><span class="pill">SOL <i style="color:#5AE09B">▲</i></span><span class="pill">BTC <i style="color:#FF8FA3">▼</i></span></span>
+            </span>
+            <span class="val">$312.75<small>PERPS</small></span><span class="chev">›</span>
+          </button>
+
+          <button class="row target">
+            <span class="mark pac">PA</span>
+            <span class="mid"><span class="nmrow"><span class="nm">Pacifica</span></span>
+              <span class="sub"><span class="pill">ETH <i style="color:#5AE09B">▲</i></span></span>
+            </span>
+            <span class="val">$145.00<small>PERPS</small></span><span class="chev">›</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <p class="legend">tap targets on = dashed boxes mark pressable regions (all ≥64pt tall).</p>
+  </div>
+
+  <div class="col">
+    <p class="cap"><b>2 · Tap the Spot row → Spot holdings sheet</b><br>
+      Full ranked list, one Trade target per eligible token. Venue-level Spot link moves into the sheet footer.</p>
+    <div class="bar2">
+      <button data-act="open" data-phone="p2" class="ghost">open sheet</button>
+      <button data-act="targets" data-phone="p2" class="ghost">tap targets</button>
+      <button data-act="many" data-phone="p2" class="ghost">many-token</button>
+    </div>
+    <div class="phone" id="p2">
+      <div class="scroll">
+        <div class="sect">
+          <div class="shead"><span class="lab">Wallet</span><span class="lnk">See all →</span></div>
+          <div class="total">$4,382.06</div>
+          <div class="totmeta">1 wallet · Solana · updated 12s ago</div>
+        </div>
+        <div class="sect" style="padding-top:4px">
+          <button class="row"><span class="mark sol">SOL</span>
+            <span class="mid"><span class="nmrow"><span class="nm">Spot</span></span>
+              <span class="sub"><span class="chips">
+                <span class="chip" style="background:#9945FF">S</span>
+                <span class="chip" style="background:#2775CA">U</span>
+                <span class="chip" style="background:#F5A623">B</span>
+                <span class="chip more">+3</span></span></span></span>
+            <span class="val">$1,284.31<small>SPOT</small></span><span class="chev">›</span></button>
+        </div>
+      </div>
+      <div class="scrim"></div>
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="Spot holdings">
+        <div class="grab"></div>
+        <div class="shead2">
+          <div class="stitle">Spot</div>
+          <div class="smeta"><span id="cnt">6 tokens</span> · $1,284.31</div>
+        </div>
+        <div class="list" id="tokList"></div>
+        <div class="sfoot">
+          <button class="btn">Open Spot</button>
+          <div class="footnote">Trade targets open Spot filtered to that token</div>
+        </div>
+      </div>
+    </div>
+    <p class="legend" id="measure">measuring…</p>
+  </div>
+</div>
+
+<script>
+const TOKENS = [
+  {s:'SOL', name:'Solana', amt:'4.8210', usd:'$912.40', c:'#9945FF', ok:true},
+  {s:'USDC', name:'USD Coin', amt:'214.06', usd:'$214.06', c:'#2775CA', ok:true},
+  {s:'BONK', name:'Bonk', amt:'812,400', usd:'$96.12', c:'#F5A623', ok:true},
+  {s:'JUP', name:'Jupiter', amt:'128.9', usd:'$48.33', c:'#5AE09B', ok:true},
+  {s:'PYTH', name:'Pyth Network', amt:'96.4', usd:'$13.38', c:'#C9A7FF', ok:true},
+  {s:'xSOL', name:'Wrapped staked SOL (bridge)', amt:'0.0041', usd:'$0.02', c:'#5E8494', ok:false}
+];
+const MANY = TOKENS.concat([
+  {s:'WIF', name:'dogwifhat', amt:'31.2', usd:'$8.10', c:'#FF8FA3', ok:true},
+  {s:'RAY', name:'Raydium', amt:'4.0', usd:'$6.44', c:'#7FD8FF', ok:true},
+  {s:'JTO', name:'Jito', amt:'12.1', usd:'$4.02', c:'#BFE6F2', ok:true}
+]);
+function render(list, count){
+  const el = document.getElementById('tokList');
+  el.innerHTML = list.map(t=>`
+    <div class="trow ${t.ok?'target':''}">
+      <span class="tmark" style="background:${t.c}">${t.s.slice(0,2).toUpperCase()}</span>
+      <span class="tmid">
+        <span class="tname">${t.s}</span>
+        <span class="tamt">${t.amt} · ${t.name}</span>
+      </span>
+      <span class="tval">${t.usd}</span>
+      ${t.ok ? '<a class="trade target" href="#" aria-label="Trade '+t.s+' on Spot">Trade</a>'
+             : '<span class="noTrade">NOT ON<br>SPOT</span>'}
+    </div>`).join('');
+  document.getElementById('cnt').textContent = count + ' tokens';
+}
+render(TOKENS, TOKENS.length);
+
+let many=false;
+document.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click',e=>{
+  const id = b.dataset.phone, p = document.getElementById(id);
+  const act = b.dataset.act;
+  if(act==='targets'){ p.classList.toggle('showtargets'); b.classList.toggle('on'); }
+  if(act==='open'){ p.classList.toggle('open'); b.classList.toggle('on'); }
+  if(act==='many'){
+    many=!many; b.classList.toggle('on', many);
+    const l = many?MANY:TOKENS;
+    render(l, l.length);
+    const more = document.querySelectorAll('.chip.more');
+    more.forEach(m=>m.textContent='+'+(l.length-3));
+    measure();
+  }
+}));
+document.getElementById('spotRow').addEventListener('click',()=>document.getElementById('p2').classList.add('open'));
+document.getElementById('p2').querySelector('.scrim').addEventListener('click',()=>{
+  document.getElementById('p2').classList.remove('open');});
+
+function rects(sel, root){
+  return [...root.querySelectorAll(sel)].map(el=>{
+    const r = el.getBoundingClientRect();
+    return {sel: el.id||el.className.split(' ')[0], w: Math.round(r.width), h: Math.round(r.height)};
+  });
+}
+function measure(){
+  const p1 = document.getElementById('p1'), p2 = document.getElementById('p2');
+  const rows = rects('.row', p1);
+  const trades = [...p2.querySelectorAll('.trade')].map(el=>{
+    const r=el.getBoundingClientRect(); return {w:Math.round(r.width), h:Math.round(r.height)};
+  });
+  const sheetRows = [...p2.querySelectorAll('.trow')].map(el=>Math.round(el.getBoundingClientRect().height));
+  const chips = [...p1.querySelectorAll('.chip')].map(el=>Math.round(el.getBoundingClientRect().width));
+  const out = {
+    accountRows: rows,
+    chipPx: Math.min(...chips),
+    tradeLinks: trades,
+    sheetRowH: sheetRows,
+    minTradeH: Math.min(...trades.map(t=>t.h)),
+    minTradeW: Math.min(...trades.map(t=>t.w)),
+    tokenCount: p2.querySelectorAll('.trow').length
+  };
+  document.getElementById('measure').textContent = JSON.stringify(out);
+  return out;
+}
+window.__measure = measure;
+measure();
+</script>
+</body>
+</html>

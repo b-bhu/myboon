@@ -153,7 +153,7 @@ truth for how the screen looks and behaves, not just what data it shows.
     `SpotTokenBalance` already normalizes and the sources mapper currently
     drops. `topTokens` and `overflowCount` keep their current shape (existing
     consumers in `WalletAccountRow`) but stay derived from `tokens` in the
-    mapper — `slice(0, SPOT_TOP_TOKEN_COUNT)` and `length - 3` — so the chip
+    mapper — `slice(0, SPOT_TOP_TOKEN_COUNT)` and `ranked.length - topTokens.length` — so the chip
     row and the sheet can never disagree. All of this is additive: no new
     fetch (`getWalletBalances` already returns every token), no second source
     of truth, nothing fabricated for display.

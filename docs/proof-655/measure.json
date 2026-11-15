@@ -1,0 +1,32 @@
+{
+  "captured": "2026-11-15",
+  "viewport": { "width": 880, "height": 900, "deviceScaleFactor": 2 },
+  "phoneFrame": { "width": 390, "height": 844 },
+  "resting": {
+    "accountRows": [
+      { "row": "spotRow", "w": 356, "h": 67 },
+      { "row": "protocol", "w": 356, "h": 67 },
+      { "row": "protocol", "w": 356, "h": 67 },
+      { "row": "protocol", "w": 356, "h": 67 }
+    ],
+    "chipPx": 20,
+    "chipsShown": 3,
+    "overflowChip": "+3",
+    "tokenCount": 6,
+    "tradeTargets": [{ "w": 56, "h": 44 }, { "w": 56, "h": 44 }, { "w": 56, "h": 44 }, { "w": 56, "h": 44 }, { "w": 56, "h": 44 }],
+    "sheetRowH": [60, 60, 60, 60, 60, 60],
+    "minTradeH": 44,
+    "minTradeW": 56
+  },
+  "manyTokens": {
+    "tokenCount": 9,
+    "chipsShown": 3,
+    "overflowChip": "+6",
+    "sheetHeader": "9 tokens",
+    "tradeTargets": 8,
+    "sheetRowH": [60, 60, 60, 60, 60, 60, 60, 60, 60],
+    "minTradeH": 44,
+    "minTradeW": 56,
+    "note": "one token fails the mint-shape gate and renders NOT ON SPOT with no target"
+  }
+}
