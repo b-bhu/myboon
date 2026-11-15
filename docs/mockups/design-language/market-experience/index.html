@@ -1,0 +1,777 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Market experience · mock</title>
+<style>
+:root{
+/* Palette unchanged — from apps/hybrid-expo/theme/tokens.ts */
+--walletCore:#031F2C;--ground:#063343;--surface:#083D50;--surfaceAlt:#073B4C;--lift:#0A4A60;--border:#185A70;
+--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;--primary:#118AB2;--viridian:#06D6A0;--gold:#FFD166;--vermillion:#EF476F;
+--brandPhoenix:#FF8D2A;--brandPacifica:#61D7EF;--brandMeteora:#6E45FF;--brandSpot:#9945FF;--brandPoly:#118AB2;
+--s4:4px;--s8:8px;--s12:12px;--s16:16px;--s24:24px;--s32:32px;
+--rCard:8px;--rBtn:6px;--rSheet:12px;--rChip:4px;
+--sans:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+--mono:ui-monospace,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:#021019;color:var(--bone);font-family:var(--sans);font-size:15px}
+.lbl{font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.mono{font-family:var(--mono)}
+.up{color:var(--viridian)}.dn{color:var(--vermillion)}
+
+/* ---------- page scaffold ---------- */
+.page{max-width:1500px;margin:0 auto;padding:var(--s32) var(--s16) 64px}
+.phead{border-bottom:1px solid var(--border);padding-bottom:var(--s24);margin-bottom:var(--s24)}
+.phead h1{font-size:28px;margin:var(--s8) 0 var(--s4)}
+.phead p{color:var(--dim);font-size:14px;margin:0;max-width:70ch;line-height:1.6}
+.rail{display:flex;gap:var(--s32);align-items:flex-start;flex-wrap:wrap}
+.note{flex:1;min-width:300px;max-width:440px;position:sticky;top:var(--s16)}
+.note h3{font-size:20px;margin:0 0 var(--s4)}
+.note .sub{color:var(--dim);font-size:14px;margin:0 0 var(--s12)}
+.note ul{margin:0 0 var(--s16);padding-left:18px;color:var(--dim);font-size:14px;line-height:1.7}
+.note ul b{color:var(--bone);font-weight:600}
+.note .box{background:var(--ground);border:1px solid var(--border);border-radius:var(--rCard);padding:var(--s12);color:var(--dim);font-size:13.5px;line-height:1.65}
+.note .box b{color:var(--bone)}
+.note .box.warn{border-color:#FFD16666}
+.note .box+.box{margin-top:var(--s12)}
+section.blk{padding:var(--s32) 0;border-bottom:1px solid var(--border)}
+
+/* ---------- phone ---------- */
+.phone{flex:0 0 380px;width:380px;min-width:380px;height:760px;background:var(--surfaceAlt);border:1px solid var(--border);
+  border-radius:22px;overflow:hidden;position:relative;display:flex;flex-direction:column;box-shadow:0 0 0 6px #0b1c26}
+.scr{position:absolute;inset:0;display:none;flex-direction:column}
+.scr.on{display:flex}
+
+/* top bar */
+.tbar{flex:0 0 auto;display:flex;align-items:center;gap:var(--s12);padding:var(--s12) var(--s16);
+  border-bottom:1px solid var(--border);background:var(--surfaceAlt)}
+.tbar .ic{width:26px;height:26px;display:grid;place-items:center;cursor:pointer;border-radius:var(--rBtn)}
+.tbar .ic svg{width:18px;height:18px;fill:none;stroke:var(--dim);stroke-width:1.6;stroke-linecap:square}
+.tbar .ttl{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s8)}
+.tbar .ttl b{font-size:16px;font-weight:600;letter-spacing:-.2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.vbadge{flex:0 0 auto}
+.vbadge{font:600 9.5px var(--mono);letter-spacing:.8px;text-transform:uppercase;padding:2px 5px;border-radius:var(--rChip);
+  border:1px solid currentColor}
+.body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+.body::-webkit-scrollbar{display:none}
+
+/* ---------- compact header (the fix) ---------- */
+.hd{padding:var(--s12) var(--s16) var(--s8);display:flex;align-items:flex-end;justify-content:space-between;gap:var(--s12)}
+.hd .px{font:700 26px var(--mono);letter-spacing:-.6px;line-height:1}
+.hd .chg{font:600 12px var(--mono);margin-top:3px}
+.hd .rt{text-align:right}
+.hd .rt .k{font:10px var(--mono);letter-spacing:.9px;text-transform:uppercase;color:var(--faint)}
+.hd .rt .v{font:600 12.5px var(--mono);color:var(--dim);margin-top:2px}
+.livedot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--viridian);margin-right:5px;
+  animation:pulse 1.6s ease-in-out infinite;vertical-align:middle}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ---------- chart ---------- */
+.chartwrap{padding:0 var(--s8)}
+.readout{display:flex;align-items:baseline;justify-content:space-between;gap:var(--s8);
+  padding:0 var(--s8) var(--s4);min-height:18px}
+.readout .v{font:600 13px var(--mono);color:var(--bone)}
+.readout .t{font:10px var(--mono);letter-spacing:.9px;text-transform:uppercase;color:var(--faint)}
+.rsi{border-top:1px solid var(--border);margin-top:var(--s8)}
+.rsiHead{display:flex;align-items:center;justify-content:space-between;padding:var(--s8) var(--s16);cursor:pointer}
+.rsiHead .l{display:flex;align-items:center;gap:var(--s8)}
+.rsiHead .cv{font:600 11px var(--mono);color:var(--dim)}
+.rsiHead .car{width:14px;height:14px;stroke:var(--faint);fill:none;stroke-width:1.8;transition:transform .2s}
+.rsi.open .car{transform:rotate(180deg)}
+.rsiBody{display:none;padding:0 var(--s8) var(--s8)}
+.rsi.open .rsiBody{display:block}
+
+/* range tabs — compact, no full row */
+.ranges{display:flex;align-items:center;gap:2px;padding:var(--s4) var(--s16) var(--s8)}
+.ranges button{background:none;border:0;color:var(--faint);font:600 11px var(--mono);letter-spacing:.5px;
+  padding:4px 8px;border-radius:var(--rChip);cursor:pointer}
+.ranges button.on{background:var(--lift);color:var(--bone)}
+.ranges .sp{flex:1}
+.ranges .tgl{border:1px solid var(--border);color:var(--dim);padding:3px 7px;border-radius:var(--rChip);
+  font:600 10px var(--mono);letter-spacing:.6px;cursor:pointer;background:none}
+.ranges .tgl.on{color:var(--gold);border-color:var(--gold)}
+
+/* ---------- news rail ---------- */
+.news{padding:var(--s8) var(--s16) var(--s12);border-top:1px solid var(--border)}
+.newsCard{background:var(--surface);border:1px solid var(--border);border-radius:var(--rCard);padding:var(--s12);
+  display:flex;gap:var(--s12);cursor:pointer}
+.newsCard .mk{flex:0 0 26px;height:26px;border-radius:50%;background:var(--gold);color:#021B26;
+  display:grid;place-items:center;font:700 12px var(--mono)}
+.newsCard .tx{flex:1;min-width:0}
+.newsCard .tx .h{font-size:14px;font-weight:600;line-height:1.35}
+.newsCard .tx .m{margin-top:var(--s4);display:flex;justify-content:space-between;gap:var(--s8)}
+
+/* ---------- generic rows / cards ---------- */
+.sec{padding:var(--s16) var(--s16) var(--s8);display:flex;justify-content:space-between;align-items:baseline}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--rCard);margin:0 var(--s16) var(--s12)}
+.row{display:flex;align-items:center;gap:var(--s12);padding:var(--s12)}
+.row+.row{border-top:1px solid var(--border)}
+.row .mn{flex:1;min-width:0}
+.row .mn .t{font-size:14.5px;font-weight:600}
+.row .mn .s{font:11px var(--mono);letter-spacing:.5px;text-transform:uppercase;color:var(--faint);margin-top:3px}
+.row .rt{text-align:right;flex:0 0 auto}
+.row .rt .a{font:600 14px var(--mono)}
+.row .rt .b{font:11px var(--mono);margin-top:3px}
+
+/* ---------- action bar + sheet ---------- */
+.actbar{flex:0 0 auto;display:flex;gap:var(--s8);padding:var(--s12) var(--s16);
+  border-top:1px solid var(--border);background:var(--surfaceAlt)}
+.btn{flex:1;height:46px;border-radius:var(--rBtn);border:1px solid;background:none;cursor:pointer;
+  font:600 15px var(--sans);display:grid;place-items:center}
+.btn.gain{color:var(--viridian);border-color:var(--viridian)}
+.btn.lose{color:var(--vermillion);border-color:var(--vermillion)}
+.btn.gold{color:var(--gold);border-color:var(--gold)}
+.btn.ghost{color:var(--dim);border-color:var(--border)}
+.scrim{position:absolute;inset:0;background:rgba(2,16,25,.66);display:none;z-index:40}
+.scrim.on{display:block}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--ground);border:1px solid var(--border);
+  border-bottom:0;border-radius:var(--rSheet) var(--rSheet) 0 0;z-index:50;transform:translateY(100%);
+  transition:transform .26s cubic-bezier(.2,.8,.3,1);max-height:88%;overflow-y:auto;scrollbar-width:none}
+.sheet::-webkit-scrollbar{display:none}
+.sheet.on{transform:translateY(0)}
+.grab{width:34px;height:4px;border-radius:2px;background:var(--border);margin:var(--s8) auto var(--s4)}
+.sheet .in{padding:var(--s8) var(--s16) var(--s16)}
+.sheet h4{font-size:18px;font-weight:600;margin:var(--s4) 0 var(--s12)}
+
+/* amount card */
+.amt{background:var(--surfaceAlt);border:1px solid var(--border);border-radius:var(--rCard);padding:var(--s12)}
+.amt .k{font:10px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.amt .r{display:flex;align-items:baseline;justify-content:space-between;gap:var(--s8);margin-top:var(--s4)}
+.amt .n{font:700 30px var(--mono);letter-spacing:-.8px;line-height:1.1}
+.amt .max{color:var(--gold);font:600 12px var(--mono);cursor:pointer}
+.amt .bal{font:11px var(--mono);color:var(--faint);margin-top:var(--s4)}
+.chips{display:flex;gap:var(--s8);margin-top:var(--s12)}
+.chips button{flex:1;height:32px;border:1px solid var(--border);background:none;color:var(--dim);
+  border-radius:var(--rChip);font:600 12px var(--mono);cursor:pointer}
+.chips button.on{border-color:var(--gold);color:var(--gold)}
+.kv{display:flex;justify-content:space-between;padding:7px 0;font-size:13px}
+.kv+.kv{border-top:1px solid var(--border)}
+.kv .k{color:var(--faint);font:11px var(--mono);letter-spacing:.6px;text-transform:uppercase}
+.kv .v{font:600 13px var(--mono)}
+
+/* swipe to confirm */
+.swipe{position:relative;height:50px;border:1px solid;border-radius:var(--rBtn);margin-top:var(--s16);
+  overflow:hidden;user-select:none;touch-action:none}
+.swipe .fill{position:absolute;inset:0;width:0;opacity:.18}
+.swipe .cap{position:absolute;inset:0;display:grid;place-items:center;font:600 14px var(--sans);pointer-events:none}
+.swipe .knob{position:absolute;top:2px;left:2px;width:44px;height:44px;border-radius:var(--rChip);
+  display:grid;place-items:center;cursor:grab}
+.swipe .knob svg{width:18px;height:18px;fill:none;stroke:#021B26;stroke-width:2.2;stroke-linecap:square}
+
+/* states */
+.state{padding:var(--s32) var(--s16);text-align:center}
+.state .ico{width:40px;height:40px;margin:0 auto var(--s12);display:grid;place-items:center;
+  border:1px solid var(--border);border-radius:50%}
+.state .ico svg{width:20px;height:20px;fill:none;stroke:var(--faint);stroke-width:1.6}
+.state h5{font-size:16px;font-weight:600;margin:0 0 var(--s4)}
+.state p{color:var(--dim);font-size:13.5px;margin:0 auto var(--s16);max-width:30ch;line-height:1.55}
+.skel{background:linear-gradient(90deg,var(--lift) 25%,#0d566e 50%,var(--lift) 75%);
+  background-size:200% 100%;animation:sh 1.3s linear infinite;border-radius:var(--rChip)}
+@keyframes sh{to{background-position:-200% 0}}
+.banner{margin:var(--s12) var(--s16);border:1px solid var(--vermillion);border-radius:var(--rCard);
+  padding:var(--s12);display:flex;gap:var(--s12);align-items:flex-start}
+.banner svg{flex:0 0 18px;height:18px;stroke:var(--vermillion);fill:none;stroke-width:1.8}
+.banner .t{font-size:13.5px;line-height:1.5}
+.banner a{color:var(--gold);text-decoration:none;font-size:12.5px;display:inline-block;margin-top:var(--s4)}
+
+/* tabs inside profile */
+.seg{display:flex;border:1px solid var(--border);border-radius:var(--rBtn);padding:2px;margin:0 var(--s16) var(--s12)}
+.seg button{flex:1;background:none;border:0;color:var(--dim);font:500 13px var(--sans);padding:7px;
+  border-radius:var(--rChip);cursor:pointer}
+.seg button.on{background:var(--lift);color:var(--bone)}
+
+/* bottom nav */
+.nav{flex:0 0 auto;display:flex;justify-content:space-around;border-top:1px solid var(--border);
+  padding:var(--s8) 0 10px;background:var(--surfaceAlt)}
+.nav div{display:grid;place-items:center;gap:3px;cursor:pointer;width:56px}
+.nav svg{width:21px;height:21px;fill:none;stroke:var(--faint);stroke-width:1.6;stroke-linecap:square}
+.nav span{font:10px var(--mono);letter-spacing:.5px;color:var(--faint)}
+.nav .on svg{stroke:var(--gold)}.nav .on span{color:var(--gold)}
+
+/* venue switcher (mock control, not part of the app) */
+.vsw{display:flex;gap:var(--s8);margin-bottom:var(--s12);flex-wrap:wrap}
+.vsw button{border:1px solid var(--border);background:var(--ground);color:var(--dim);border-radius:var(--rBtn);
+  padding:7px 12px;font:600 12px var(--mono);letter-spacing:.5px;cursor:pointer}
+.vsw button.on{border-color:var(--gold);color:var(--gold)}
+.mockctl{font:10px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--faint);margin-bottom:var(--s8)}
+@media (max-width:860px){ .note{position:static;max-width:none} .phone{flex:1 1 100%;width:100%} }
+</style></head><body>
+<div class="page">
+
+<div class="phead">
+  <div class="lbl">Mock · palette unchanged · structure rethought</div>
+  <h1>Market experience</h1>
+  <p>The three universal layers of <a href="https://github.com/b-bhu/myboon/issues/649" style="color:var(--gold)">#649</a>: detail, action, profile. Discovery stays per venue and is not mocked. Tap through it — the venue switcher above each phone is a mock control, not part of the app.</p>
+</div>
+
+<!-- ================= 1. DETAIL ================= -->
+<section class="blk">
+<div class="rail">
+  <div>
+    <div class="mockctl">Mock control · switch venue</div>
+    <div class="vsw" id="vsw">
+      <button class="on" data-v="phoenix">Phoenix · BTC</button>
+      <button data-v="poly">Polymarket</button>
+    </div>
+    <div class="phone" id="ph1">
+
+      <!-- ---------- DETAIL SCREEN ---------- -->
+      <div class="scr on" id="s-detail">
+        <div class="tbar">
+          <div class="ic" onclick="toast('Back to discovery')"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+          <div class="ttl">
+            <b id="d-sym">BTC-PERP</b>
+            <span class="vbadge" id="d-badge" style="color:var(--brandPhoenix)">Phoenix</span>
+          </div>
+          <div class="ic" onclick="toast('Market info')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.5v.5"/></svg></div>
+        </div>
+
+        <div class="body">
+          <!-- compact header -->
+          <div class="hd">
+            <div>
+              <div class="px mono" id="d-px">$97,240</div>
+              <div class="chg up" id="d-chg">+2.41% today</div>
+            </div>
+            <div class="rt" id="d-meta">
+              <div class="k"><span class="livedot"></span>24h vol</div>
+              <div class="v">$1.24B</div>
+            </div>
+          </div>
+
+          <!-- chart -->
+          <div class="readout"><span class="v" id="d-ro"></span><span class="t" id="d-rot"></span></div>
+          <div class="chartwrap"><div id="d-chart"></div></div>
+
+          <div class="ranges" id="d-ranges">
+            <button class="on">1H</button><button>1D</button><button>1W</button><button>1M</button>
+            <span class="sp"></span>
+            <button class="tgl" id="d-newsTgl" onclick="toggleNews()">News</button>
+          </div>
+
+          <!-- RSI, collapsed by default -->
+          <div class="rsi" id="d-rsi">
+            <div class="rsiHead" onclick="toggleRsi()">
+              <div class="l"><span class="lbl">RSI 14</span><span class="cv" id="d-rsiv">58</span></div>
+              <svg class="car" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="rsiBody"><div id="d-rsichart"></div></div>
+          </div>
+
+          <!-- news rail -->
+          <div class="news" id="d-news">
+            <div class="newsCard" onclick="toast('Opens the full story')">
+              <div class="mk">✦</div>
+              <div class="tx">
+                <div class="h" id="d-newsh">ETF inflows hit a 3-month high</div>
+                <div class="m"><span class="lbl">Yesterday · 2 stories</span><span class="lbl" style="color:var(--gold)">Read</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- positions -->
+          <div class="sec"><span class="lbl">Your position</span></div>
+          <div class="card" id="d-pos">
+            <div class="row">
+              <div class="mn"><div class="t" id="d-posT">Long · 0.25 BTC</div><div class="s" id="d-posS">Entry $94,100 · 3× leverage</div></div>
+              <div class="rt"><div class="a up" id="d-posA">+$785</div><div class="b up" id="d-posB">+8.3%</div></div>
+            </div>
+          </div>
+          <div style="height:var(--s16)"></div>
+        </div>
+
+        <!-- action bar -->
+        <div class="actbar" id="d-actbar">
+          <button class="btn gain" onclick="openSheet('long')" id="d-b1">Long</button>
+          <button class="btn lose" onclick="openSheet('short')" id="d-b2">Short</button>
+        </div>
+
+        <div class="nav">
+          <div onclick="toast('Feed')"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h4"/></svg><span>Feed</span></div>
+          <div class="on"><svg viewBox="0 0 24 24"><path d="M4 17l6-6 4 4 6-8"/></svg><span>Markets</span></div>
+          <div onclick="go('s-profile')"><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l3-3h12l3 3"/></svg><span>Portfolio</span></div>
+        </div>
+
+        <!-- action sheet -->
+        <div class="scrim" id="sc1" onclick="closeSheet()"></div>
+        <div class="sheet" id="sh1">
+          <div class="grab"></div>
+          <div class="in">
+            <h4 id="sh-title">Long BTC-PERP</h4>
+            <div class="amt">
+              <div class="k" id="sh-amtk">You pay</div>
+              <div class="r">
+                <div class="n" id="sh-amt">$500</div>
+                <div class="max" onclick="setAmt('max')">MAX</div>
+              </div>
+              <div class="bal" id="sh-bal">Balance $2,480.10 USDC</div>
+            </div>
+            <div class="chips" id="sh-chips">
+              <button onclick="setAmt(50,this)">$50</button>
+              <button onclick="setAmt(100,this)">$100</button>
+              <button class="on" onclick="setAmt(500,this)">$500</button>
+              <button onclick="setAmt(1000,this)">$1K</button>
+            </div>
+            <div style="margin-top:var(--s16)">
+              <div class="kv"><span class="k" id="sh-k1">Leverage</span><span class="v" id="sh-v1">3×</span></div>
+              <div class="kv"><span class="k" id="sh-k2">Entry price</span><span class="v" id="sh-v2">$97,240</span></div>
+              <div class="kv"><span class="k" id="sh-k3">Liquidation</span><span class="v" id="sh-v3">$71,180</span></div>
+              <div class="kv"><span class="k">Fee</span><span class="v">$0.75</span></div>
+            </div>
+            <div class="swipe" id="sw" style="border-color:var(--viridian)">
+              <div class="fill" id="swf" style="background:var(--viridian)"></div>
+              <div class="cap" id="swc" style="color:var(--viridian)">Swipe to long · $500</div>
+              <div class="knob" id="swk" style="background:var(--viridian)">
+                <svg viewBox="0 0 24 24"><path d="M5 12h12M12 6l6 6-6 6"/></svg>
+              </div>
+            </div>
+            <div style="height:var(--s8)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---------- PROFILE SCREEN ---------- -->
+      <div class="scr" id="s-profile">
+        <div class="tbar">
+          <div class="ic" onclick="go('s-detail')"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+          <div class="ttl"><b>Portfolio</b><span class="vbadge" id="p-badge" style="color:var(--brandPhoenix)">Phoenix</span></div>
+          <div class="ic" onclick="toast('Settings')"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></div>
+        </div>
+        <div class="body">
+          <div class="hd">
+            <div>
+              <div class="lbl">Account value</div>
+              <div class="px mono" style="margin-top:var(--s4)">$3,265<span style="font-size:17px;color:var(--dim)">.10</span></div>
+              <div class="chg up">+$785 · +8.3% all time</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:var(--s8);padding:var(--s8) var(--s16) var(--s12)">
+            <button class="btn gold" style="height:40px;font-size:14px" onclick="toast('Deposit')">Deposit</button>
+            <button class="btn ghost" style="height:40px;font-size:14px" onclick="toast('Withdraw')">Withdraw</button>
+          </div>
+          <div class="seg" id="p-seg">
+            <button class="on" onclick="pTab(0,this)">Positions</button>
+            <button onclick="pTab(1,this)">Orders</button>
+            <button onclick="pTab(2,this)">History</button>
+          </div>
+          <div id="p-body"></div>
+          <div style="height:var(--s24)"></div>
+        </div>
+        <div class="nav">
+          <div onclick="toast('Feed')"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h4"/></svg><span>Feed</span></div>
+          <div onclick="go('s-detail')"><svg viewBox="0 0 24 24"><path d="M4 17l6-6 4 4 6-8"/></svg><span>Markets</span></div>
+          <div class="on"><svg viewBox="0 0 24 24"><path d="M3 7h18v12H3zM3 7l3-3h12l3 3"/></svg><span>Portfolio</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="note">
+    <h3>Detail · the screen you demo</h3>
+    <p class="sub">Same frame on every venue. Only the chart body swaps.</p>
+    <ul>
+      <li><b>Header is two lines, not a block.</b> Price, change, one stat. Today's screens spend a third of the viewport before the chart starts.</li>
+      <li><b>The chart gets the space back.</b> Range tabs are a compact strip, not a full segmented row — the News toggle sits on the same line.</li>
+      <li><b>Readout above the plot</b>, in a fixed row. A floating tooltip sits under your thumb.</li>
+      <li><b>RSI is collapsed</b> with its current value visible on the closed header, so you get the number without the pane. One tap opens it; the choice is remembered.</li>
+      <li><b>News rail under the chart.</b> Markers on the plot, one card below. Hidden entirely when a market has no stories — no reserved empty space.</li>
+      <li><b>Action bar is pinned</b>, never scrolls away. Two buttons, venue-worded: Long/Short on perps, Back YES/NO on Polymarket.</li>
+    </ul>
+    <div class="box"><b>Why the sheet, not a screen.</b> Sizing a trade is a decision about the thing you are already looking at. Pushing a new screen loses the chart and the price at the moment they matter most. The sheet keeps both behind it.</div>
+    <div class="box warn"><b>Polymarket in the same frame.</b> Switch the venue above. Chart becomes a YES/NO outcome line, header swaps volume for resolution date, action bar becomes Back YES / Back NO, and the position row reads in shares. Frame, spacing and navigation do not move. This was the risk I flagged — it fits.</div>
+  </div>
+</div>
+</section>
+
+<!-- ================= 2. STATES ================= -->
+<section class="blk">
+<div class="rail">
+  <div>
+    <div class="mockctl">Mock control · pick state</div>
+    <div class="vsw" id="ssw">
+      <button class="on" data-s="loading">Loading</button>
+      <button data-s="error">Error</button>
+      <button data-s="nowallet">No wallet</button>
+      <button data-s="nonews">No stories</button>
+    </div>
+    <div class="phone">
+      <div class="scr on">
+        <div class="tbar">
+          <div class="ic"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></div>
+          <div class="ttl"><b>BTC-PERP</b><span class="vbadge" style="color:var(--brandPhoenix)">Phoenix</span></div>
+        </div>
+        <div class="body" id="st-body"></div>
+        <div class="actbar" id="st-bar">
+          <button class="btn gain">Long</button><button class="btn lose">Short</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <h3>States</h3>
+    <p class="sub">Specified on the detail screen; the same pattern applies everywhere.</p>
+    <ul>
+      <li><b>Loading keeps the last price.</b> The header shows what we knew; only the chart is a skeleton. A blank header makes a working app look broken.</li>
+      <li><b>Errors are inline, with retry.</b> Never a popup — the user stays on the screen and the rest of it still works.</li>
+      <li><b>No wallet explains itself.</b> Not a greyed-out button with no reason; the action bar becomes a single Connect action.</li>
+      <li><b>No stories means no rail.</b> Not an empty card saying "no news" — reserved empty space is the most common way these screens get ugly.</li>
+    </ul>
+    <div class="box"><b>The rule:</b> a state never costs the user information they already had. Keep the last known value, replace only what is genuinely unknown.</div>
+  </div>
+</div>
+</section>
+
+<!-- ================= 3. PROFILE ================= -->
+<section class="blk">
+<div class="rail">
+  <div>
+    <div class="mockctl">Tap Portfolio in the nav of the first phone</div>
+    <div class="note" style="max-width:none;position:static">
+      <div class="box"><b>Profile is the biggest cleanup: 7,133 lines across three standalone screens plus Polymarket's seven-file folder.</b> They use the same words — positions, balance, PnL, deposit, withdraw, history — in three different layouts.</div>
+    </div>
+  </div>
+  <div class="note">
+    <h3>Profile · one portfolio</h3>
+    <p class="sub">Venues supply rows and actions, not layout.</p>
+    <ul>
+      <li><b>Account value leads</b>, with all-time change under it. Same shape as the detail header so the app feels like one thing.</li>
+      <li><b>Deposit and Withdraw are always visible</b>, not buried in a menu. They are the two actions people come here to find.</li>
+      <li><b>Three tabs, fixed:</b> Positions, Orders, History. Every venue fills the same three; a venue without orders shows an empty state rather than a different tab set.</li>
+      <li><b>Rows are venue-worded.</b> Phoenix shows size and leverage; Polymarket shows shares and chance. The row shape is identical.</li>
+      <li><b>Tapping a position opens the sheet</b> — the same component as the detail screen, pre-filled to close rather than open.</li>
+    </ul>
+    <div class="box warn"><b>Open question for sub-issue D.</b> Phoenix has TP/SL, Polymarket has redeem-when-resolved, Meteora has range rebalancing. These do not generalize. Proposal: one "venue actions" slot on the position row that each adapter fills — rather than forcing a common vocabulary that fits none of them.</div>
+  </div>
+</div>
+</section>
+
+<footer style="color:var(--faint);font-size:12px;padding-top:var(--s24)">
+  Mock for #649 · palette from apps/hybrid-expo/theme/tokens.ts, unchanged · fixture data, no network
+</footer>
+</div>
+
+<script>
+/* ---------------- tiny chart (reused from the BoonChart mock) ---------------- */
+function chart(el,o){
+  o=o||{}; el.innerHTML='';
+  var cv=document.createElement('canvas'); cv.style.cssText='display:block;width:100%;height:'+(o.height||150)+'px';
+  cv.style.touchAction='pan-y'; el.appendChild(cv);
+  var data=o.data||[], held=-1, G=null;
+  var col=o.color||(data.length>1&&data[data.length-1]>=data[0]?'#06D6A0':'#EF476F');
+  function draw(){
+    var dpr=devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight;
+    cv.width=w*dpr; cv.height=h*dpr; var c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0);
+    c.clearRect(0,0,w,h); if(data.length<2) return;
+    var lo=Math.min.apply(null,data), hi=Math.max.apply(null,data);
+    if(o.fixed){lo=o.lo;hi=o.hi;} else {var p=(hi-lo)*.16||1; lo-=p; hi+=p;}
+    var padR=o.axis===false?6:40, padB=14, padT=6;
+    var pw=w-padR-4, ph=h-padT-padB;
+    var X=function(i){return 4+i/(data.length-1)*pw;}, Y=function(v){return padT+ph-(v-lo)/(hi-lo)*ph;};
+    G={X:X,n:data.length};
+    if(o.axis!==false){
+      c.font='10px ui-monospace,Menlo,monospace'; c.textAlign='left'; c.textBaseline='middle';
+      [lo+(hi-lo)*.12,lo+(hi-lo)*.5,lo+(hi-lo)*.88].forEach(function(t){
+        var y=Y(t); c.strokeStyle='#185A70'; c.globalAlpha=.4; c.lineWidth=1;
+        c.beginPath(); c.moveTo(4,Math.round(y)+.5); c.lineTo(4+pw,Math.round(y)+.5); c.stroke();
+        c.globalAlpha=1; c.fillStyle='#6B95A1'; c.fillText(o.fmt?o.fmt(t):Math.round(t),4+pw+6,y);
+      });
+    }
+    if(o.bands){ // RSI 30/70 guides
+      [30,70].forEach(function(t){var y=Y(t); c.strokeStyle='#185A70'; c.globalAlpha=.7;
+        c.setLineDash([3,3]); c.beginPath(); c.moveTo(4,y); c.lineTo(4+pw,y); c.stroke();
+        c.setLineDash([]); c.globalAlpha=1;});
+    }
+    var P=new Path2D(); P.moveTo(X(0),Y(data[0]));
+    for(var i=1;i<data.length;i++){var mx=(X(i-1)+X(i))/2;P.bezierCurveTo(mx,Y(data[i-1]),mx,Y(data[i]),X(i),Y(data[i]));}
+    if(o.fill!==false){
+      var F=new Path2D(P); F.lineTo(X(data.length-1),padT+ph); F.lineTo(X(0),padT+ph); F.closePath();
+      var g=c.createLinearGradient(0,padT,0,padT+ph); g.addColorStop(0,col+'4D'); g.addColorStop(1,col+'00');
+      c.fillStyle=g; c.fill(F);
+    }
+    c.strokeStyle=col; c.lineWidth=2; c.lineJoin='round'; c.lineCap='round'; c.stroke(P);
+    if(o.markers){ o.markers.forEach(function(m){
+        var x=X(m.i), y=Y(data[m.i]);
+        c.strokeStyle='#FFD166'; c.globalAlpha=.5; c.setLineDash([2,3]); c.lineWidth=1;
+        c.beginPath(); c.moveTo(x,padT); c.lineTo(x,padT+ph); c.stroke(); c.setLineDash([]); c.globalAlpha=1;
+        c.fillStyle='#FFD166'; c.beginPath(); c.arc(x,padT+7,7,0,7); c.fill();
+        c.fillStyle='#021B26'; c.font='700 9px ui-monospace,Menlo,monospace';
+        c.textAlign='center'; c.textBaseline='middle'; c.fillText('✦',x,padT+7.5);
+      });}
+    if(o.last!==false){var lx=X(data.length-1),ly=Y(data[data.length-1]);
+      c.fillStyle=col; c.beginPath(); c.arc(lx,ly,3,0,7); c.fill();}
+    if(held>=0){
+      var hx=X(held),hy=Y(data[held]);
+      c.strokeStyle='#185A70'; c.lineWidth=1; c.beginPath();
+      c.moveTo(Math.round(hx)+.5,padT); c.lineTo(Math.round(hx)+.5,padT+ph); c.stroke();
+      c.fillStyle='#F5FAFC'; c.beginPath(); c.arc(hx,hy,4.5,0,7); c.fill();
+      c.fillStyle=col; c.beginPath(); c.arc(hx,hy,2.5,0,7); c.fill();
+    }
+  }
+  function at(x){ if(!G)return -1; var r=(x-4)/(cv.clientWidth-44)*(G.n-1); return Math.max(0,Math.min(G.n-1,Math.round(r))); }
+  if(o.onScrub){
+    var act=false;
+    function pos(e){var r=cv.getBoundingClientRect();var t=e.touches?e.touches[0]:e;return t.clientX-r.left;}
+    function dn(e){act=true;held=at(pos(e));o.onScrub(held);draw();}
+    function mv(e){if(!act)return;e.preventDefault();held=at(pos(e));o.onScrub(held);draw();}
+    function up(){if(!act)return;act=false;held=-1;o.onScrub(-1);draw();}
+    cv.addEventListener('touchstart',dn,{passive:true}); cv.addEventListener('touchmove',mv,{passive:false});
+    cv.addEventListener('touchend',up); cv.addEventListener('mousedown',dn);
+    cv.addEventListener('mousemove',function(e){if(act)mv(e);}); addEventListener('mouseup',up);
+    cv.addEventListener('mouseleave',up);
+  }
+  if(window.ResizeObserver) new ResizeObserver(function(){draw();}).observe(cv);
+  draw();
+  return {redraw:draw};
+}
+
+/* ---------------- fixture data ---------------- */
+function walk(n,s,v,d){var o=[],x=s,sd=s*7.31;for(var i=0;i<n;i++){sd=(sd*9301+49297)%233280;o.push(Number((x=Math.max(.0001,x*(1+(sd/233280-.5)*v+d))).toPrecision(8)));}return o;}
+var BTC=walk(60,94100,.016,.0006);
+var POLY=walk(60,41,.05,.0032).map(function(v){return Math.max(4,Math.min(95,v));});
+var RSI=walk(60,52,.09,.0012).map(function(v){return Math.max(18,Math.min(86,v));});
+
+var VENUE={
+  phoenix:{sym:'BTC-PERP',badge:'Phoenix',color:'var(--brandPhoenix)',data:BTC,
+    px:'$97,240',chg:'+2.41% today',up:true,metaK:'24h vol',metaV:'$1.24B',
+    b1:'Long',b2:'Short',b1c:'gain',b2c:'lose',
+    news:'ETF inflows hit a 3-month high',
+    posT:'Long · 0.25 BTC',posS:'Entry $94,100 · 3× leverage',posA:'+$785',posB:'+8.3%',
+    fmt:function(v){return '$'+Math.round(v/1000)+'K';},
+    sheet:{k1:'Leverage',v1:'3×',k2:'Entry price',v2:'$97,240',k3:'Liquidation',v3:'$71,180',amtk:'You pay'}},
+  poly:{sym:'Fed cuts in March?',badge:'Polymarket',color:'var(--brandPoly)',data:POLY,
+    px:'62¢',chg:'+7¢ today',up:true,metaK:'Resolves',metaV:'Mar 18',
+    b1:'Back YES',b2:'Back NO',b1c:'gain',b2c:'lose',
+    news:'Powell signals patience on rate path',
+    posT:'120 shares · YES',posS:'Avg 48¢ · paid $57.60',posA:'+$16.80',posB:'+29.2%',
+    fmt:function(v){return Math.round(v)+'¢';},
+    sheet:{k1:'Shares',v1:'806',k2:'Avg price',v2:'62¢',k3:'If YES wins',v3:'$806.00',amtk:'You pay'}}
+};
+var V='phoenix', newsOn=true, rsiOpen=false, dChart=null, rsiChart=null;
+
+/* ---------------- detail screen ---------------- */
+function paint(){
+  var v=VENUE[V];
+  document.getElementById('d-sym').textContent=v.sym;
+  var b=document.getElementById('d-badge'); b.textContent=v.badge; b.style.color=v.color;
+  var pb=document.getElementById('p-badge'); pb.textContent=v.badge; pb.style.color=v.color;
+  document.getElementById('d-px').textContent=v.px;
+  var chg=document.getElementById('d-chg'); chg.textContent=v.chg; chg.className='chg '+(v.up?'up':'dn');
+  document.getElementById('d-meta').innerHTML='<div class="k">'+(V==='phoenix'?'<span class="livedot"></span>':'')+v.metaK+'</div><div class="v">'+v.metaV+'</div>';
+  document.getElementById('d-newsh').textContent=v.news;
+  document.getElementById('d-posT').textContent=v.posT;
+  document.getElementById('d-posS').textContent=v.posS;
+  document.getElementById('d-posA').textContent=v.posA;
+  document.getElementById('d-posB').textContent=v.posB;
+  var b1=document.getElementById('d-b1'), b2=document.getElementById('d-b2');
+  b1.textContent=v.b1; b2.textContent=v.b2;
+  b1.className='btn '+v.b1c; b2.className='btn '+v.b2c;
+  document.getElementById('d-news').style.display=newsOn?'block':'none';
+  document.getElementById('d-newsTgl').classList.toggle('on',newsOn);
+  dChart=chart(document.getElementById('d-chart'),{
+    data:v.data,height:150,fmt:v.fmt,
+    markers:newsOn?[{i:44},{i:52}]:null,
+    onScrub:function(i){
+      var ro=document.getElementById('d-ro'), rt=document.getElementById('d-rot');
+      if(i<0){ro.textContent='';rt.textContent='';return;}
+      ro.textContent=v.fmt(v.data[i]); rt.textContent='Point '+(i+1)+' of '+v.data.length;
+    }});
+  if(rsiOpen) drawRsi();
+}
+function drawRsi(){
+  rsiChart=chart(document.getElementById('d-rsichart'),
+    {data:RSI,height:70,color:'#118AB2',fill:false,bands:true,fixed:true,lo:10,hi:94,
+     fmt:function(v){return Math.round(v);},last:false});
+}
+function toggleRsi(){
+  rsiOpen=!rsiOpen;
+  document.getElementById('d-rsi').classList.toggle('open',rsiOpen);
+  if(rsiOpen) drawRsi();
+  try{localStorage.setItem('rsiOpen',rsiOpen?'1':'0');}catch(e){}
+}
+function toggleNews(){ newsOn=!newsOn; paint(); }
+document.getElementById('vsw').addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b)return;
+  [].forEach.call(this.children,function(x){x.classList.toggle('on',x===b);});
+  V=b.dataset.v; paint(); pTab(pIdx);
+});
+try{ if(localStorage.getItem('rsiOpen')==='1'){rsiOpen=true;document.getElementById('d-rsi').classList.add('open');} }catch(e){}
+
+/* ---------------- action sheet ---------------- */
+var sheetSide='long';
+function openSheet(side){
+  sheetSide=side; var v=VENUE[V];
+  var isUp=side==='long';
+  var label=isUp?v.b1:v.b2, c=isUp?'#06D6A0':'#EF476F';
+  document.getElementById('sh-title').textContent=label+' · '+v.sym;
+  document.getElementById('sh-amtk').textContent=v.sheet.amtk;
+  document.getElementById('sh-k1').textContent=v.sheet.k1;
+  document.getElementById('sh-v1').textContent=v.sheet.v1;
+  document.getElementById('sh-k2').textContent=v.sheet.k2;
+  document.getElementById('sh-v2').textContent=v.sheet.v2;
+  document.getElementById('sh-k3').textContent=v.sheet.k3;
+  document.getElementById('sh-v3').textContent=v.sheet.v3;
+  var sw=document.getElementById('sw');
+  sw.style.borderColor=c;
+  document.getElementById('swf').style.background=c;
+  document.getElementById('swk').style.background=c;
+  var cap=document.getElementById('swc'); cap.style.color=c;
+  cap.textContent='Swipe to '+label.toLowerCase()+' · '+document.getElementById('sh-amt').textContent;
+  resetSwipe();
+  document.getElementById('sc1').classList.add('on');
+  document.getElementById('sh1').classList.add('on');
+}
+function closeSheet(){
+  document.getElementById('sc1').classList.remove('on');
+  document.getElementById('sh1').classList.remove('on');
+}
+function setAmt(a,el){
+  var t=a==='max'?'$2,480':'$'+(a>=1000?(a/1000)+'K':a);
+  document.getElementById('sh-amt').textContent=t;
+  if(el){[].forEach.call(el.parentNode.children,function(x){x.classList.toggle('on',x===el);});}
+  var v=VENUE[V], label=sheetSide==='long'?v.b1:v.b2;
+  document.getElementById('swc').textContent='Swipe to '+label.toLowerCase()+' · '+t;
+  resetSwipe();
+}
+/* swipe to confirm */
+var swK=document.getElementById('swk'), swF=document.getElementById('swf'),
+    swT=document.getElementById('sw'), swC=document.getElementById('swc');
+var dragging=false,startX=0,curX=0;
+function resetSwipe(){curX=0;swK.style.left='2px';swF.style.width='0';swC.style.opacity=1;}
+function swStart(e){dragging=true;startX=(e.touches?e.touches[0]:e).clientX-curX;}
+function swMove(e){
+  if(!dragging)return; e.preventDefault();
+  var max=swT.clientWidth-48;
+  curX=Math.max(0,Math.min(max,(e.touches?e.touches[0]:e).clientX-startX));
+  swK.style.left=(2+curX)+'px'; swF.style.width=(curX+44)+'px';
+  swC.style.opacity=1-curX/max;
+  if(curX>=max-2){dragging=false;confirmTrade();}
+}
+function swEnd(){ if(!dragging)return; dragging=false;
+  var max=swT.clientWidth-48;
+  if(curX<max-2){curX=0;swK.style.left='2px';swF.style.width='0';swC.style.opacity=1;} }
+swK.addEventListener('touchstart',swStart,{passive:true});
+addEventListener('touchmove',swMove,{passive:false}); addEventListener('touchend',swEnd);
+swK.addEventListener('mousedown',swStart); addEventListener('mousemove',swMove); addEventListener('mouseup',swEnd);
+function confirmTrade(){
+  var v=VENUE[V];
+  swC.textContent='Submitted'; swC.style.opacity=1;
+  setTimeout(function(){ closeSheet(); toast(v.b1.replace('Back ','')+' order submitted'); resetSwipe();
+    swC.textContent='Swipe to '+(sheetSide==='long'?v.b1:v.b2).toLowerCase()+' · '+document.getElementById('sh-amt').textContent; },620);
+}
+
+/* ---------------- profile ---------------- */
+var pIdx=0;
+function pTab(i,el){
+  pIdx=i;
+  if(el){[].forEach.call(el.parentNode.children,function(x){x.classList.toggle('on',x===el);});}
+  var v=VENUE[V], h='';
+  if(i===0){
+    h='<div class="card"><div class="row" onclick="toast(\'Opens the sheet, pre-filled to close\')">'+
+      '<div class="mn"><div class="t">'+v.posT+'</div><div class="s">'+v.posS+'</div></div>'+
+      '<div class="rt"><div class="a up">'+v.posA+'</div><div class="b up">'+v.posB+'</div></div></div>'+
+      (V==='phoenix'
+        ? '<div class="row"><div class="mn"><div class="t">Long · 1.8 SOL</div><div class="s">Entry $138.20 · 2× leverage</div></div><div class="rt"><div class="a dn">-$12.40</div><div class="b dn">-4.9%</div></div></div>'
+        : '<div class="row"><div class="mn"><div class="t">40 shares · NO</div><div class="s">Avg 61¢ · paid $24.40</div></div><div class="rt"><div class="a dn">-$6.80</div><div class="b dn">-27.9%</div></div></div>')+
+      '</div>'+
+      '<div class="sec"><span class="lbl">'+(V==='phoenix'?'Venue actions':'When this resolves')+'</span></div>'+
+      '<div class="card"><div class="row"><div class="mn"><div class="t">'+
+      (V==='phoenix'?'Take profit / stop loss':'Redeem winnings')+'</div><div class="s">'+
+      (V==='phoenix'?'Not set on either position':'Available once the market settles')+
+      '</div></div><div class="rt"><div class="a" style="color:var(--gold);font-size:12px">'+
+      (V==='phoenix'?'Set':'Later')+'</div></div></div></div>';
+  } else if(i===1){
+    h=V==='phoenix'
+      ? '<div class="card"><div class="row"><div class="mn"><div class="t">Limit buy · 0.1 BTC</div><div class="s">At $92,000 · open 2h</div></div><div class="rt"><div class="a" style="color:var(--gold);font-size:12px">Cancel</div></div></div></div>'
+      : '<div class="state"><div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></div><h5>No open orders</h5><p>Limit orders you place will appear here until they fill.</p></div>';
+  } else {
+    h='<div class="card">'+
+      '<div class="row"><div class="mn"><div class="t">'+(V==='phoenix'?'Opened long · 0.25 BTC':'Bought 120 YES')+'</div><div class="s">2 days ago</div></div><div class="rt"><div class="a">'+(V==='phoenix'?'$94,100':'48¢')+'</div></div></div>'+
+      '<div class="row"><div class="mn"><div class="t">Deposit</div><div class="s">5 days ago · USDC</div></div><div class="rt"><div class="a up">+$2,500</div></div></div>'+
+      '</div>';
+  }
+  document.getElementById('p-body').innerHTML=h;
+}
+function go(id){
+  ['s-detail','s-profile'].forEach(function(x){document.getElementById(x).classList.toggle('on',x===id);});
+  if(id==='s-detail'&&dChart) setTimeout(function(){paint();},10);
+  if(id==='s-profile') pTab(pIdx);
+}
+
+/* ---------------- states panel ---------------- */
+var STATES={
+  loading:function(){return '<div class="hd"><div><div class="px mono">$97,240</div>'+
+    '<div class="chg" style="color:var(--faint)">Updating…</div></div>'+
+    '<div class="rt"><div class="k">24h vol</div><div class="v">$1.24B</div></div></div>'+
+    '<div style="padding:0 var(--s16)"><div class="skel" style="height:150px"></div></div>'+
+    '<div class="ranges"><button class="on">1H</button><button>1D</button><button>1W</button><button>1M</button></div>'+
+    '<div style="padding:0 var(--s16)"><div class="skel" style="height:54px"></div></div>';},
+  error:function(){return '<div class="hd"><div><div class="px mono">$97,240</div>'+
+    '<div class="chg" style="color:var(--faint)">Last known · 2m ago</div></div>'+
+    '<div class="rt"><div class="k">24h vol</div><div class="v">—</div></div></div>'+
+    '<div class="banner"><svg viewBox="0 0 24 24"><path d="M12 8v5M12 16v.5"/><circle cx="12" cy="12" r="9"/></svg>'+
+    '<div><div class="t">Couldn\'t load the chart. Your position and balance are unaffected.</div>'+
+    '<a href="#" onclick="toast(\'Refetching\');return false">Retry →</a></div></div>'+
+    '<div class="sec"><span class="lbl">Your position</span></div>'+
+    '<div class="card"><div class="row"><div class="mn"><div class="t">Long · 0.25 BTC</div>'+
+    '<div class="s">Entry $94,100 · 3× leverage</div></div><div class="rt"><div class="a up">+$785</div></div></div></div>';},
+  nowallet:function(){return '<div class="hd"><div><div class="px mono">$97,240</div>'+
+    '<div class="chg up">+2.41% today</div></div><div class="rt"><div class="k">24h vol</div>'+
+    '<div class="v">$1.24B</div></div></div><div style="padding:0 var(--s8)"><div id="st-chart"></div></div>'+
+    '<div class="sec"><span class="lbl">Your position</span></div>'+
+    '<div class="state" style="padding-top:var(--s8)"><div class="ico"><svg viewBox="0 0 24 24">'+
+    '<path d="M3 7h18v12H3zM3 7l3-3h12l3 3M16 13h2"/></svg></div><h5>No wallet connected</h5>'+
+    '<p>Connect one to see your positions and trade this market.</p></div>';},
+  nonews:function(){return '<div class="hd"><div><div class="px mono">$2.41</div>'+
+    '<div class="chg dn">-1.80% today</div></div><div class="rt"><div class="k">24h vol</div>'+
+    '<div class="v">$84K</div></div></div><div style="padding:0 var(--s8)"><div id="st-chart"></div></div>'+
+    '<div class="ranges"><button class="on">1H</button><button>1D</button><button>1W</button><button>1M</button>'+
+    '<span class="sp"></span><button class="tgl" style="opacity:.4">No stories</button></div>'+
+    '<div class="sec"><span class="lbl">Your position</span></div>'+
+    '<div class="card"><div class="row"><div class="mn"><div class="t">No position</div>'+
+    '<div class="s">Nothing open on this market</div></div></div></div>';}
+};
+function setState(k){
+  document.getElementById('st-body').innerHTML=STATES[k]();
+  [].forEach.call(document.getElementById('ssw').children,function(x){x.classList.toggle('on',x.dataset.s===k);});
+  var bar=document.getElementById('st-bar');
+  bar.innerHTML = k==='nowallet'
+    ? '<button class="btn gold">Connect wallet</button>'
+    : '<button class="btn gain">Long</button><button class="btn lose">Short</button>';
+  var el=document.getElementById('st-chart');
+  if(el) chart(el,{data:k==='nonews'?walk(60,2.6,.03,-.0006):BTC,height:150,
+    fmt:k==='nonews'?function(v){return '$'+v.toFixed(2);}:function(v){return '$'+Math.round(v/1000)+'K';}});
+}
+document.getElementById('ssw').addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b)return;
+  [].forEach.call(this.children,function(x){x.classList.toggle('on',x===b);});
+  setState(b.dataset.s);
+});
+
+/* ---------------- toast ---------------- */
+var tTimer=null;
+function toast(msg){
+  var t=document.getElementById('toast');
+  if(!t){t=document.createElement('div');t.id='toast';
+    t.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:28px;z-index:9999;'+
+    'background:#0A4A60;border:1px solid #185A70;border-radius:6px;padding:10px 16px;color:#F5FAFC;'+
+    'font:13px Roboto,system-ui,sans-serif;opacity:0;transition:opacity .18s';
+    document.body.appendChild(t);}
+  t.textContent=msg; t.style.opacity=1;
+  clearTimeout(tTimer); tTimer=setTimeout(function(){t.style.opacity=0;},1700);
+}
+
+/* ---------------- live price ticks ---------------- */
+setInterval(function(){
+  if(V!=='phoenix') return;
+  if(!document.getElementById('s-detail').classList.contains('on')) return;
+  var el=document.getElementById('d-px');
+  var cur=Number(el.textContent.replace(/[$,]/g,''));
+  var next=cur+(Math.random()-.48)*28;
+  el.textContent='$'+Math.round(next).toLocaleString('en-US');
+  el.style.color=next>=cur?'#06D6A0':'#EF476F';
+  setTimeout(function(){el.style.color='#F5FAFC';},380);
+},2200);
+
+paint(); pTab(0); setState('loading');
+</script>
+</body></html>
