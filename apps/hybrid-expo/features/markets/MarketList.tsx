@@ -24,7 +24,6 @@
  * carries (via `MarketLead`), including none on first paint.
  */
 
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { memo, useMemo, type ReactNode } from 'react';
 import {
   FlatList,
@@ -32,12 +31,13 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
   type ListRenderItemInfo,
 } from 'react-native';
 
 import { TokenIcon, TokenPairIcon } from '@/components/TokenIcon';
+import { DiscoveryStateCard } from '@/features/discovery/DiscoveryStateCard';
+import { DiscoverySearchField } from '@/features/discovery/DiscoverySearchField';
 import type {
   Cell,
   CellTone,
@@ -123,9 +123,37 @@ export function MarketList({
   const listEmptyComponent = loading ? (
     <MarketListSkeleton styles={styles} />
   ) : error ? (
-    <MarketListFailure styles={styles} theme={theme} displayName={displayName} error={error} />
+    <DiscoveryStateCard
+      containerStyle={styles.stateCard}
+      icon={{ name: 'cloud-off', size: 23, color: theme.neg, wrapStyle: styles.stateIcon }}
+      title={`${displayName} unavailable`}
+      titleStyle={styles.stateTitle}
+      message={error.message}
+      messageStyle={styles.stateText}
+      retry={{
+        onPress: error.onRetry,
+        label: 'Try again',
+        accessibilityLabel: `Try loading ${displayName} again`,
+      }}
+      retryButtonStyle={styles.stateButton}
+      retryTextStyle={styles.stateButtonText}
+    />
   ) : empty ? (
-    <MarketListEmptyState styles={styles} theme={theme} empty={empty} />
+    <DiscoveryStateCard
+      containerStyle={styles.stateCard}
+      icon={{ name: 'search-off', size: 23, color: theme.accent, wrapStyle: styles.stateIcon }}
+      title={empty.searching ? 'No matching markets' : 'No markets available'}
+      titleStyle={styles.stateTitle}
+      message={empty.searching ? 'Try another search term.' : 'This venue has not returned any markets.'}
+      messageStyle={styles.stateText}
+      retry={
+        empty.searching && empty.onReset
+          ? { onPress: empty.onReset, label: 'Reset search', accessibilityLabel: 'Reset market search' }
+          : undefined
+      }
+      retryButtonStyle={styles.stateButton}
+      retryTextStyle={styles.stateButtonText}
+    />
   ) : null;
 
   return (
@@ -174,7 +202,30 @@ export function MarketList({
         }
       />
 
-      {searchBar ? <MarketListSearchBarView styles={styles} theme={theme} searchBar={searchBar} /> : null}
+      {searchBar ? (
+        <View style={styles.searchBar}>
+          <DiscoverySearchField
+            value={searchBar.value}
+            onChangeText={searchBar.onChange}
+            placeholder={searchBar.placeholder}
+            placeholderTextColor={theme.textFaint}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            accessibilityLabel={searchBar.placeholder}
+            icon={{ size: 16, color: theme.textDim }}
+            clear={
+              searchBar.value.length > 0
+                ? { style: styles.searchClear, icon: { name: 'close', size: 14, color: theme.textDim } }
+                : undefined
+            }
+          />
+          {searchBar.value.length > 0 && searchBar.resultCount !== undefined && searchBar.totalCount !== undefined ? (
+            <Text style={styles.marketCount}>
+              {searchBar.resultCount}/{searchBar.totalCount}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -297,117 +348,6 @@ function MarketListSkeleton({ styles }: { styles: Styles }) {
           <View style={styles.skeletonValueWide} />
         </View>
       ))}
-    </View>
-  );
-}
-
-function MarketListFailure({
-  styles,
-  theme,
-  displayName,
-  error,
-}: {
-  styles: Styles;
-  theme: MarketListTheme;
-  displayName: string;
-  error: MarketListError;
-}) {
-  return (
-    <View style={styles.stateCard}>
-      <View style={styles.stateIcon}>
-        <MaterialIcons name="cloud-off" size={23} color={theme.neg} />
-      </View>
-      <Text style={styles.stateTitle}>{`${displayName} unavailable`}</Text>
-      <Text style={styles.stateText}>{error.message}</Text>
-      <Pressable
-        onPress={error.onRetry}
-        style={styles.stateButton}
-        accessibilityRole="button"
-        accessibilityLabel={`Try loading ${displayName} again`}
-      >
-        <Text style={styles.stateButtonText}>Try again</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function MarketListEmptyState({
-  styles,
-  theme,
-  empty,
-}: {
-  styles: Styles;
-  theme: MarketListTheme;
-  empty: MarketListEmpty;
-}) {
-  return (
-    <View style={styles.stateCard}>
-      <View style={styles.stateIcon}>
-        <MaterialIcons name="search-off" size={23} color={theme.accent} />
-      </View>
-      <Text style={styles.stateTitle}>
-        {empty.searching ? 'No matching markets' : 'No markets available'}
-      </Text>
-      <Text style={styles.stateText}>
-        {empty.searching
-          ? 'Try another search term.'
-          : 'This venue has not returned any markets.'}
-      </Text>
-      {empty.searching && empty.onReset ? (
-        <Pressable
-          onPress={empty.onReset}
-          style={styles.stateButton}
-          accessibilityRole="button"
-          accessibilityLabel="Reset market search"
-        >
-          <Text style={styles.stateButtonText}>Reset search</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function MarketListSearchBarView({
-  styles,
-  theme,
-  searchBar,
-}: {
-  styles: Styles;
-  theme: MarketListTheme;
-  searchBar: MarketListSearchBar;
-}) {
-  const { value, onChange, placeholder, resultCount, totalCount } = searchBar;
-  const showCount = value.length > 0 && resultCount !== undefined && totalCount !== undefined;
-
-  return (
-    <View style={styles.searchBar}>
-      <MaterialIcons name="search" size={16} color={theme.textDim} />
-      <TextInput
-        style={styles.searchInput}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textFaint}
-        autoCapitalize="characters"
-        autoCorrect={false}
-        accessibilityLabel={placeholder}
-      />
-      {value.length > 0 && (
-        <Pressable
-          onPress={() => onChange('')}
-          hitSlop={8}
-          style={styles.searchClear}
-          accessibilityRole="button"
-          accessibilityLabel="Clear search"
-        >
-          <MaterialIcons name="close" size={14} color={theme.textDim} />
-        </Pressable>
-      )}
-      {showCount && (
-        <Text style={styles.marketCount}>
-          {resultCount}/{totalCount}
-        </Text>
-      )}
     </View>
   );
 }

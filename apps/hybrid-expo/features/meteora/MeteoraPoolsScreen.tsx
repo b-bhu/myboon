@@ -4,16 +4,18 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppProfileButton } from '@/components/AppProfileButton';
+import {
+  DiscoveryBottomSheet,
+} from '@/features/discovery/DiscoveryBottomSheet';
+import { DiscoverySearchField } from '@/features/discovery/DiscoverySearchField';
 import { METEORA_COLORS, METEORA_TINTS } from '@/features/meteora/meteora.theme';
 import { MarketList } from '@/features/markets/MarketList';
 import { METEORA_COLUMNS, METEORA_THEME, meteoraToRow } from '@/features/meteora/meteora.rows';
@@ -279,8 +281,7 @@ function PoolsToolbar({
     <View style={styles.toolbar}>
       <View style={styles.discoveryRow}>
         <View style={styles.searchBar}>
-          <MaterialIcons name="search" size={18} color={METEORA.textDim} />
-          <TextInput
+          <DiscoverySearchField
             value={searchText}
             onChangeText={onSearchTextChange}
             placeholder="Search pools or tokens"
@@ -289,17 +290,13 @@ function PoolsToolbar({
             autoCorrect={false}
             style={styles.searchInput}
             accessibilityLabel="Search Meteora pools"
+            icon={{ size: 18, color: METEORA.textDim }}
+            clear={{
+              onPress: () => onSearchTextChange(''),
+              icon: { name: 'close', size: 17, color: METEORA.textDim },
+              accessibilityLabel: 'Clear pool search',
+            }}
           />
-          {searchText.length > 0 ? (
-            <Pressable
-              onPress={() => onSearchTextChange('')}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Clear pool search"
-            >
-              <MaterialIcons name="close" size={17} color={METEORA.textDim} />
-            </Pressable>
-          ) : null}
         </View>
 
         <Pressable
@@ -327,38 +324,37 @@ function SortSheet({
   onChange: (value: PoolSort) => void;
 }) {
   return (
-    <Modal
+    <DiscoveryBottomSheet
       visible={visible}
-      transparent
+      onClose={onClose}
+      title="Sort pools"
       animationType="fade"
-      onRequestClose={onClose}
+      rootStyle={styles.modalRoot}
+      backdropStyle={styles.modalBackdrop}
+      sheetStyle={styles.sortSheet}
+      grabberStyle={styles.sortHandle}
+      titleStyle={styles.sortTitle}
     >
-      <Pressable style={styles.modalBackdrop} onPress={onClose}>
-        <Pressable style={styles.sortSheet} onPress={(event) => event.stopPropagation()}>
-          <View style={styles.sortHandle} />
-          <Text style={styles.sortTitle}>Sort pools</Text>
-          {SORT_OPTIONS.map((option) => {
-            const selected = value === option.id;
-            return (
-              <Pressable
-                key={option.id}
-                onPress={() => onChange(option.id)}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                style={[styles.sortOption, selected && styles.sortOptionActive]}
-              >
-                <Text style={[styles.sortOptionText, selected && styles.sortOptionTextActive]}>
-                  {option.label}
-                </Text>
-                {selected ? (
-                  <MaterialIcons name="check" size={19} color={METEORA.accent} />
-                ) : null}
-              </Pressable>
-            );
-          })}
-        </Pressable>
-      </Pressable>
-    </Modal>
+      {SORT_OPTIONS.map((option) => {
+        const selected = value === option.id;
+        return (
+          <Pressable
+            key={option.id}
+            onPress={() => onChange(option.id)}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            style={[styles.sortOption, selected && styles.sortOptionActive]}
+          >
+            <Text style={[styles.sortOptionText, selected && styles.sortOptionTextActive]}>
+              {option.label}
+            </Text>
+            {selected ? (
+              <MaterialIcons name="check" size={19} color={METEORA.accent} />
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </DiscoveryBottomSheet>
   );
 }
 
@@ -446,9 +442,12 @@ const styles = StyleSheet.create({
   loadingMore: {
     paddingVertical: 22,
   },
-  modalBackdrop: {
+  modalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: METEORA_TINTS.backdrop,
   },
   sortSheet: {
