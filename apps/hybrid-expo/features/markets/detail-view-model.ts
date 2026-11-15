@@ -64,6 +64,8 @@ export interface MarketDetailActionButtonVM {
   variant: 'primary' | 'secondary';
   disabled?: boolean;
   busy?: boolean;
+  /** Opt out of the frame sheet (venue opens its own surface instead). */
+  opensSheet?: boolean;
 }
 
 export interface MarketDetailActionBarVM {
@@ -88,6 +90,11 @@ export interface MarketDetailViewModel {
   newsStories: readonly NewsStoryCard[];
   positionsTitle: string;
   positionRows: readonly PositionRowVM[];
+  /**
+   * Venue body replacing the frame's position rows when supplied (Polymarket's
+   * picks/stats panel). Empty positionRows hide the section when no body given.
+   */
+  positionsBody?: ReactNode;
   /** Transient position-action feedback (submitted, failures). */
   positionsMessage?: string;
   actionBar: MarketDetailActionBarVM;

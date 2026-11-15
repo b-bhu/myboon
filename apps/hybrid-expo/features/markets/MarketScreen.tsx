@@ -47,10 +47,13 @@ export function MarketScreen({ vm, onConnect }: MarketScreenProps) {
 
   const openTradeSheet = () => setSheetOpen(true);
   const connectHandler = vm.actionBar.onConnect ?? onConnect;
-  /** Bar buttons always open the sheet; a venue-supplied handler runs first (e.g. side preset). */
-  const composeOpenSheet = (first?: () => void) => () => {
-    first?.();
-    openTradeSheet();
+  /** Bar buttons open the sheet; a venue-supplied handler runs first unless the button opts out. */
+  const composeOpenSheet = (first?: () => void, opensSheet = true) => {
+    if (!opensSheet) return first;
+    return () => {
+      first?.();
+      openTradeSheet();
+    };
   };
 
   return (
@@ -67,7 +70,9 @@ export function MarketScreen({ vm, onConnect }: MarketScreenProps) {
         <RangeNewsStrip vm={vm.range} />
         <RsiSlot />
         <NewsRailSection stories={vm.newsStories} />
-        <PositionRowsSection title={vm.positionsTitle} rows={vm.positionRows} footer={vm.positionsMessage} />
+        {vm.positionsBody ?? (
+          <PositionRowsSection title={vm.positionsTitle} rows={vm.positionRows} footer={vm.positionsMessage} />
+        )}
       </ScrollView>
 
       <PinnedActionBarSection
@@ -76,8 +81,8 @@ export function MarketScreen({ vm, onConnect }: MarketScreenProps) {
             ? {
                 ...vm.actionBar,
                 buttons: [
-                  { ...vm.actionBar.buttons[0], onPress: composeOpenSheet(vm.actionBar.buttons[0].onPress) },
-                  { ...vm.actionBar.buttons[1], onPress: composeOpenSheet(vm.actionBar.buttons[1].onPress) },
+                  { ...vm.actionBar.buttons[0], onPress: composeOpenSheet(vm.actionBar.buttons[0].onPress, vm.actionBar.buttons[0].opensSheet) },
+                  { ...vm.actionBar.buttons[1], onPress: composeOpenSheet(vm.actionBar.buttons[1].onPress, vm.actionBar.buttons[1].opensSheet) },
                 ],
               }
             : { ...vm.actionBar, onConnect: connectHandler }
