@@ -70,6 +70,8 @@ export interface MarketDetailActionBarVM {
   connected: boolean;
   /** Shown as the single connect action + reason when no wallet is linked. */
   connectReason?: string;
+  /** Word for the single action's button (defaults to the connect wording). */
+  connectLabel?: string;
   onConnect?: () => void;
   buttons: [MarketDetailActionButtonVM, MarketDetailActionButtonVM];
 }

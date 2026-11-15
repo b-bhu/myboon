@@ -185,7 +185,7 @@ export function PinnedActionBarSection({ vm }: { vm: MarketDetailActionBarVM }) 
     return (
       <View style={styles.actionBar}>
         <Pressable onPress={vm.onConnect} style={styles.connectButton}>
-          <Text style={styles.connectButtonText}>{vm.connectReason ?? 'Connect wallet to trade'}</Text>
+          <Text style={styles.connectButtonText}>{vm.connectLabel ?? vm.connectReason ?? 'Connect wallet to trade'}</Text>
         </Pressable>
       </View>
     );

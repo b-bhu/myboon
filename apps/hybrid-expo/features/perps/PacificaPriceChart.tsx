@@ -1,21 +1,26 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType, ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  LayoutChangeEvent,
-  PanResponder,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import Svg, { Defs, LinearGradient, Stop, Path, Circle, Line } from 'react-native-svg';
+/**
+ * Pacifica price chart on the shared MarketChart (#651).
+ *
+ * Replaces the retired standalone react-native-svg chart: same timeframes and
+ * candle source (perps.public-api fetchCandles), now rendered by the shared
+ * chart library so all four venues serve one chart implementation. The
+ * timeframe control is lifted to the shared range strip when the parent passes
+ * timeframeIndex/onTimeframeIndexChange.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { MarketChart, type MarketChartSelection, type MarketCandle, type MarketChartStatus } from '@/features/charts';
 import { fetchCandles, formatPrice } from '@/features/perps/perps.public-api';
 import type { CandleInterval } from '@/features/perps/perps.public-api';
-import type { Candle } from '@/features/perps/perps.types';
-import { semantic, tokens } from '@/theme';
 
-const TIMEFRAMES: { label: string; interval: CandleInterval; count: number }[] = [
+export interface PacificaChartTimeframe {
+  readonly label: '1H' | '1D' | '1W' | '1M' | 'ALL';
+  readonly interval: CandleInterval;
+  readonly count: number;
+}
+
+/** Same five ranges the retired inline chart offered (kept verbatim). */
+export const PACIFICA_CHART_TIMEFRAMES: readonly PacificaChartTimeframe[] = [
   { label: '1H', interval: '1m', count: 60 },
   { label: '1D', interval: '15m', count: 96 },
   { label: '1W', interval: '1h', count: 168 },
@@ -23,292 +28,115 @@ const TIMEFRAMES: { label: string; interval: CandleInterval; count: number }[] =
   { label: 'ALL', interval: '1d', count: 365 },
 ];
 
-const ChartDefs = Defs as unknown as ComponentType<{ children?: ReactNode }>;
+export const DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX = 1; // 1D, as before
 
-interface PriceChartProps {
+interface PacificaPriceChartProps {
   symbol: string;
-  height?: number;
-  /** Called when user scrubs — parent can update header price */
+  timeframeIndex?: number;
+  onTimeframeIndexChange?: (index: number) => void;
   onScrub?: (price: number | null, time: number | null) => void;
 }
 
-export function PacificaPriceChart({ symbol, height = 160, onScrub }: PriceChartProps) {
-  const [tfIndex, setTfIndex] = useState(1); // default 1D
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+export function PacificaPriceChart({
+  symbol,
+  timeframeIndex: controlledTimeframeIndex,
+  onTimeframeIndexChange,
+  onScrub,
+}: PacificaPriceChartProps) {
+  const [internalTimeframeIndex] = useState(
+    DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX,
+  );
+  const [candles, setCandles] = useState<readonly MarketCandle[]>([]);
+  const [status, setStatus] = useState<MarketChartStatus>({
+    kind: 'loading',
+    accessibilityLabel: `Loading ${symbol} chart`,
+  });
+  const [reloadSignal, setReloadSignal] = useState(0);
 
-  const tf = TIMEFRAMES[tfIndex];
+  const timeframeIndex = controlledTimeframeIndex ?? internalTimeframeIndex;
+  const timeframe = PACIFICA_CHART_TIMEFRAMES[timeframeIndex] ?? PACIFICA_CHART_TIMEFRAMES[0];
+  const seriesKey = `pacifica:${symbol}:${timeframe.interval}:${timeframe.count}`;
+  const scrubCallbackRef = useRef(onScrub);
+  scrubCallbackRef.current = onScrub;
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetchCandles(symbol, tf.interval, tf.count)
+    setStatus({ kind: 'loading', accessibilityLabel: `Loading ${symbol} chart` });
+    scrubCallbackRef.current?.(null, null);
+    void fetchCandles(symbol, timeframe.interval, timeframe.count)
       .then((data) => {
-        if (!cancelled) setCandles(data);
+        if (cancelled) return;
+        const marketCandles = data.map((candle) => ({
+          timeMs: candle.time,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+        }));
+        setCandles(marketCandles);
+        setStatus(marketCandles.length > 0
+          ? { kind: 'ready' }
+          : {
+              kind: 'empty',
+              title: 'No candle history',
+              description: 'Pacifica returned no candles for this range.',
+            });
       })
       .catch(() => {
-        if (!cancelled) setCandles([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (cancelled) return;
+        setCandles([]);
+        setStatus({
+          kind: 'error',
+          title: 'Chart unavailable',
+          description: 'Pacifica candle history could not be loaded.',
+          retryLabel: 'Retry',
+        });
       });
-    return () => { cancelled = true; };
-  }, [symbol, tf.interval, tf.count]);
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadSignal, seriesKey, symbol, timeframe.count, timeframe.interval]);
 
-  const isUp =
-    candles.length >= 2 ? candles[candles.length - 1].close >= candles[0].open : true;
-  const lineColor = isUp ? tokens.colors.viridian : tokens.colors.vermillion;
+  const handleSelectionChange = useCallback((selection: MarketChartSelection) => {
+    scrubCallbackRef.current?.(
+      selection.candle?.close ?? null,
+      selection.candle?.timeMs ?? null,
+    );
+  }, []);
 
-  // Scrub price for display
-  const scrubCandle = scrubIndex !== null ? candles[scrubIndex] : null;
+  const handleRetry = useCallback(() => {
+    setReloadSignal((value) => value + 1);
+  }, []);
 
-  const handleScrub = useCallback((index: number | null) => {
-    setScrubIndex(index);
-    if (onScrub) {
-      if (index !== null && candles[index]) {
-        onScrub(candles[index].close, candles[index].time);
-      } else {
-        onScrub(null, null);
-      }
-    }
-  }, [candles, onScrub]);
+  const formatTime = useCallback(
+    (timeMs: number) => formatPacificChartTime(timeMs, timeframe.interval),
+    [timeframe.interval],
+  );
 
   return (
-    <View style={styles.container}>
-      {/* Scrub price overlay */}
-      {scrubCandle && (
-        <View style={styles.scrubOverlay}>
-          <Text style={[styles.scrubPrice, { color: lineColor }]}>
-            {formatPrice(scrubCandle.close)}
-          </Text>
-          <Text style={styles.scrubTime}>
-            {formatScrubTime(scrubCandle.time, tf.interval)}
-          </Text>
-        </View>
-      )}
-
-      {/* Chart area */}
-      <View style={[styles.chartArea, { height }]}>
-        {loading ? (
-          <ActivityIndicator size="small" color={semantic.text.accent} />
-        ) : candles.length < 2 ? (
-          <Text style={styles.noData}>No data</Text>
-        ) : (
-          <InteractiveChart
-            candles={candles}
-            height={height}
-            color={lineColor}
-            scrubIndex={scrubIndex}
-            onScrub={handleScrub}
-          />
-        )}
-      </View>
-
-      {/* Timeframe pills */}
-      <View style={styles.tfRow}>
-        {TIMEFRAMES.map((t, i) => (
-          <Pressable
-            key={t.label}
-            style={[styles.tfPill, i === tfIndex && { backgroundColor: isUp ? 'rgba(74,140,111,0.12)' : 'rgba(217,83,79,0.12)' }]}
-            onPress={() => { setTfIndex(i); setScrubIndex(null); }}>
-            <Text style={[styles.tfText, i === tfIndex && { color: lineColor }]}>
-              {t.label}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-    </View>
+    <MarketChart
+      seriesKey={seriesKey}
+      candles={candles}
+      mode="line"
+      status={status}
+      formatPrice={formatPrice}
+      formatTime={formatTime}
+      accessibilityLabel={`${symbol} Pacifica price chart`}
+      onSelectionChange={handleSelectionChange}
+      onRetry={handleRetry}
+    />
   );
 }
 
-// ─── Format scrub timestamp ─────────────────────────────────────────────────
-
-function formatScrubTime(ms: number, interval: CandleInterval): string {
-  const d = new Date(ms);
-  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+function formatPacificChartTime(timeMs: number, interval: CandleInterval): string {
+  const date = new Date(timeMs);
+  if (!Number.isFinite(date.getTime())) return '';
+  const time = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   if (interval === '1m' || interval === '3m' || interval === '5m' || interval === '15m' || interval === '30m') {
     return time;
   }
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  if (interval === '1d') return date;
-  return `${date}, ${time}`;
+  const day = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (interval === '1d') return day;
+  return `${day}, ${time}`;
 }
-
-// ─── Interactive chart with touch scrubbing ─────────────────────────────────
-
-interface InteractiveChartProps {
-  candles: Candle[];
-  height: number;
-  color: string;
-  scrubIndex: number | null;
-  onScrub: (index: number | null) => void;
-}
-
-const CHART_PAD_TOP = 8;
-const CHART_PAD_BOTTOM = 8;
-
-function InteractiveChart({ candles, height, color, scrubIndex, onScrub }: InteractiveChartProps) {
-  const layoutWidth = useRef(0);
-
-  const closes = useMemo(() => candles.map((c) => c.close), [candles]);
-  const min = useMemo(() => Math.min(...closes), [closes]);
-  const max = useMemo(() => Math.max(...closes), [closes]);
-  const range = max - min || 1;
-  const drawH = height - CHART_PAD_TOP - CHART_PAD_BOTTOM;
-
-  const points = useMemo(() =>
-    closes.map((val, i) => ({
-      x: (i / (closes.length - 1)) * 100, // percentage
-      y: CHART_PAD_TOP + drawH - ((val - min) / range) * drawH,
-    })),
-    [closes, min, range, drawH],
-  );
-
-  const linePath = useMemo(() =>
-    points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x.toFixed(2)},${p.y.toFixed(1)}`).join(' '),
-    [points],
-  );
-
-  const fillPath = `${linePath} L100,${height} L0,${height} Z`;
-  const lastPt = points[points.length - 1];
-
-  // Compute index from touch X
-  const getIndexFromX = useCallback((pageX: number, layoutX: number) => {
-    const x = pageX - layoutX;
-    const pct = Math.max(0, Math.min(1, x / layoutWidth.current));
-    return Math.round(pct * (candles.length - 1));
-  }, [candles.length]);
-
-  const layoutXRef = useRef(0);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => true,
-    onMoveShouldSetPanResponder: () => true,
-    onPanResponderGrant: (evt) => {
-      const idx = getIndexFromX(evt.nativeEvent.pageX, layoutXRef.current);
-      onScrub(idx);
-    },
-    onPanResponderMove: (evt) => {
-      const idx = getIndexFromX(evt.nativeEvent.pageX, layoutXRef.current);
-      onScrub(idx);
-    },
-    onPanResponderRelease: () => {
-      onScrub(null);
-    },
-    onPanResponderTerminate: () => {
-      onScrub(null);
-    },
-  }), [getIndexFromX, onScrub]);
-
-  const handleLayout = useCallback((e: LayoutChangeEvent) => {
-    layoutWidth.current = e.nativeEvent.layout.width;
-    layoutXRef.current = e.nativeEvent.layout.x;
-    // Measure absolute position
-    (e.target as any)?.measureInWindow?.((x: number) => {
-      layoutXRef.current = x;
-    });
-  }, []);
-
-  // Crosshair data
-  const scrubPt = scrubIndex !== null ? points[scrubIndex] : null;
-
-  return (
-    <View
-      style={{ width: '100%', height }}
-      onLayout={handleLayout}
-      {...panResponder.panHandlers}
-    >
-      <Svg width="100%" height={height} viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
-        <ChartDefs>
-          <LinearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0%" stopColor={color} stopOpacity={0.25} />
-            <Stop offset="100%" stopColor={color} stopOpacity={0} />
-          </LinearGradient>
-        </ChartDefs>
-        <Path d={fillPath} fill="url(#chartFill)" />
-        <Path d={linePath} fill="none" stroke={color} strokeWidth={0.6} />
-
-        {/* Crosshair line + dot when scrubbing */}
-        {scrubPt && (
-          <>
-            <Line
-              x1={scrubPt.x} y1={0}
-              x2={scrubPt.x} y2={height}
-              stroke="rgba(255,255,255,0.2)"
-              strokeWidth={0.3}
-              strokeDasharray="2,2"
-            />
-            <Circle cx={scrubPt.x} cy={scrubPt.y} r={1.2} fill="#fff" />
-            <Circle cx={scrubPt.x} cy={scrubPt.y} r={2.5} fill={color} opacity={0.4} />
-          </>
-        )}
-
-        {/* End dot (only when not scrubbing) */}
-        {scrubIndex === null && (
-          <>
-            <Circle cx={lastPt.x} cy={lastPt.y} r={1} fill={color} />
-            <Circle cx={lastPt.x} cy={lastPt.y} r={2} fill={color} opacity={0.3} />
-          </>
-        )}
-      </Svg>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: {
-    gap: 0,
-  },
-  scrubOverlay: {
-    position: 'absolute',
-    top: 4,
-    left: 16,
-    right: 16,
-    zIndex: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  scrubPrice: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.md,
-    fontWeight: '700',
-  },
-  scrubTime: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.dim,
-    letterSpacing: 0.5,
-  },
-  chartArea: {
-    paddingHorizontal: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  noData: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-    letterSpacing: 1,
-  },
-  tfRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  tfPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 14,
-  },
-  tfText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-    color: semantic.text.faint,
-  },
-});
