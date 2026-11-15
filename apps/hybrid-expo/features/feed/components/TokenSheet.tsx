@@ -29,9 +29,9 @@ const toneColor = (change: number | null): string => {
 /**
  * Token bottom sheet (feed-mock.html #s-tilesheet, DESIGN.md §12): identity
  * with a tone-tinted letter tile, big mono price with change, the volume /
- * mkt cap / liquidity boxes and the trade buttons (Swap primary, Phoenix
- * perps secondary when the token has one). Price and figures are real heatmap
- * values; the "why it moved" card is a sample-gated mock.
+ * mkt cap / liquidity boxes and the trade buttons (Swap primary, Spot and
+ * Phoenix perps secondary when the token has one). Price and figures are
+ * real heatmap values; the "why it moved" card is a sample-gated mock.
  */
 export function TokenSheet({ token, interval, onClose }: TokenSheetProps) {
   const router = useRouter();
