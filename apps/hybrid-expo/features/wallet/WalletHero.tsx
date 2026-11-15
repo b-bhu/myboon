@@ -8,6 +8,7 @@ const MIX_COLORS = {
   meteora: tokens.walletBrand.meteora,
   phoenix: tokens.walletBrand.phoenix,
   pacifica: tokens.walletBrand.pacifica,
+  polymarket: tokens.walletBrand.polymarket,
 } as const;
 
 function formatUsd(value: number): string {
