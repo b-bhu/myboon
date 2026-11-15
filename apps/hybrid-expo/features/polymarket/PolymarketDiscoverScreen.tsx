@@ -2,18 +2,13 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -23,6 +18,12 @@ import { AppProfileButton } from '@/components/AppProfileButton';
 import { AppTopBar, AppTopBarLogo } from '@/components/AppTopBar';
 import { POLYMARKET_REQUIREMENT } from '@/features/chain/chain.contract';
 import { useChainSigner } from '@/features/chain/useChainSigner';
+import {
+  DiscoveryBottomSheet,
+  DiscoverySheetCloseButton,
+} from '@/features/discovery/DiscoveryBottomSheet';
+import { DiscoveryStateCard } from '@/features/discovery/DiscoveryStateCard';
+import { DiscoverySearchField } from '@/features/discovery/DiscoverySearchField';
 import {
   fetchFeaturedMarkets,
   fetchLivePrices,
@@ -475,51 +476,6 @@ function MoverCard({ item, livePrices, onPress }: { item: FeedItem; livePrices: 
   );
 }
 
-function StateCard({ title, body, retry }: { title: string; body: string; retry?: () => void }) {
-  return (
-    <View style={styles.stateCard}>
-      <Text style={styles.stateTitle}>{title}</Text>
-      <Text style={styles.stateBody}>{body}</Text>
-      {retry ? (
-        <Pressable accessibilityRole="button" onPress={retry} style={styles.retryButton}>
-          <Text style={styles.retryText}>TRY AGAIN</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function BottomSheetShell({
-  visible,
-  title,
-  onClose,
-  children,
-}: {
-  visible: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  const insets = useSafeAreaInsets();
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close sheet" style={styles.modalBackdrop} onPress={onClose} />
-        <View style={[styles.sheet, { paddingBottom: Math.max(20, insets.bottom + 12) }]}>
-          <View style={styles.grabber} />
-          <View style={styles.sheetTitleRow}>
-            <Text style={styles.sheetTitle}>{title}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.sheetClose}>
-              <MaterialIcons name="close" size={20} color={semantic.text.dim} />
-            </Pressable>
-          </View>
-          {children}
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
 function SearchRow({
   image,
   mark,
@@ -606,10 +562,25 @@ function SearchSheet({
   const hasResults = Boolean(results && (results.events.length || results.teams.length || results.tags.length));
 
   return (
-    <BottomSheetShell visible={visible} title="Search Polymarket" onClose={onClose}>
+    <DiscoveryBottomSheet
+      visible={visible}
+      title="Search Polymarket"
+      onClose={onClose}
+      statusBarTranslucent
+      keyboardAvoiding
+      rootStyle={styles.modalRoot}
+      backdropStyle={styles.modalBackdrop}
+      sheetStyle={styles.sheet}
+      padBottomToSafeArea
+      grabberStyle={styles.grabber}
+      titleRowStyle={styles.sheetTitleRow}
+      titleStyle={styles.sheetTitle}
+      closeButton={
+        <DiscoverySheetCloseButton onPress={onClose} style={styles.sheetClose} iconSize={20} iconColor={semantic.text.dim} />
+      }
+    >
       <View style={styles.searchField}>
-        <MaterialIcons name="search" size={20} color={semantic.text.faint} />
-        <TextInput
+        <DiscoverySearchField
           autoFocus
           value={query}
           onChangeText={setQuery}
@@ -619,12 +590,14 @@ function SearchSheet({
           returnKeyType="search"
           accessibilityLabel="Search markets, teams, and leagues"
           style={styles.searchInput}
+          icon={{ size: 20, color: semantic.text.faint }}
+          clear={{
+            onPress: () => setQuery(''),
+            icon: { name: 'cancel', size: 18, color: semantic.text.faint },
+            style: styles.clearSearch,
+            accessibilityLabel: 'Clear search',
+          }}
         />
-        {query ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => setQuery('')} style={styles.clearSearch}>
-            <MaterialIcons name="cancel" size={18} color={semantic.text.faint} />
-          </Pressable>
-        ) : null}
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.sheetResults}>
         {query.trim().length < 2 ? (
@@ -673,7 +646,7 @@ function SearchSheet({
           />
         ))}
       </ScrollView>
-    </BottomSheetShell>
+    </DiscoveryBottomSheet>
   );
 }
 
@@ -903,17 +876,18 @@ export default function PolymarketDiscoverScreen() {
               </View>
             </>
           ) : (
-            <StateCard title="Featured markets unavailable" body={upDownError ?? feedError ?? 'Pull down to refresh.'} retry={() => void loadDiscover(true)} />
+            <DiscoveryStateCard {...stateCardChrome} title="Featured markets unavailable" message={upDownError ?? feedError ?? 'Pull down to refresh.'} retry={{ onPress: () => void loadDiscover(true), label: 'TRY AGAIN' }} />
           )}
           {upDownError && featuredItems.length > 0 ? <Text style={styles.inlineNotice}>{upDownError}</Text> : null}
         </View>
 
         <View style={styles.content}>
-          {feedError && !feed ? <StateCard title="Markets unavailable" body={feedError} retry={() => void loadDiscover(true)} /> : null}
+          {feedError && !feed ? <DiscoveryStateCard {...stateCardChrome} title="Markets unavailable" message={feedError} retry={{ onPress: () => void loadDiscover(true), label: 'TRY AGAIN' }} /> : null}
           {!loading && feed && visibleItems.length === 0 ? (
-            <StateCard
+            <DiscoveryStateCard
+              {...stateCardChrome}
               title={selectedLeague ? `${LEAGUE_LABELS[selectedLeague] ?? selectedLeague} is quiet` : `No ${activeCategory.toLowerCase()} markets`}
-              body="There are no active markets in the published collection right now."
+              message="There are no active markets in the published collection right now."
             />
           ) : null}
 
@@ -985,17 +959,33 @@ export default function PolymarketDiscoverScreen() {
 
       <SearchSheet visible={searchOpen} onClose={() => setSearchOpen(false)} onOpenEvent={openSearchEvent} />
 
-      <BottomSheetShell visible={leagueOpen} title="Find a league" onClose={() => setLeagueOpen(false)}>
+      <DiscoveryBottomSheet
+        visible={leagueOpen}
+        title="Find a league"
+        onClose={() => setLeagueOpen(false)}
+        statusBarTranslucent
+        keyboardAvoiding
+        rootStyle={styles.modalRoot}
+        backdropStyle={styles.modalBackdrop}
+        sheetStyle={styles.sheet}
+        padBottomToSafeArea
+        grabberStyle={styles.grabber}
+        titleRowStyle={styles.sheetTitleRow}
+        titleStyle={styles.sheetTitle}
+        closeButton={
+          <DiscoverySheetCloseButton onPress={() => setLeagueOpen(false)} style={styles.sheetClose} iconSize={20} iconColor={semantic.text.dim} />
+        }
+      >
         <View style={styles.searchField}>
-          <MaterialIcons name="search" size={20} color={semantic.text.faint} />
-          <TextInput
+          <DiscoverySearchField
             value={leagueQuery}
             onChangeText={setLeagueQuery}
             placeholder="Search football, cricket, F1"
             placeholderTextColor={semantic.text.faint}
-            accessibilityLabel="Search leagues"
             autoCorrect={false}
+            accessibilityLabel="Search leagues"
             style={styles.searchInput}
+            icon={{ size: 20, color: semantic.text.faint }}
           />
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} style={styles.sheetResults}>
@@ -1011,7 +1001,7 @@ export default function PolymarketDiscoverScreen() {
           ))}
           {shownLeagues.length === 0 ? <Text style={styles.searchEmpty}>No published leagues found.</Text> : null}
         </ScrollView>
-      </BottomSheetShell>
+      </DiscoveryBottomSheet>
     </View>
   );
 }
@@ -1165,3 +1155,13 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.7 },
   cardPressed: { opacity: 0.84, transform: [{ scale: 0.99 }] },
 });
+
+// Shared chrome passed to every DiscoveryStateCard below; Poly keeps its
+// own stateCard/retry look via these style keys.
+const stateCardChrome = {
+  containerStyle: styles.stateCard,
+  titleStyle: styles.stateTitle,
+  messageStyle: styles.stateBody,
+  retryButtonStyle: styles.retryButton,
+  retryTextStyle: styles.retryText,
+} as const;

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SpotTokenBalance, SpotWalletBalances } from '@myboon/shared/spot';
 import { AppTopBar, AppTopBarIconButton } from '@/components/AppTopBar';
 import { TokenIcon } from '@/components/TokenIcon';
+import { DiscoveryStateCard } from '@/features/discovery/DiscoveryStateCard';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { subscribeWalletDataChanged } from '@/features/wallet/wallet.refresh';
 import { useWallet } from '@/hooks/useWallet';
@@ -49,10 +50,6 @@ function TokenMark({ token }: { token: SpotTokenSummary }) {
 
 function hasPositivePosition(position: SpotTokenBalance | null): position is SpotTokenBalance {
   return !!position && /^\d+$/.test(position.amount) && BigInt(position.amount) > 0n;
-}
-
-function StateCard({ title, message, retry }: { title: string; message?: string; retry?: () => void }) {
-  return <View style={styles.stateCard}><MaterialIcons name="cloud-off" size={23} color={semantic.text.accentDim} /><Text style={styles.stateTitle}>{title}</Text>{message ? <Text style={styles.stateText}>{message}</Text> : null}{retry ? <Pressable onPress={retry} style={styles.stateButton}><Text style={styles.stateButtonText}>Try again</Text></Pressable> : null}</View>;
 }
 
 function Momentum({ token }: { token: SpotTokenSummary }) {
@@ -106,9 +103,24 @@ function Profile({ walletAddress }: { walletAddress: string | null }) {
   }, [walletAddress]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => subscribeWalletDataChanged(() => { void load(true); }), [load]);
-  if (!walletAddress) return <StateCard title="Connect a wallet to view Spot Profile" />;
+  if (!walletAddress) return <DiscoveryStateCard
+              title="Connect a wallet to view Spot Profile"
+              icon={{ name: 'cloud-off', size: 23, color: semantic.text.accentDim }}
+              containerStyle={styles.stateCard}
+              titleStyle={styles.stateTitle}
+            />;
   if (loading) return <View style={styles.center}><ActivityIndicator color={semantic.text.accentDim} /><Text style={styles.stateText}>Loading balances…</Text></View>;
-  if (error && !data) return <StateCard title="Spot profile unavailable" message={error} retry={() => void load(true)} />;
+  if (error && !data) return <DiscoveryStateCard
+              title="Spot profile unavailable"
+              message={error}
+              icon={{ name: 'cloud-off', size: 23, color: semantic.text.accentDim }}
+              containerStyle={styles.stateCard}
+              titleStyle={styles.stateTitle}
+              messageStyle={styles.stateText}
+              retry={{ onPress: () => void load(true), label: 'Try again' }}
+              retryButtonStyle={styles.stateButton}
+              retryTextStyle={styles.stateButtonText}
+            />;
   const tokensHeld = data?.tokens ?? [];
   const rows = tokensHeld.map((token) => ({ token, usd: prices[token.mint] === null || prices[token.mint] === undefined ? null : prices[token.mint]! * token.uiAmount })).map((row) => ({ ...row, usd: row.usd !== null && Number.isFinite(row.usd) ? row.usd : null }));
   const total = rows.reduce<number | null>((sum, row) => row.usd === null ? sum : (sum ?? 0) + row.usd, null);
@@ -116,7 +128,14 @@ function Profile({ walletAddress }: { walletAddress: string | null }) {
   const valuationFreshness = priceAsOf
     ? `Price V3 as of ${new Date(priceAsOf).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
     : 'Price V3 freshness unavailable';
-  return <ScrollView contentInsetAdjustmentBehavior="automatic" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={semantic.text.accentDim} />} contentContainerStyle={styles.profileContent}><Text style={styles.profileLabel}>Spot profile</Text>{error ? <Text style={styles.errorBanner}>{error}</Text> : null}<View style={styles.portfolioCard}><Text style={styles.meta}>{pricedCount === tokensHeld.length ? 'Current token value' : 'Priced token value'}</Text><Text style={styles.portfolioValue}>{formatUsd(total)}</Text><Text style={styles.meta}>{pricedCount} priced tokens · {tokensHeld.length - pricedCount} unpriced · {valuationFreshness} · balances {balanceFreshness ?? 'unknown'}</Text></View><Text style={styles.sectionTitle}>Your tokens</Text>{tokensHeld.length === 0 ? <StateCard title="No Spot balances" message="Held SPL tokens will appear here." /> : tokensHeld.map((token) => { const row = rows.find((item) => item.token.mint === token.mint)!; return <View style={styles.holdingRow} key={token.mint}><TokenIcon identity={token.mint === SOL_MINT ? SOL_ICON_IDENTITY : null} venueIconUrl={token.iconUrl} letter={token.symbol ?? shortMint(token.mint)} size={34} /><View style={styles.tokenName}><Text style={styles.symbol}>{token.symbol ?? shortMint(token.mint)}</Text><Text style={styles.name}>{formatAtomicDisplay(token.amount, token.decimals)} {token.symbol ?? ''}</Text></View><View style={styles.holdingValue}><Text style={styles.statValue}>{formatUsd(row.usd)}</Text><Text style={styles.meta}>Current value</Text></View></View>; })}<Text style={styles.sectionTitle}>Valuation coverage</Text><View style={styles.stats}>{[['Tokens', String(tokensHeld.length)], ['Priced', String(pricedCount)], ['Unpriced', String(tokensHeld.length - pricedCount)]].map(([label, value]) => <View style={styles.stat} key={label}><Text style={styles.meta}>{label}</Text><Text style={styles.statValue}>{value}</Text></View>)}</View></ScrollView>;
+  return <ScrollView contentInsetAdjustmentBehavior="automatic" refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={semantic.text.accentDim} />} contentContainerStyle={styles.profileContent}><Text style={styles.profileLabel}>Spot profile</Text>{error ? <Text style={styles.errorBanner}>{error}</Text> : null}<View style={styles.portfolioCard}><Text style={styles.meta}>{pricedCount === tokensHeld.length ? 'Current token value' : 'Priced token value'}</Text><Text style={styles.portfolioValue}>{formatUsd(total)}</Text><Text style={styles.meta}>{pricedCount} priced tokens · {tokensHeld.length - pricedCount} unpriced · {valuationFreshness} · balances {balanceFreshness ?? 'unknown'}</Text></View><Text style={styles.sectionTitle}>Your tokens</Text>{tokensHeld.length === 0 ? <DiscoveryStateCard
+              title="No Spot balances"
+              message="Held SPL tokens will appear here."
+              icon={{ name: 'cloud-off', size: 23, color: semantic.text.accentDim }}
+              containerStyle={styles.stateCard}
+              titleStyle={styles.stateTitle}
+              messageStyle={styles.stateText}
+            /> : tokensHeld.map((token) => { const row = rows.find((item) => item.token.mint === token.mint)!; return <View style={styles.holdingRow} key={token.mint}><TokenIcon identity={token.mint === SOL_MINT ? SOL_ICON_IDENTITY : null} venueIconUrl={token.iconUrl} letter={token.symbol ?? shortMint(token.mint)} size={34} /><View style={styles.tokenName}><Text style={styles.symbol}>{token.symbol ?? shortMint(token.mint)}</Text><Text style={styles.name}>{formatAtomicDisplay(token.amount, token.decimals)} {token.symbol ?? ''}</Text></View><View style={styles.holdingValue}><Text style={styles.statValue}>{formatUsd(row.usd)}</Text><Text style={styles.meta}>Current value</Text></View></View>; })}<Text style={styles.sectionTitle}>Valuation coverage</Text><View style={styles.stats}>{[['Tokens', String(tokensHeld.length)], ['Priced', String(pricedCount)], ['Unpriced', String(tokensHeld.length - pricedCount)]].map(([label, value]) => <View style={styles.stat} key={label}><Text style={styles.meta}>{label}</Text><Text style={styles.statValue}>{value}</Text></View>)}</View></ScrollView>;
 }
 
 export function SpotScreen() {
@@ -173,7 +192,24 @@ export function SpotScreen() {
   const onRow = useCallback((token: SpotTokenSummary) => { const next = expanded === token.identity.mint ? null : token.identity.mint; setExpanded(next); if (next) router.setParams({ token: next }); else router.setParams({ token: undefined }); }, [expanded, router]);
   const onBack = useCallback(() => { if (expanded) { setExpanded(null); router.setParams({ token: undefined }); return; } router.back(); }, [expanded, router]);
   const onTrade = useCallback((mode: 'buy' | 'sell', token: SpotTokenSummary) => { if (!token.identity.mint) return; router.push({ pathname: '/swap', params: { mode, token: token.identity.mint, caller: 'spot' } }); }, [router]);
-  const listEmpty = loading ? null : error && items.length === 0 ? <StateCard title="Spot terminal unavailable" message={error} retry={() => void load(true)} /> : <StateCard title={query ? 'No matching tokens' : 'No Spot tokens'} message={query ? 'Try a symbol, name, or canonical mint.' : 'No eligible tokens are available right now.'} />;
+  const listEmpty = loading ? null : error && items.length === 0 ? <DiscoveryStateCard
+              title="Spot terminal unavailable"
+              message={error}
+              icon={{ name: 'cloud-off', size: 23, color: semantic.text.accentDim }}
+              containerStyle={styles.stateCard}
+              titleStyle={styles.stateTitle}
+              messageStyle={styles.stateText}
+              retry={{ onPress: () => void load(true), label: 'Try again' }}
+              retryButtonStyle={styles.stateButton}
+              retryTextStyle={styles.stateButtonText}
+            /> : <DiscoveryStateCard
+              title={query ? 'No matching tokens' : 'No Spot tokens'}
+              message={query ? 'Try a symbol, name, or canonical mint.' : 'No eligible tokens are available right now.'}
+              icon={{ name: 'cloud-off', size: 23, color: semantic.text.accentDim }}
+              containerStyle={styles.stateCard}
+              titleStyle={styles.stateTitle}
+              messageStyle={styles.stateText}
+            />;
   return <View style={[styles.screen, { paddingTop: insets.top }]}><AppTopBar left={<AppTopBarIconButton icon="arrow-back" onPress={onBack} accessibilityLabel={expanded ? 'Collapse token' : 'Back to Wallet'} />} right={<Pressable style={styles.walletPill} onPress={() => walletSheet.open('solana')}><View style={styles.liveDot} /><Text style={styles.walletText}>{wallet.shortAddress ?? 'Connect wallet'}</Text></Pressable>} /><View style={styles.body}>{tab === 'terminal' ? <><View style={styles.tableHead}><Text style={styles.headToken}>Token</Text><Text style={styles.headCell}>Price</Text><Text style={styles.headCell}>24h</Text></View>{stale ? <Text style={styles.staleBanner}>Showing stale data · refresh to retry</Text> : null}{partial ? <Text style={styles.partialBanner}>Some token data is unavailable</Text> : null}{searchError ? <Text style={styles.errorBanner}>{searchError}</Text> : null}<FlatList ref={listRef} data={items} keyExtractor={(item) => item.identity.mint ?? item.identity.key} renderItem={({ item }) => <TokenRow token={item} position={item.identity.mint ? spotBalances[item.identity.mint] ?? null : null} expanded={expanded === item.identity.mint} onPress={() => onRow(item)} onTrade={onTrade} />} onScrollToIndexFailed={({ index, averageItemLength }) => listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true })} ListEmptyComponent={listEmpty} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={semantic.text.accentDim} />} contentContainerStyle={[styles.listContent, items.length === 0 && styles.listEmpty]} showsVerticalScrollIndicator={false} /></> : <Profile walletAddress={wallet.address} />}</View>{tab === 'terminal' ? <View style={styles.search}><MaterialIcons name="search" size={16} color={semantic.text.faint} /><TextInput value={query} onChangeText={(value) => { setQuery(value); setExpanded(null); router.setParams({ token: undefined }); }} placeholder="Search token or paste mint" placeholderTextColor={semantic.text.faint} autoCapitalize="none" autoCorrect={false} style={styles.searchInput} /><Pressable onPress={() => setQuery('')} hitSlop={8}><MaterialIcons name="close" size={15} color={query ? semantic.text.dim : 'transparent'} /></Pressable></View> : null}<View style={styles.tabs} accessibilityRole="tablist">{(['terminal', 'profile'] as Tab[]).map((value) => <Pressable key={value} onPress={() => setTab(value)} accessibilityRole="tab" accessibilityState={{ selected: tab === value }} style={[styles.tab, tab === value && styles.tabActive]}><MaterialIcons name={value === 'terminal' ? 'show-chart' : 'person'} size={16} color={tab === value ? semantic.text.primary : semantic.text.faint} /><Text style={[styles.tabText, tab === value && styles.tabTextActive]}>{value}</Text></Pressable>)}</View></View>;
 }
 
