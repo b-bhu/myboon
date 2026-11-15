@@ -18,6 +18,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react-native';
 import {
+  chartStoryMarkersToAnnotations,
   MarketChart,
   type MarketCandle,
   type MarketChartAnnotation,
@@ -75,29 +76,60 @@ interface PhoenixResyncReplay {
   readonly liveUpdates: PhoenixCandle[];
 }
 
+/** Story card payload for tap-to-read, reported to the shared frame's news rail. */
+export interface PhoenixSelectedStoryDisplay {
+  readonly id: string;
+  readonly text: string;
+  readonly timeLabel: string;
+  readonly imageUrl: string | null;
+  readonly counter: string | null;
+}
+
 interface PhoenixPriceChartProps {
   symbol: string;
   height?: number;
+  /** Controlled candle interval — the shared range strip supplies it. */
+  timeframeIndex?: number;
+  onTimeframeIndexChange?: (index: number) => void;
+  /** Controlled story visibility — the frame's News toggle supplies it. */
+  storiesVisible?: boolean;
+  onStoriesVisibleChange?: (visible: boolean) => void;
   onScrub?: (price: number | null, time: number | null) => void;
   onLatestPrice?: (price: number | null) => void;
   onLiveMarketStats?: (stats: PhoenixLiveMarketStats) => void;
   onLiveStatusChange?: (status: PhoenixLiveConnectionStatus) => void;
+  /**
+   * When supplied, the in-chart story overlay is suppressed and the selected
+   * story is reported here; the shared frame renders it as the news rail card.
+   */
+  onSelectedStoryDisplayChange?: (display: PhoenixSelectedStoryDisplay | null) => void;
 }
 
 export function PhoenixPriceChart({
   symbol,
   height = DEFAULT_CHART_HEIGHT,
+  timeframeIndex: controlledTimeframeIndex,
+  onTimeframeIndexChange,
+  storiesVisible: controlledStoriesVisible,
+  onStoriesVisibleChange,
   onScrub,
   onLatestPrice,
   onLiveMarketStats,
   onLiveStatusChange,
+  onSelectedStoryDisplayChange,
 }: PhoenixPriceChartProps) {
-  const [timeframeIndex, setTimeframeIndex] = useState(
+  const [internalTimeframeIndex, setInternalTimeframeIndex] = useState(
     DEFAULT_PHOENIX_CHART_TIMEFRAME_INDEX,
   );
   const [timeframeOpen, setTimeframeOpen] = useState(false);
   const [mode, setMode] = useState<MarketChartMode>('candles');
-  const [storiesVisible, setStoriesVisible] = useState(true);
+  const [internalStoriesVisible, setInternalStoriesVisible] = useState(true);
+  // When the parent controls timeframe/stories state (shared range strip in the
+  // detail frame), this chart renders no duplicate controls of its own.
+  const controlledTimeframe = onTimeframeIndexChange != null;
+  const controlledStories = onStoriesVisibleChange != null;
+  const timeframeIndex = controlledTimeframeIndex ?? internalTimeframeIndex;
+  const storiesVisible = controlledStoriesVisible ?? internalStoriesVisible;
   const [selectedStoryMarkerId, setSelectedStoryMarkerId] = useState<string | null>(null);
   const [selectedStoryEventIndex, setSelectedStoryEventIndex] = useState(0);
   const [{ rawCandles, hasMoreHistory }, setCandleHistory] = useState<PhoenixCandleHistoryState>({
@@ -318,17 +350,10 @@ export function PhoenixPriceChart({
       chartStories.events,
     );
   }, [chartStories.events, chartStories.story, rawCandles]);
-  const storyAnnotations = useMemo<readonly MarketChartAnnotation[]>(() => (
-    storyMarkers.map((marker) => ({
-      id: marker.id,
-      timeMs: marker.time,
-      label: marker.events[0]?.text ?? marker.story.name,
-      accessibilityLabel: `${marker.story.name}. ${marker.events[0]?.text ?? marker.story.latestDevelopment}`,
-      imageUrl: marker.events[0]?.imageUrl ?? marker.story.imageUrl,
-      fallbackText: '✦',
-      tone: 'accent' as const,
-    }))
-  ), [storyMarkers]);
+  const storyAnnotations = useMemo<readonly MarketChartAnnotation[]>(
+    () => chartStoryMarkersToAnnotations(storyMarkers),
+    [storyMarkers],
+  );
   const selectedStoryMarker = storyMarkers.find(
     (marker) => marker.id === selectedStoryMarkerId,
   ) ?? null;
@@ -345,6 +370,30 @@ export function PhoenixPriceChart({
       setSelectedStoryEventIndex(0);
     }
   }, [selectedStoryMarkerId, storyMarkers]);
+
+  // Tap-to-read: report the displayed story upward so the shared frame renders
+  // it as the news rail card below the chart instead of an in-chart overlay.
+  useEffect(() => {
+    onSelectedStoryDisplayChange?.(
+      storiesVisible && selectedStoryMarker && selectedStoryEvent
+        ? {
+            id: selectedStoryMarker.id,
+            text: selectedStoryEvent.text ?? '',
+            timeLabel: formatStoryTime(selectedStoryEvent.eventAt),
+            imageUrl: selectedStoryEvent.imageUrl ?? null,
+            counter: selectedStoryMarker.events.length > 1
+              ? `${selectedStoryEventIndex + 1}/${selectedStoryMarker.events.length}`
+              : null,
+          }
+        : null,
+    );
+  }, [
+    onSelectedStoryDisplayChange,
+    selectedStoryEvent,
+    selectedStoryEventIndex,
+    selectedStoryMarker,
+    storiesVisible,
+  ]);
 
   useEffect(() => {
     if (!__DEV__ || (adapted.rejectedRows === 0 && adapted.duplicateTimes.length === 0)) {
@@ -402,21 +451,24 @@ export function PhoenixPriceChart({
   }, [selectedStoryMarkerId, storyMarkers]);
 
   const toggleStories = useCallback(() => {
+    const next = !storiesVisible;
     if (storiesVisible) {
       setSelectedStoryMarkerId(null);
       setSelectedStoryEventIndex(0);
     }
-    setStoriesVisible(!storiesVisible);
-  }, [storiesVisible]);
+    setInternalStoriesVisible(next);
+    onStoriesVisibleChange?.(next);
+  }, [onStoriesVisibleChange, storiesVisible]);
 
   const handleTimeframeChange = useCallback((index: number) => {
     setTimeframeOpen(false);
     if (index === timeframeIndex) return;
-    setTimeframeIndex(index);
+    setInternalTimeframeIndex(index);
+    onTimeframeIndexChange?.(index);
     setSelectedStoryMarkerId(null);
     setSelectedStoryEventIndex(0);
     scrubCallbackRef.current?.(null, null);
-  }, [timeframeIndex]);
+  }, [onTimeframeIndexChange, timeframeIndex]);
 
   const openTimeframeMenu = useCallback(() => {
     timeframeAnchorRef.current?.measureInWindow((x, y, width, height) => {
@@ -509,6 +561,7 @@ export function PhoenixPriceChart({
   return (
     <View style={styles.container}>
       <View style={styles.controls}>
+        {!controlledTimeframe ? (
         <View ref={timeframeAnchorRef} collapsable={false}>
           <Pressable
             style={({ pressed }) => [
@@ -530,6 +583,7 @@ export function PhoenixPriceChart({
             />
           </Pressable>
         </View>
+        ) : null}
 
         <View style={styles.controlGroup}>
           {historyError ? (
@@ -568,7 +622,7 @@ export function PhoenixPriceChart({
             />
           </View>
 
-          {storyAnnotations.length > 0 ? (
+          {!controlledStories && storyAnnotations.length > 0 ? (
             <Pressable
               style={({ pressed }) => [
                 styles.storiesButton,
@@ -600,6 +654,7 @@ export function PhoenixPriceChart({
         </View>
       </View>
 
+      {!controlledTimeframe ? (
       <Modal
         visible={timeframeOpen}
         transparent
@@ -654,6 +709,7 @@ export function PhoenixPriceChart({
           </View>
         </View>
       </Modal>
+      ) : null}
 
       <View style={[styles.chartWrap, { height }]}>
         <MarketChart
@@ -681,7 +737,7 @@ export function PhoenixPriceChart({
           selectedAnnotationId={storiesVisible ? selectedStoryMarkerId : null}
           onAnnotationSelectionChange={handleAnnotationSelectionChange}
         />
-        {storiesVisible && selectedStoryEvent ? (
+        {!onSelectedStoryDisplayChange && storiesVisible && selectedStoryEvent ? (
           <StoryAnnotationCard
             text={selectedStoryEvent.text}
             eventAt={selectedStoryEvent.eventAt}
