@@ -8,6 +8,7 @@ import { pacificaAdapter } from '@/features/perps/pacifica.adapter';
 import { phoenixAdapter } from '@/features/perps/phoenix.adapter';
 import { meteoraAdapter } from '@/features/meteora/meteora.adapter';
 import { orcaAdapter } from '@/features/orca/orca.adapter';
+import { polymarketAdapter } from '@/features/polymarket/polymarket.adapter';
 
 import { createVenueRegistry } from '@/features/markets/venue.registry.core';
 
@@ -16,4 +17,5 @@ export const venueRegistry = createVenueRegistry([
   phoenixAdapter,
   meteoraAdapter,
   orcaAdapter,
+  polymarketAdapter,
 ]);
