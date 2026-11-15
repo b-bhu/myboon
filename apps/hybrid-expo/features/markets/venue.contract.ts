@@ -107,9 +107,9 @@ export interface VenueCapabilities {
 }
 
 export interface VenueAdapter<TMarket = unknown> {
-  venueId: 'pacifica' | 'phoenix' | 'meteora' | 'orca';
+  venueId: 'pacifica' | 'phoenix' | 'meteora' | 'orca' | 'polymarket';
   displayName: string;
-  kind: 'perps' | 'lp' | 'spot';
+  kind: 'perps' | 'lp' | 'spot' | 'prediction';
   routeBase: string;
   theme?: MarketListTheme;
   capabilities: VenueCapabilities;

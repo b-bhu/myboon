@@ -22,7 +22,7 @@ export function getPolymarketMarketHref(slug: string): Href {
   };
 }
 
-function sportForMarketSlug(slug: string): string | null {
+export function sportForMarketSlug(slug: string): string | null {
   const legacySport = slug.match(/^cric(epl|ucl|ipl)-/);
   if (legacySport) return legacySport[1];
 
