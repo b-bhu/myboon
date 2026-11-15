@@ -1,21 +1,27 @@
+/**
+ * Polymarket market detail — composed onto the shared MarketScreen (#651).
+ *
+ * Pure refactor of the two legacy layouts (binary + event mode) into the
+ * shared frame: the inline pick area (soft zone) is gone; the action bar's
+ * Back YES / Back NO buttons open the existing Composer v2 sheet, and event
+ * markets pick an outcome from the ladder inside the shared action sheet.
+ * Order entry was already sheet-based (OrderComposerSheet) and is unchanged.
+ * The picks/stats panel is Polymarket's venue position section (positionsBody).
+ */
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  PanResponder,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { AppTopBar, AppTopBarCashPill, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
 import { cancelOrder, fetchClobBalance, fetchCuratedMarketDetail, fetchLivePrices, fetchMarketPositions, fetchOpenOrders, fetchOrderbook, fetchPortfolio, fetchPriceHistory, placeBet } from '@/features/polymarket/polymarket.api';
 import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPosition } from '@/features/polymarket/polymarket.api';
 import type { GeopoliticsMarketDetail, Orderbook, PricePoint } from '@/features/polymarket/polymarket.types';
@@ -25,7 +31,6 @@ import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { semantic, tokens } from '@/theme';
 import { formatUsdCompact } from '@/lib/format';
-import { useOddsFormat } from '@/hooks/useOddsFormat';
 import { MultiLineChart } from '@/features/polymarket/components/MultiLineChart';
 import { OrderbookView } from '@/features/polymarket/components/OrderbookView';
 import { InlineNumpad } from '@/features/polymarket/components/InlineNumpad';
@@ -48,6 +53,13 @@ import {
 } from '@/features/polymarket/usePolymarketUserStream';
 import { getPolymarketOrderGuardrail, type PolymarketDataFreshness } from '@/features/polymarket/polymarketActivityState';
 import { getPolymarketMarketHref } from '@/features/polymarket/polymarket.navigation';
+import { MarketScreen } from '@/features/markets/MarketScreen';
+import type {
+  MarketDetailActionBarVM,
+  MarketDetailViewModel,
+  NewsStoryCard,
+  ValueTone,
+} from '@/features/markets/detail-view-model';
 
 interface PolymarketMarketDetailScreenProps {
   slug: string;
@@ -57,12 +69,15 @@ type Interval = '5m' | '1h' | '1d';
 type ActiveView = 'picks' | 'stats' | 'chart' | 'orderbook';
 type SubmitStatus = 'idle' | 'wallet' | 'placing' | 'syncing';
 
-const SOFT_COLLAPSED = 230; // handle + stats + odds
-const SOFT_EXPANDED = 680;  // + numpad
-
 // Composer v2 is the normal Yes/No flow as of the Polymarket redesign (PRD §6).
 // ?composer=legacy on web restores the old InlineNumpad flow for QA comparison.
 const COMPOSER_V2_DEFAULT = true;
+
+const POLYMARKET_MAKET_RANGES: readonly { label: string; interval: Interval }[] = [
+  { label: '5M', interval: '5m' },
+  { label: '1H', interval: '1h' },
+  { label: '1D', interval: '1d' },
+];
 
 function formatDeadline(endDate: string | null, active: boolean | null): string {
   if (!endDate) return active === false ? 'Closed' : 'Open';
@@ -74,11 +89,11 @@ function formatDeadline(endDate: string | null, active: boolean | null): string 
   return `${active === false ? 'Ended' : 'Ends'} ${month} ${day}`;
 }
 
-function formatResolveDate(endDate: string | null): string {
-  if (!endDate) return 'Resolution date unavailable';
+function formatResolveShort(endDate: string | null): string {
+  if (!endDate) return '--';
   const time = Date.parse(endDate);
-  if (!Number.isFinite(time)) return 'Resolution date unavailable';
-  return `Resolves ${new Date(time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+  if (!Number.isFinite(time)) return '--';
+  return new Date(time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function DisplayTab({
@@ -102,6 +117,44 @@ function DisplayTab({
   );
 }
 
+function ChartViewSwitch({
+  activeView,
+  onSelect,
+}: {
+  activeView: ActiveView;
+  onSelect: (view: 'chart' | 'orderbook') => void;
+}) {
+  return (
+    <View style={styles.chartViewSwitch} accessibilityRole="tablist">
+      {(['chart', 'orderbook'] as const).map((view) => {
+        const selected = activeView === view;
+        return (
+          <Pressable
+            key={view}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            style={[styles.chartViewButton, selected && styles.chartViewButtonActive]}
+            onPress={() => onSelect(view)}
+          >
+            <MaterialIcons
+              name={view === 'chart' ? 'show-chart' : 'layers'}
+              size={14}
+              color={selected ? tokens.colors.backgroundDark : semantic.text.faint}
+            />
+            <Text style={[styles.chartViewText, selected && styles.chartViewTextActive]}>
+              {view === 'chart' ? 'Chart' : 'Book'}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function formatCents(price: number | null): string {
+  return price === null ? '--' : `${Math.round(price * 100)}¢`;
+}
+
 export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScreenProps) {
   // Composer v2 can be force-disabled for QA via ?composer=legacy on web.
   const urlParams = useLocalSearchParams<{ composer?: string }>();
@@ -109,14 +162,11 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
   const router = useRouter();
   const poly = usePolymarketWallet();
   const connectSheet = useConnectionSheet('evm');
-  const { formatOdds } = useOddsFormat();
   const { width: screenWidth } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
 
   // Market data
   const [detail, setDetail] = useState<GeopoliticsMarketDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [liveTokenPrices, setLiveTokenPrices] = useState<Record<string, number | null>>({});
 
@@ -182,8 +232,6 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
   const [eventOddsFormat, setEventOddsFormat] = useState<EventOddsFormat>('probability');
   const [eventBookIdx, setEventBookIdx] = useState(0);
 
-  // Soft zone animation
-  const softZoneAnim = useRef(new Animated.Value(SOFT_COLLAPSED)).current;
   const reconcileTimeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
   const submitInFlightRef = useRef(false);
   const buyBookRefreshInFlight = useRef(false);
@@ -193,17 +241,6 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
   // and a Solana disconnect wiped Polymarket state that did not depend on it.
   const walletScopedKey = poly.signer ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}` : 'disconnected';
   const walletScopedKeyRef = useRef(walletScopedKey);
-
-  // Drag gesture — swipe down to collapse numpad
-  const dragResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 10,
-      onPanResponderRelease: (_, g) => {
-        if (g.dy > 40) collapseNumpad();
-      },
-    })
-  ).current;
 
   async function loadMarket(silent = false) {
     if (!silent) setLoading(true);
@@ -357,20 +394,6 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
     }
   }
 
-  async function refreshDetailScreen() {
-    setRefreshing(true);
-    try {
-      await Promise.allSettled([
-        loadMarket(true),
-        loadPicks(),
-        loadCashBalance(),
-        activeView === 'orderbook' ? loadOrderbook() : Promise.resolve(),
-      ]);
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
   function scheduleFollowUpReconcile() {
     const secureClient = poly.client;
     if (!secureClient) return;
@@ -476,15 +499,6 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
     void run();
     return () => { cancelled = true; };
   }, [poly.client]);
-
-  // Animate soft zone
-  useEffect(() => {
-    Animated.timing(softZoneAnim, {
-      toValue: numpadOpen ? SOFT_EXPANDED : SOFT_COLLAPSED,
-      duration: 350,
-      useNativeDriver: false,
-    }).start();
-  }, [numpadOpen, softZoneAnim]);
 
   const yesTokenId = detail?.clobTokenIds[0];
   const noTokenId = detail?.clobTokenIds[1];
@@ -861,160 +875,303 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
         : 'Placing order...';
   const activePosition = [...marketPositions].sort((a, b) => b.currentValue - a.currentValue)[0] ?? null;
 
-  if (detail && !loading && !errorMessage && !isEventMode) {
-    const yesPct = yesPrice === null ? 50 : Math.max(0, Math.min(100, yesPrice * 100));
-    return (
-      <View style={[styles.screen, { paddingTop: insets.top }]}>
-        <AppTopBar
-          left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
-          center={(
-            <View style={styles.mockTitleLockup}>
-              <Text style={styles.mockTopTitle} numberOfLines={1}>{detail.question}</Text>
-              <Text style={styles.mockTopSubtitle}>{detail.category ? `${detail.category} · ` : ''}Binary</Text>
-            </View>
-          )}
-          right={<AppTopBarCashPill value={truncateUsd(cashBalance)} />}
-        />
+  // Headline price: the outcome the user would buy. Binary = Yes price in
+  // cents; event mode = the selected ladder rung (or the first outcome).
+  const headlinePrice = isEventMode
+    ? (selectedEventPrice ?? event?.outcomes[0]?.price ?? null)
+    : yesPrice;
 
-        <ScrollView
-          style={styles.mockScroll}
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator
-          refreshControl={(
-            <RefreshControl refreshing={refreshing} onRefresh={() => void refreshDetailScreen()} tintColor={tokens.colors.accent} />
-          )}
-          contentContainerStyle={[styles.mockContent, { paddingBottom: Math.max(insets.bottom, 18) + 20 }]}
-        >
-          <View style={styles.mockCard}>
-            <View style={styles.mockCardTop}>
-              <Text style={styles.mockKind}>Yes or no</Text>
-              {activePosition ? (
-                <Pressable style={styles.mockPositionButton} accessibilityRole="button" onPress={() => setPositionOpen(true)}>
-                  <MaterialIcons name="account-circle" size={16} color={tokens.colors.viridian} />
-                  <Text style={styles.mockPositionLabel}>Your pick</Text>
-                  <Text style={[styles.mockPositionPnl, activePosition.cashPnl < 0 && styles.mockPositionPnlNegative]}>
-                    {activePosition.cashPnl >= 0 ? '+' : '-'}${Math.abs(activePosition.cashPnl).toFixed(2)}
-                  </Text>
-                </Pressable>
-              ) : null}
+  const chartBody = (
+    <View style={styles.chartRegion}>
+      <ChartViewSwitch activeView={activeView} onSelect={setActiveView} />
+      <View style={styles.chartSurface}>
+        {activeView === 'orderbook' ? (
+          isEventMode && event ? (
+            <View style={styles.obWrap}>
+              {/* One book per outcome (PRD §5) */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.obTabs}>
+                {event.outcomes.map((o, i) => (
+                  <Pressable
+                    key={o.id}
+                    accessibilityRole="tab"
+                    accessibilityLabel={`Show ${o.label} order book`}
+                    accessibilityState={{ selected: eventBookIdx === i }}
+                    style={[styles.obTab, eventBookIdx === i && styles.obTabActive]}
+                    onPress={() => setEventBookIdx(i)}>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.obTabText, eventBookIdx === i && styles.obTabTextActive]}>
+                      {o.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <OrderbookView book={orderbook} loading={orderbookLoading} />
             </View>
-
-            <View style={styles.mockBinaryHero}>
-              <View style={styles.mockBinaryMeta}>
-                <Text style={styles.mockCategory}>{detail.category ?? 'Binary'}</Text>
-                <Text style={styles.mockResolveMeta}>
-                  {formatResolveDate(detail.endDate)}{detail.volume !== null ? ` · ${formatUsdCompact(detail.volume)} traded` : ''}
-                </Text>
+          ) : (
+            <View style={styles.bookWrap}>
+              <View style={styles.bookTabs}>
+                {(['yes', 'no'] as const).map((side) => (
+                  <Pressable
+                    key={side}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: binaryBookSide === side }}
+                    style={[styles.bookTab, binaryBookSide === side && styles.bookTabActive]}
+                    onPress={() => setBinaryBookSide(side)}
+                  >
+                    <Text style={[styles.bookTabText, binaryBookSide === side && styles.bookTabTextActive]}>{side === 'yes' ? 'Yes' : 'No'}</Text>
+                  </Pressable>
+                ))}
               </View>
-              <Text style={styles.mockQuestion}>{detail.question}</Text>
-              <View style={styles.mockConsensus} accessibilityLabel={`Yes ${Math.round(yesPct)} percent, No ${Math.round(100 - yesPct)} percent`}>
-                <View style={styles.mockConsensusSide}>
-                  <Text style={styles.mockYesPrice}>{yesPrice === null ? '--' : `${Math.round(yesPrice * 100)}¢`}</Text>
-                  <Text style={styles.mockConsensusLabel}>Yes</Text>
-                </View>
-                <View style={styles.mockConsensusTrack}>
-                  <View style={[styles.mockConsensusFill, { width: `${yesPct}%` }]} />
-                </View>
-                <View style={[styles.mockConsensusSide, styles.mockConsensusSideRight]}>
-                  <Text style={styles.mockNoPrice}>{noPrice === null ? '--' : `${Math.round(noPrice * 100)}¢`}</Text>
-                  <Text style={styles.mockConsensusLabel}>No</Text>
-                </View>
-              </View>
+              <OrderbookView book={orderbook} loading={orderbookLoading} />
             </View>
-
-            <View style={styles.mockPanel}>
-              <View style={styles.mockPanelHead}>
-                <View>
-                  <Text style={styles.mockPanelTitle}>Market movement</Text>
-                  <Text style={styles.mockPanelSubtitle}>{activeView === 'orderbook' ? 'Live orders' : 'Price history'}</Text>
-                </View>
-                <View style={styles.mockViewSwitch} accessibilityRole="tablist">
-                  {(['chart', 'orderbook'] as const).map((view) => {
-                    const selected = activeView === view;
-                    return (
-                      <Pressable
-                        key={view}
-                        accessibilityRole="tab"
-                        accessibilityState={{ selected }}
-                        style={[styles.mockViewButton, selected && styles.mockViewButtonActive]}
-                        onPress={() => setActiveView(view)}
-                      >
-                        <MaterialIcons name={view === 'chart' ? 'show-chart' : 'layers'} size={14} color={selected ? tokens.colors.backgroundDark : semantic.text.faint} />
-                        <Text style={[styles.mockViewText, selected && styles.mockViewTextActive]}>{view === 'chart' ? 'Chart' : 'Book'}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
-              <View style={styles.mockMarketSurface}>
-                {activeView === 'orderbook' ? (
-                  <View style={styles.mockBookWrap}>
-                    <View style={styles.mockBookTabs}>
-                      {(['yes', 'no'] as const).map((side) => (
-                        <Pressable
-                          key={side}
-                          accessibilityRole="tab"
-                          accessibilityState={{ selected: binaryBookSide === side }}
-                          style={[styles.mockBookTab, binaryBookSide === side && styles.mockBookTabActive]}
-                          onPress={() => setBinaryBookSide(side)}
-                        >
-                          <Text style={[styles.mockBookTabText, binaryBookSide === side && styles.mockBookTabTextActive]}>{side === 'yes' ? 'Yes' : 'No'}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                    <OrderbookView book={orderbook} loading={orderbookLoading} />
-                  </View>
-                ) : historyLoading ? (
-                  <ActivityIndicator color={semantic.text.faint} />
-                ) : (
-                  <MultiLineChart
-                    series={[
-                      { points: yesHistory, color: tokens.colors.viridian, label: 'Yes' },
-                      { points: noHistory, color: tokens.colors.vermillion, label: 'No' },
-                    ]}
-                    width={chartWidth}
-                    height={chartHeight}
-                  />
-                )}
-              </View>
-            </View>
-
-            <View style={styles.mockPicks}>
-              <View style={styles.mockPicksHead}>
-                <Text style={styles.mockPicksTitle}>What’s your pick?</Text>
-                <Text style={styles.mockPicksMeta}>Current price</Text>
-              </View>
-              {marketClosed ? <Text style={styles.marketClosedText}>This market is closed.</Text> : null}
-              <View style={styles.mockBinaryButtons}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: selectedSide === 'yes', disabled: marketClosed || submitting }}
-                  disabled={marketClosed || submitting}
-                  style={[styles.mockBinaryButton, selectedSide === 'yes' && styles.mockBinaryButtonSelected]}
-                  onPress={() => tapOdd('yes')}
-                >
-                  <Text style={styles.mockBinaryLabel}>Yes, it will</Text>
-                  <Text style={styles.mockYesButtonPrice}>{yesPrice === null ? '--' : `${Math.round(yesPrice * 100)}¢`}</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: selectedSide === 'no', disabled: marketClosed || submitting }}
-                  disabled={marketClosed || submitting}
-                  style={[styles.mockBinaryButton, selectedSide === 'no' && styles.mockBinaryButtonSelected]}
-                  onPress={() => tapOdd('no')}
-                >
-                  <Text style={styles.mockBinaryLabel}>No, it won’t</Text>
-                  <Text style={styles.mockNoButtonPrice}>{noPrice === null ? '--' : `${Math.round(noPrice * 100)}¢`}</Text>
-                </Pressable>
-              </View>
-              <View style={styles.mockHint}>
-                <MaterialIcons name="touch-app" size={13} color={tokens.colors.accent} />
-                <Text style={styles.mockHintText}>Tap a side to place an order</Text>
-              </View>
-            </View>
+          )
+        ) : historyLoading ? (
+          <View style={styles.chartSkeleton}>
+            <ActivityIndicator size="small" color={semantic.text.faint} />
           </View>
-        </ScrollView>
+        ) : (
+          <MultiLineChart
+            series={[
+              { points: yesHistory, color: tokens.colors.viridian, label: 'Yes' },
+              { points: noHistory, color: tokens.colors.vermillion, label: 'No' },
+            ]}
+            width={chartWidth}
+            height={chartHeight}
+          />
+        )}
+      </View>
+    </View>
+  );
 
+  const positionRows: MarketDetailViewModel['positionRows'] = [];
+
+  const positionsBody = (
+    <View style={styles.picksBody}>
+      {activePosition ? (
+        <Pressable
+          style={styles.yourPickPill}
+          accessibilityRole="button"
+          onPress={() => setPositionOpen(true)}
+        >
+          <MaterialIcons name="account-circle" size={16} color={tokens.colors.viridian} />
+          <Text style={styles.yourPickLabel}>Your pick</Text>
+          <Text style={[styles.yourPickPnl, activePosition.cashPnl < 0 && styles.yourPickPnlNegative]}>
+            {activePosition.cashPnl >= 0 ? '+' : '-'}${Math.abs(activePosition.cashPnl).toFixed(2)}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      <View style={styles.picksTabsRow}>
+        <DisplayTab label="Your Picks" active={activeView === 'picks'} onPress={() => setActiveView('picks')} />
+        <DisplayTab label="Stats" active={activeView === 'stats'} onPress={() => setActiveView('stats')} />
+      </View>
+
+      {activeView === 'picks' ? (
+        <DetailPicksPanel
+          scope={pickScope}
+          marketSlug={slug}
+          marketTokenIds={detail?.clobTokenIds ?? []}
+          marketConditionIds={marketPositions.map((position) => position.conditionId)}
+          loading={picksLoading}
+          freshness={{
+            ...picksFreshness,
+            loading: picksLoading,
+            syncing: pendingOpenOrders.length > 0,
+            stale: picksFreshness.stale || realtimeStatus === 'degraded',
+            error: picksFreshness.error
+              ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
+          }}
+          marketPositions={marketPositions}
+          allPositions={allPositions}
+          redeemablePositions={redeemablePositions}
+          closedPositions={closedPositions}
+          openOrders={visibleOpenOrders}
+          activityItems={activityItems}
+          sellQuotes={sellQuotes}
+          cancellingOrderId={cancellingOrderId}
+          client={poly.client}
+          onScopeChange={setPickScope}
+          onCashOut={handleCashOut}
+          onBackMore={(position) => {
+            if (position.slug && position.slug !== slug) {
+              router.push(getPolymarketMarketHref(position.slug));
+              return;
+            }
+            tapOdd(position.outcome === 'No' ? 'no' : 'yes');
+          }}
+          onCancelOrder={(orderId) => void handleCancelOrder(orderId)}
+          onRedeemed={() => void loadPicks()}
+          onRetry={() => void loadPicks()}
+        />
+      ) : (
+        <View style={styles.statsView}>
+          {detail ? (
+            <View style={styles.statsGrid}>
+              <View style={styles.statsCard}><Text style={styles.statsLabel}>Volume</Text><Text style={styles.statsValue}>{formatUsdCompact(detail.volume24h)}</Text></View>
+              <View style={styles.statsCard}><Text style={styles.statsLabel}>Liquidity</Text><Text style={styles.statsValue}>{formatUsdCompact(detail.liquidity)}</Text></View>
+              <View style={styles.statsCard}><Text style={styles.statsLabel}>No chance</Text><Text style={styles.statsValue}>{noPrice !== null ? `${Math.round(noPrice * 100)}%` : '--'}</Text></View>
+              <View style={styles.statsCard}><Text style={styles.statsLabel}>Resolves</Text><Text style={styles.statsValue}>{formatDeadline(detail.endDate, detail.active)}</Text></View>
+            </View>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="How this market resolves"
+            style={styles.rulesLink}
+            onPress={() => setRulesOpen(true)}>
+            <Text style={styles.rulesLinkText}>How this resolves</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+
+  // Price row change: prediction markets have no 24h change in the model.
+  const priceChange: MarketDetailViewModel['priceRow']['change'] = null;
+
+  const newsStories: readonly NewsStoryCard[] = [];
+
+  // Headline row for the event ladder sheet (the old soft zone's odds area).
+  const eventLadderSheet = isEventMode && event ? (
+    <View style={styles.ladderSheet}>
+      <Text style={styles.ladderSheetTitle}>Pick an outcome</Text>
+      {marketClosed && (
+        <Text style={styles.marketClosedText}>This market is closed and no longer accepting new picks.</Text>
+      )}
+      <View style={styles.ladderToggleRow}>
+        {(['probability', 'decimal', 'american'] as EventOddsFormat[]).map((f) => (
+          <Pressable
+            key={f}
+            accessibilityRole="tab"
+            accessibilityLabel={`${f} odds`}
+            accessibilityState={{ selected: eventOddsFormat === f }}
+            style={[styles.ladderToggle, eventOddsFormat === f && styles.ladderToggleActive]}
+            onPress={() => setEventOddsFormat(f)}>
+            <Text style={[
+              styles.ladderToggleText,
+              eventOddsFormat === f && styles.ladderToggleTextActive,
+            ]}>
+              {f === 'probability' ? '%' : f === 'decimal' ? 'DEC' : 'AM'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <EventOutcomeLadder
+        outcomes={event.outcomes.map((o) => ({
+          id: o.id,
+          label: o.label,
+          price: eventOutcomePrices[o.id] ?? o.price ?? 0,
+        }))}
+        selectedId={eventOutcomeId}
+        onSelect={tapEventOutcome}
+        oddsFormat={eventOddsFormat}
+      />
+    </View>
+  ) : null;
+
+  const legacyNumpadSheet = !COMPOSER_V2 ? (
+    <InlineNumpad
+      visible={numpadOpen}
+      side={selectedSide ?? 'yes'}
+      pickLabel={selectedSide === 'no' ? 'NO' : 'YES'}
+      price={selectedNumpadPrice}
+      amount={numpadAmount}
+      minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
+      availableCash={cashBalance}
+      onAmountChange={setNumpadAmount}
+      onConfirm={() => { void submitOrder(); }}
+      submitting={submitting}
+      submittingLabel={submitLabel}
+      disabled={!poly.isReady}
+      guardrail={orderGuardrail}
+      setupRequired={!poly.isReady}
+      onSetupPress={() => { void handlePolymarketSetupPress(); }}
+      setupSubmitting={setupSubmitting || setupAfterConnect || poly.isLoading}
+    />
+  ) : null;
+
+  const actionBar: MarketDetailActionBarVM = !poly.signer
+    ? {
+        connected: false,
+        connectReason: 'Connect an EVM wallet to trade Polymarket',
+        connectLabel: 'Sign in to Polymarket',
+        onConnect: () => handlePolymarketSetupPress(),
+        buttons: [
+          { label: 'Back YES', variant: 'primary' as const },
+          { label: 'Back NO', variant: 'secondary' as const },
+        ],
+      }
+    : isEventMode
+      ? {
+          connected: true,
+          buttons: [
+            { label: 'Pick outcome', variant: 'primary' as const, disabled: marketClosed || submitting },
+            { label: 'How this resolves', variant: 'secondary' as const, opensSheet: false, onPress: () => setRulesOpen(true) },
+          ],
+        }
+      : {
+          connected: true,
+          buttons: [
+            { label: 'Back YES', variant: 'primary' as const, disabled: marketClosed || submitting, onPress: () => tapOdd('yes') },
+            { label: 'Back NO', variant: 'secondary' as const, disabled: marketClosed || submitting, onPress: () => tapOdd('no') },
+          ],
+        };
+
+  const notice = !loading && errorMessage ? (
+    <View style={styles.noticeCard}>
+      <Text style={styles.noticeTitle}>Market unavailable</Text>
+      <Text style={styles.noticeText}>{errorMessage}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Try again"
+        accessibilityHint="Reload market details"
+        onPress={() => void loadMarket()}
+        style={styles.noticeRetryBtn}>
+        <Text style={styles.noticeRetryText}>Try Again</Text>
+      </Pressable>
+    </View>
+  ) : null;
+
+  const vm: MarketDetailViewModel = {
+    topBar: {
+      marketName: detail?.question ?? 'Loading market...',
+      venueBadge: 'Polymarket',
+      onBack: () => router.back(),
+      onInfoPress: () => setRulesOpen(true),
+    },
+    priceRow: {
+      price: detail ? formatCents(headlinePrice) : '--',
+      change: priceChange,
+      live: false,
+      secondaryStat: detail
+        ? { label: detail.active === false ? 'Ended' : 'Resolves', value: formatResolveShort(detail.endDate) }
+        : null,
+    },
+    notice,
+    range: {
+      ranges: POLYMARKET_MAKET_RANGES.map((r) => r.label),
+      activeRange: POLYMARKET_MAKET_RANGES.find((r) => r.interval === interval)?.label ?? '1H',
+      onSelectRange: (label) => {
+        const found = POLYMARKET_MAKET_RANGES.find((r) => r.label === label);
+        if (found) setInterval(found.interval);
+      },
+      newsVisible: false,
+    },
+    chartBody,
+    newsStories,
+    positionsTitle: 'Your Picks',
+    positionRows,
+    positionsBody,
+    actionBar,
+    actionSheet: eventLadderSheet ?? legacyNumpadSheet ?? undefined,
+  };
+
+  return (
+    <View style={styles.screen}>
+      <MarketScreen vm={vm} />
+
+      {/* Your pick detail (from the Your pick pill) */}
+      {detail ? (
         <DetailPositionSheet
           visible={positionOpen}
           position={activePosition}
@@ -1029,352 +1186,8 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
             if (activePosition) handleCashOut(activePosition);
           }}
         />
-        <CashOutConfirmModal
-          visible={cashOutPosition !== null}
-          position={cashOutPosition}
-          submitting={submitting}
-          orderbook={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.book ?? null : null}
-          quoteLoading={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.loading ?? false : false}
-          quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
-          onClose={() => setCashOutPosition(null)}
-          onConfirm={confirmCashOut}
-        />
-        <OrderComposerSheet
-          visible={composerOpen && selectedSide !== null}
-          side={selectedSide ?? 'yes'}
-          pickLabel={selectedSide === 'no' ? 'No' : 'Yes'}
-          question={detail.question}
-          currentPrice={selectedQuotePrice}
-          amount={numpadAmount}
-          onAmountChange={setNumpadAmount}
-          executableAvgPrice={marketClosed || !activeExecutableQuote.executable ? null : activeExecutableQuote.averagePrice}
-          minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
-          availableCash={cashBalance}
-          guardrail={orderGuardrail}
-          submitting={submitting}
-          submittingLabel={submitLabel}
-          disabled={marketClosed}
-          limitOrderNote="Cancels automatically at the market deadline."
-          onClose={collapseNumpad}
-          onConfirm={confirmComposer}
-        />
-        <ConnectionSheet
-          visible={connectSheet.visible}
-          chain={connectSheet.chain}
-          onConnected={() => {
-            connectionCompletedRef.current = true;
-          }}
-          onClose={() => {
-            const completed = connectionCompletedRef.current;
-            connectionCompletedRef.current = false;
-            if (!completed) {
-              setSetupAfterConnect(false);
-              setSubmitAfterSetup(false);
-            }
-            connectSheet.close();
-          }}
-        />
-      </View>
-    );
-  }
-
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <AppTopBar
-        left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
-        center={(
-          <AppTopBarTitle align="left" numberOfLines={2} tone="primary" uppercase={false}>
-            {detail?.question ?? 'Loading...'}
-          </AppTopBarTitle>
-        )}
-        right={<AppTopBarCashPill value={truncateUsd(cashBalance)} />}
-      />
-
-      {/* ── LOADING / ERROR ── */}
-      {loading ? (
-        <View style={styles.stateWrap}>
-          <ActivityIndicator size="small" color={semantic.text.accent} />
-          <Text style={styles.stateText}>Loading market...</Text>
-        </View>
-      ) : errorMessage ? (
-        <View style={styles.stateWrap}>
-          <Text style={styles.stateTitle}>Market unavailable</Text>
-          <Text style={styles.stateText}>{errorMessage}</Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Try again"
-            accessibilityHint="Reload market details"
-            onPress={() => void loadMarket()}
-            style={styles.retryBtn}>
-            <Text style={styles.retryText}>Try Again</Text>
-          </Pressable>
-        </View>
-      ) : detail ? (
-        <View style={styles.body}>
-          {/* ══ DARK ZONE ══ */}
-          <ScrollView
-            style={styles.darkZone}
-            contentContainerStyle={[styles.darkZoneContent, { paddingBottom: SOFT_COLLAPSED }]}
-            showsVerticalScrollIndicator={false}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={() => { void refreshDetailScreen(); }}
-                tintColor={semantic.text.accent}
-              />
-            }>
-            {/* Question + resolution context first (PRD §4). The description
-                doubles as the rules source — dedicated upstream fields are
-                usually empty, so no named external source is promised. */}
-            <View style={styles.questionHeader}>
-              <Text style={styles.questionTitle} numberOfLines={3}>{detail.question}</Text>
-              <View style={styles.questionMetaRow}>
-                {detail.category ? <Text style={styles.questionCategory}>{detail.category.toUpperCase()}</Text> : null}
-                <Text style={styles.questionDeadline}>{formatDeadline(detail.endDate, detail.active)}</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="How this market resolves"
-                style={styles.questionRulesBtn}
-                onPress={() => setRulesOpen(true)}>
-                <MaterialIcons name="info-outline" size={13} color={semantic.text.accent} />
-                <Text style={styles.questionRulesText}>How this resolves</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.displayRow}>
-              <View style={styles.displayTabGroup}>
-                <DisplayTab label="Your Picks" active={activeView === 'picks'} onPress={() => setActiveView('picks')} />
-                <DisplayTab label="Stats" active={activeView === 'stats'} onPress={() => setActiveView('stats')} />
-              </View>
-              <View style={styles.displayTabGroup}>
-              {activeView === 'chart' && (['5m', '1h', '1d'] as Interval[]).map((iv) => (
-                <Pressable
-                  key={iv}
-                  accessibilityRole="tab"
-                  accessibilityLabel={`Show ${iv === '5m' ? '5 minute' : iv === '1h' ? '1 hour' : '1 day'} chart`}
-                  accessibilityState={{ selected: interval === iv }}
-                  style={[styles.rangeChip, interval === iv && styles.rangeChipActive]}
-                  onPress={() => setInterval(iv)}>
-                  <Text style={[styles.rangeChipText, interval === iv && styles.rangeChipTextActive]}>
-                    {iv === '5m' ? '5M' : iv === '1h' ? '1H' : '1D'}
-                  </Text>
-                </Pressable>
-              ))}
-                <DisplayTab label="Chart" active={activeView === 'chart'} onPress={() => setActiveView('chart')} />
-                <DisplayTab label="Book" active={activeView === 'orderbook'} onPress={() => setActiveView('orderbook')} />
-              </View>
-            </View>
-
-            {/* Chart or Orderbook */}
-            <View style={styles.viewContainer}>
-              {activeView === 'picks' ? (
-                <DetailPicksPanel
-                  scope={pickScope}
-                  marketSlug={slug}
-                  marketTokenIds={detail.clobTokenIds}
-                  marketConditionIds={marketPositions.map((position) => position.conditionId)}
-                  loading={picksLoading}
-                  freshness={{
-                    ...picksFreshness,
-                    loading: picksLoading,
-                    syncing: pendingOpenOrders.length > 0,
-                    stale: picksFreshness.stale || realtimeStatus === 'degraded',
-                    error: picksFreshness.error
-                      ?? (realtimeStatus === 'degraded' ? 'Live updates delayed; using periodic refresh' : null),
-                  }}
-                  marketPositions={marketPositions}
-                  allPositions={allPositions}
-                  redeemablePositions={redeemablePositions}
-                  closedPositions={closedPositions}
-                  openOrders={visibleOpenOrders}
-                  activityItems={activityItems}
-                  sellQuotes={sellQuotes}
-                  cancellingOrderId={cancellingOrderId}
-                  client={poly.client}
-                  onScopeChange={setPickScope}
-                  onCashOut={handleCashOut}
-                  onBackMore={(position) => {
-                    if (position.slug && position.slug !== slug) {
-                      router.push(getPolymarketMarketHref(position.slug));
-                      return;
-                    }
-                    tapOdd(position.outcome === 'No' ? 'no' : 'yes');
-                  }}
-                  onCancelOrder={(orderId) => void handleCancelOrder(orderId)}
-                  onRedeemed={() => void loadPicks()}
-                  onRetry={() => void loadPicks()}
-                />
-              ) : activeView === 'stats' ? (
-                <View style={styles.statsView}>
-                  <View style={styles.picksHeading}>
-                    <Text style={styles.picksTitle}>Stats</Text>
-                    <Text style={styles.picksSubtitle}>Market health</Text>
-                  </View>
-                  <View style={styles.statsGrid}>
-                    <View style={styles.statsCard}><Text style={styles.statsLabel}>Volume</Text><Text style={styles.statsValue}>{formatUsdCompact(detail.volume24h)}</Text></View>
-                    <View style={styles.statsCard}><Text style={styles.statsLabel}>Liquidity</Text><Text style={styles.statsValue}>{formatUsdCompact(detail.liquidity)}</Text></View>
-                    <View style={styles.statsCard}><Text style={styles.statsLabel}>No chance</Text><Text style={styles.statsValue}>{noPrice !== null ? `${Math.round(noPrice * 100)}%` : '--'}</Text></View>
-                    <View style={styles.statsCard}><Text style={styles.statsLabel}>Resolves</Text><Text style={styles.statsValue}>{formatDeadline(detail.endDate, detail.active)}</Text></View>
-                  </View>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="How this market resolves"
-                    style={styles.rulesLink}
-                    onPress={() => setRulesOpen(true)}>
-                    <Text style={styles.rulesLinkText}>How this resolves</Text>
-                  </Pressable>
-                </View>
-              ) : activeView === 'chart' ? (
-                historyLoading ? (
-                  <View style={styles.chartSkeleton}>
-                    <ActivityIndicator size="small" color={semantic.text.faint} />
-                  </View>
-                ) : (
-                  <MultiLineChart
-                    series={[
-                      { points: yesHistory, color: semantic.sentiment.negative, label: 'Yes' },
-                      { points: noHistory, color: semantic.sentiment.positive, label: 'No' },
-                    ]}
-                    width={chartWidth}
-                    height={chartHeight}
-                  />
-                )
-              ) : isEventMode && event ? (
-                <View style={styles.obWrap}>
-                  {/* One book per outcome (PRD §5) */}
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.obTabs}>
-                    {event.outcomes.map((o, i) => (
-                      <Pressable
-                        key={o.id}
-                        accessibilityRole="tab"
-                        accessibilityLabel={`Show ${o.label} order book`}
-                        accessibilityState={{ selected: eventBookIdx === i }}
-                        style={[styles.obTab, eventBookIdx === i && styles.obTabActive]}
-                        onPress={() => setEventBookIdx(i)}>
-                        <Text
-                          numberOfLines={1}
-                          style={[styles.obTabText, eventBookIdx === i && styles.obTabTextActive]}>
-                          {o.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-                  <OrderbookView book={orderbook} loading={orderbookLoading} />
-                </View>
-              ) : (
-                <OrderbookView book={orderbook} loading={orderbookLoading} />
-              )}
-            </View>
-          </ScrollView>
-
-          {/* ══ SOFT ZONE ══ */}
-          <Animated.View style={[styles.softZone, { maxHeight: softZoneAnim }]}>
-            {/* Drag handle */}
-            <View style={styles.dragHandle} {...dragResponder.panHandlers}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Collapse order entry"
-                accessibilityHint="Hide the amount keypad"
-                onPress={collapseNumpad}>
-                <View style={styles.dragHandlePill} />
-              </Pressable>
-            </View>
-
-            {/* Odds format toggle + Binary odds buttons */}
-            <View style={styles.oddsSection}>
-              <View style={styles.oddsHeader}>
-                <Text style={styles.oddsTitle}>{"What's your pick?"}</Text>
-                {/*
-                <OddsFormatToggle format={format} onFormatChange={setFormat} />
-                */}
-              </View>
-              {marketClosed && (
-                <Text style={styles.marketClosedText}>This market is closed and no longer accepting new picks.</Text>
-              )}
-              {isEventMode && event ? (
-                /* Multi-outcome ladder (PRD §5) — one rung per sub-market,
-                   odds toggle Probability/Decimal/American, prices in cents. */
-                <View>
-                  <View style={styles.ladderToggleRow}>
-                    {(['probability', 'decimal', 'american'] as EventOddsFormat[]).map((f) => (
-                      <Pressable
-                        key={f}
-                        accessibilityRole="tab"
-                        accessibilityLabel={`${f} odds`}
-                        accessibilityState={{ selected: eventOddsFormat === f }}
-                        style={[styles.ladderToggle, eventOddsFormat === f && styles.ladderToggleActive]}
-                        onPress={() => setEventOddsFormat(f)}>
-                        <Text style={[
-                          styles.ladderToggleText,
-                          eventOddsFormat === f && styles.ladderToggleTextActive,
-                        ]}>
-                          {f === 'probability' ? '%' : f === 'decimal' ? 'DEC' : 'AM'}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                  <EventOutcomeLadder
-                    outcomes={event.outcomes.map((o) => ({
-                      id: o.id,
-                      label: o.label,
-                      price: eventOutcomePrices[o.id] ?? o.price ?? 0,
-                    }))}
-                    selectedId={eventOutcomeId}
-                    onSelect={tapEventOutcome}
-                    oddsFormat={eventOddsFormat}
-                  />
-                </View>
-              ) : (
-                <View style={styles.binaryBtns}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Back YES at ${yesPrice !== null ? formatOdds(yesPrice) : 'unavailable'}`}
-                    accessibilityState={{ selected: selectedSide === 'yes', disabled: marketClosed || submitting }}
-                    accessibilityHint="Open order entry for YES"
-                    style={[styles.bnBtn, styles.bnBtnYes, selectedSide === 'yes' && styles.bnBtnYesSelected]}
-                    disabled={marketClosed || submitting}
-                    onPress={() => tapOdd('yes')}>
-                    <Text style={styles.bnBtnYesPrice}>{yesPrice !== null ? formatOdds(yesPrice) : '--'}</Text>
-                    <Text style={styles.bnBtnYesLabel}>Back YES</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={`Back NO at ${noPrice !== null ? formatOdds(noPrice) : 'unavailable'}`}
-                    accessibilityState={{ selected: selectedSide === 'no', disabled: marketClosed || submitting }}
-                    accessibilityHint="Open order entry for NO"
-                    style={[styles.bnBtn, styles.bnBtnNo, selectedSide === 'no' && styles.bnBtnNoSelected]}
-                    disabled={marketClosed || submitting}
-                    onPress={() => tapOdd('no')}>
-                    <Text style={styles.bnBtnNoPrice}>{noPrice !== null ? formatOdds(noPrice) : '--'}</Text>
-                    <Text style={styles.bnBtnNoLabel}>Back NO</Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
-
-            {/* Inline numpad */}
-            <InlineNumpad
-              visible={numpadOpen}
-              side={selectedSide ?? 'yes'}
-              pickLabel={selectedSide === 'no' ? 'NO' : 'YES'}
-              price={selectedNumpadPrice}
-              amount={numpadAmount}
-              minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
-              availableCash={cashBalance}
-              onAmountChange={setNumpadAmount}
-              onConfirm={() => { void submitOrder(); }}
-              submitting={submitting}
-              submittingLabel={submitLabel}
-              disabled={!poly.isReady}
-              guardrail={orderGuardrail}
-              setupRequired={!poly.isReady}
-              onSetupPress={() => { void handlePolymarketSetupPress(); }}
-              setupSubmitting={setupSubmitting || setupAfterConnect || poly.isLoading}
-            />
-          </Animated.View>
-        </View>
       ) : null}
+
       <CashOutConfirmModal
         visible={cashOutPosition !== null}
         position={cashOutPosition}
@@ -1388,42 +1201,46 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
 
       {/* Composer v2 — shared sheet from the Polymarket redesign (PRD §6).
           Event mode: the selected ladder rung drives side/label/price. */}
+      {detail ? (
+        <OrderComposerSheet
+          visible={COMPOSER_V2 && composerOpen && (selectedSide !== null || selectedEventOutcome !== null)}
+          side={isEventMode ? 'yes' : selectedSide ?? 'yes'}
+          pickLabel={
+            isEventMode
+              ? (selectedEventOutcome?.label ?? undefined)
+              : (selectedSide === 'no' ? 'NO' : 'YES')
+          }
+          question={(event?.title ?? detail?.question) ?? null}
+          currentPrice={selectedQuotePrice}
+          amount={numpadAmount}
+          onAmountChange={setNumpadAmount}
+          executableAvgPrice={
+            marketClosed
+              ? null
+              : (() => {
+                  const q = activeExecutableQuote;
+                  return q.executable && q.averagePrice !== null ? q.averagePrice : null;
+                })()
+          }
+          minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
+          availableCash={cashBalance}
+          guardrail={orderGuardrail}
+          submitting={submitting}
+          submittingLabel={submitLabel}
+          disabled={marketClosed}
+          limitOrderNote="Cancels automatically at the market deadline."
+          onClose={() => {
+            setComposerParams(null);
+            collapseNumpad();
+          }}
+          onConfirm={confirmComposer}
+        />
+      ) : null}
+
       <ResolutionRulesSheet
         visible={rulesOpen}
         description={(event?.description ?? detail?.description) ?? null}
         onClose={() => setRulesOpen(false)}
-      />
-      <OrderComposerSheet
-        visible={COMPOSER_V2 && composerOpen && (selectedSide !== null || selectedEventOutcome !== null)}
-        side={isEventMode ? 'yes' : selectedSide ?? 'yes'}
-        pickLabel={
-          isEventMode
-            ? (selectedEventOutcome?.label ?? undefined)
-            : (selectedSide === 'no' ? 'NO' : 'YES')
-        }
-        question={(event?.title ?? detail?.question) ?? null}
-        currentPrice={selectedQuotePrice}
-        amount={numpadAmount}
-        onAmountChange={setNumpadAmount}
-        executableAvgPrice={
-          marketClosed
-            ? null
-            : (() => {
-                const q = activeExecutableQuote;
-                return q.executable && q.averagePrice !== null ? q.averagePrice : null;
-              })()
-        }
-        minimumOrderSize={activeSelectedBook?.minOrderSize ?? null}
-        availableCash={cashBalance}
-        guardrail={orderGuardrail}
-        submitting={submitting}
-        submittingLabel={submitLabel}
-        disabled={marketClosed}
-        onClose={() => {
-          setComposerParams(null);
-          collapseNumpad();
-        }}
-        onConfirm={confirmComposer}
       />
 
       <ConnectionSheet
@@ -1450,83 +1267,29 @@ export function PolymarketMarketDetailScreen({ slug }: PolymarketMarketDetailScr
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: semantic.background.screen },
-  mockTitleLockup: { flex: 1, paddingHorizontal: 7 },
-  mockTopTitle: { fontSize: 12, lineHeight: 15, fontWeight: '900', color: semantic.text.primary },
-  mockTopSubtitle: { paddingTop: 2, fontFamily: 'monospace', fontSize: 8, textTransform: 'capitalize', color: semantic.text.faint },
-  mockScroll: { flex: 1 },
-  mockContent: { paddingHorizontal: 14, paddingTop: 10 },
-  mockCard: { overflow: 'hidden', borderRadius: 24, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.surface, boxShadow: '0 12px 26px rgba(3,31,44,0.32)' },
-  mockCardTop: { minHeight: 48, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: semantic.border.muted },
-  mockKind: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', textTransform: 'uppercase', color: semantic.text.dim },
-  mockPositionButton: { minHeight: 32, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 11, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
-  mockPositionLabel: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', color: semantic.text.dim },
-  mockPositionPnl: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', color: tokens.colors.viridian },
-  mockPositionPnlNegative: { color: tokens.colors.vermillion },
-  mockBinaryHero: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 },
-  mockBinaryMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  mockCategory: { fontFamily: 'monospace', fontSize: 8, fontWeight: '900', textTransform: 'uppercase', color: tokens.colors.accent },
-  mockResolveMeta: { flex: 1, textAlign: 'right', fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
-  mockQuestion: { paddingTop: 12, fontSize: 25, lineHeight: 29, letterSpacing: -0.8, fontWeight: '900', color: semantic.text.primary },
-  mockConsensus: { paddingTop: 20, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  mockConsensusSide: { minWidth: 42 },
-  mockConsensusSideRight: { alignItems: 'flex-end' },
-  mockYesPrice: { fontFamily: 'monospace', fontSize: 18, fontWeight: '900', color: tokens.colors.viridian },
-  mockNoPrice: { fontFamily: 'monospace', fontSize: 18, fontWeight: '900', color: tokens.colors.vermillion },
-  mockConsensusLabel: { paddingTop: 3, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
-  mockConsensusTrack: { flex: 1, height: 10, overflow: 'hidden', borderRadius: 5, backgroundColor: tokens.colors.vermillion },
-  mockConsensusFill: { height: '100%', backgroundColor: tokens.colors.viridian },
-  mockPanel: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
-  mockPanelHead: { minHeight: 66, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  mockPanelTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
-  mockPanelSubtitle: { paddingTop: 3, fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
-  mockViewSwitch: { flexDirection: 'row', padding: 4, borderRadius: 13, borderCurve: 'continuous', backgroundColor: tokens.colors.lift },
-  mockViewButton: { minWidth: 65, minHeight: 36, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 10, borderCurve: 'continuous' },
-  mockViewButtonActive: { backgroundColor: tokens.colors.accent },
-  mockViewText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
-  mockViewTextActive: { color: tokens.colors.backgroundDark },
-  mockMarketSurface: { minHeight: 216, paddingHorizontal: 8, paddingBottom: 10, alignItems: 'center', justifyContent: 'center' },
-  mockBookWrap: { width: '100%', minHeight: 202, paddingHorizontal: 5 },
-  mockBookTabs: { flexDirection: 'row', gap: 5, paddingBottom: 8 },
-  mockBookTab: { flex: 1, minHeight: 36, borderRadius: 10, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.surface },
-  mockBookTabActive: { backgroundColor: tokens.colors.accent },
-  mockBookTabText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
-  mockBookTabTextActive: { color: tokens.colors.backgroundDark },
-  mockPicks: { paddingHorizontal: 13, paddingTop: 13, paddingBottom: 15, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: semantic.border.muted, backgroundColor: tokens.colors.surface },
-  mockPicksHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  mockPicksTitle: { fontSize: 13, fontWeight: '900', color: semantic.text.primary },
-  mockPicksMeta: { fontFamily: 'monospace', fontSize: 8, color: semantic.text.faint },
-  mockBinaryButtons: { paddingTop: 10, flexDirection: 'row', gap: 8 },
-  mockBinaryButton: { flex: 1, minHeight: 74, paddingHorizontal: 12, paddingVertical: 11, justifyContent: 'space-between', borderRadius: 15, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: tokens.colors.ground },
-  mockBinaryButtonSelected: { borderColor: tokens.colors.accent, backgroundColor: tokens.colors.lift, boxShadow: `inset 0 -4px 0 ${tokens.colors.accent}` },
-  mockBinaryLabel: { fontSize: 11, fontWeight: '900', color: semantic.text.dim },
-  mockYesButtonPrice: { fontFamily: 'monospace', fontSize: 20, fontWeight: '900', color: tokens.colors.viridian },
-  mockNoButtonPrice: { fontFamily: 'monospace', fontSize: 20, fontWeight: '900', color: tokens.colors.vermillion },
-  mockHint: { paddingTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  mockHintText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', textTransform: 'uppercase', color: semantic.text.faint },
 
-  // ── States ──
-  stateWrap: {
-    flex: 1,
+  // Inline notice (market fetch failed)
+  noticeCard: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    gap: 6,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    padding: tokens.spacing.lg,
   },
-  stateTitle: {
+  noticeTitle: {
     color: semantic.text.primary,
     fontSize: tokens.fontSize.md,
     fontWeight: '700',
     fontFamily: 'monospace',
   },
-  stateText: { color: semantic.text.dim, fontSize: tokens.fontSize.md },
-  retryBtn: {
-    marginTop: tokens.spacing.xs,
+  noticeText: { color: semantic.text.dim, fontSize: tokens.fontSize.md },
+  noticeRetryBtn: {
+    marginTop: 4,
     backgroundColor: semantic.text.accent,
-    paddingHorizontal: tokens.spacing.md,
-    paddingVertical: tokens.spacing.sm,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: tokens.radius.xs,
   },
-  retryText: {
+  noticeRetryText: {
     color: semantic.background.screen,
     fontSize: tokens.fontSize.sm,
     fontFamily: 'monospace',
@@ -1534,328 +1297,37 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // ── Question header (PRD §4) ──
-  questionHeader: {
-    paddingTop: 6,
-    paddingBottom: 10,
+  // Chart region (Chart | Book switch + surface)
+  chartRegion: {
+    gap: 6,
   },
-  questionTitle: {
-    fontFamily: 'monospace',
-    fontSize: 16,
-    lineHeight: 21,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  questionMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 6,
-  },
-  questionCategory: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    letterSpacing: 1.2,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  questionDeadline: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.dim,
-    textTransform: 'uppercase',
-  },
-  questionRulesBtn: {
-    marginTop: 8,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 5,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: tokens.colors.surface,
-  },
-  questionRulesText: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    fontWeight: '700',
-    color: semantic.text.accent,
-  },
-
-  // ── Body ──
-  body: { flex: 1, position: 'relative' },
-
-  // ── Dark zone ──
-  darkZone: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  darkZoneContent: {
-    flexGrow: 1,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 10,
-  },
-  displayRow: {
-    minHeight: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-    paddingVertical: 8,
-  },
-  displayTabGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    flexShrink: 1,
-  },
-  displayTab: {
-    height: 28,
-    borderRadius: 8,
-    paddingHorizontal: 8,
+  chartViewSwitch: { alignSelf: 'flex-end', flexDirection: 'row', padding: 4, borderRadius: 13, backgroundColor: tokens.colors.lift },
+  chartViewButton: { minWidth: 65, minHeight: 36, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, borderRadius: 10 },
+  chartViewButtonActive: { backgroundColor: tokens.colors.accent },
+  chartViewText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
+  chartViewTextActive: { color: tokens.colors.backgroundDark },
+  chartSurface: {
+    minHeight: 216,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  displayTabActive: {
-    backgroundColor: tokens.colors.surface,
-  },
-  displayTabText: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    letterSpacing: 0.7,
-    textTransform: 'uppercase',
-    color: semantic.text.faint,
-  },
-  displayTabTextActive: {
-    color: semantic.text.primary,
-  },
-  rangeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    minHeight: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rangeChipActive: {
-    backgroundColor: tokens.colors.surface,
-  },
-  rangeChipText: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    letterSpacing: 1,
-    color: semantic.text.faint,
-  },
-  rangeChipTextActive: {
-    color: semantic.text.primary,
-  },
-  toggleIcons: {
-    flexDirection: 'row',
-    gap: 4,
-    marginLeft: 'auto',
-  },
-  toggleBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toggleBtnActive: {
-    backgroundColor: tokens.colors.surface,
-  },
-  rulesLink: {
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: tokens.colors.surface,
-  },
-  rulesLinkText: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    fontWeight: '700',
-    color: semantic.text.accent,
-  },
-  viewContainer: {
-    flex: 1,
-    minHeight: 0,
   },
   chartSkeleton: {
-    flex: 1,
+    paddingVertical: 60,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  picksView: {
-    flex: 1,
-    paddingTop: 10,
-  },
-  picksHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  picksTitle: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
-    color: semantic.text.primary,
-    fontWeight: '700',
-  },
-  picksSubtitle: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  picksEmptyCard: {
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-    borderRadius: 12,
-    padding: 14,
-  },
-  picksEmptyTitle: {
-    color: semantic.text.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  picksEmptyText: {
-    color: semantic.text.dim,
-    fontSize: 10,
-    lineHeight: 15,
-  },
-  statsView: {
-    flex: 1,
-    paddingTop: 10,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  statsCard: {
-    width: '48%',
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-    borderRadius: 12,
-    padding: 10,
-  },
-  statsLabel: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    letterSpacing: 1,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  statsValue: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: 15,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
+  bookWrap: { width: '100%', minHeight: 202, paddingHorizontal: 5 },
+  bookTabs: { flexDirection: 'row', gap: 5, paddingBottom: 8 },
+  bookTab: { flex: 1, minHeight: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.surface },
+  bookTabActive: { backgroundColor: tokens.colors.accent },
+  bookTabText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.faint },
+  bookTabTextActive: { color: tokens.colors.backgroundDark },
 
-  // ── Soft zone ──
-  softZone: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: tokens.colors.ground,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    overflow: 'hidden',
-  },
-  dragHandle: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 2,
-  },
-  dragHandlePill: {
-    width: 32,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: semantic.text.faint,
-  },
-  separator: {
-    height: 1,
-    backgroundColor: semantic.polymarket.rowBorderSoft,
-    marginHorizontal: 20,
-  },
-  // ── Binary odds ──
-  oddsSection: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  oddsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  oddsTitle: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    fontWeight: '700',
-    color: semantic.text.primary,
-  },
-  marketClosedText: {
-    marginBottom: 8,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    color: tokens.colors.vermillion,
-  },
-  binaryBtns: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  // ── Event ladder odds toggle (PRD §5) ──
-  ladderToggleRow: {
-    flexDirection: 'row',
-    gap: 4,
-    marginBottom: 8,
-  },
-  ladderToggle: {
-    minHeight: 32,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: tokens.colors.lift,
-  },
-  ladderToggleActive: {
-    backgroundColor: tokens.colors.surface,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-  },
-  ladderToggleText: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    color: semantic.text.faint,
-  },
-  ladderToggleTextActive: {
-    color: semantic.text.primary,
-  },
-  // ── Event Book tabs (PRD §5) ──
+  // Event Book tabs (PRD §5)
   obWrap: {
-    flex: 1,
+    width: '100%',
+    minHeight: 202,
+    paddingHorizontal: 5,
   },
   obTabs: {
     flexDirection: 'row',
@@ -1886,56 +1358,137 @@ const styles = StyleSheet.create({
   obTabTextActive: {
     color: semantic.text.primary,
   },
-  bnBtn: {
-    flex: 1,
-    height: 54,
-    borderRadius: 14,
+
+  // Picks / stats section
+  picksBody: {
+    paddingBottom: 14,
+    gap: 9,
+  },
+  yourPickPill: {
+    minHeight: 34,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    alignSelf: 'flex-start',
+    borderRadius: 11,
+    backgroundColor: tokens.colors.lift,
+  },
+  yourPickLabel: { fontFamily: 'monospace', fontSize: 8, fontWeight: '800', color: semantic.text.dim },
+  yourPickPnl: { fontFamily: 'monospace', fontSize: 9, fontWeight: '900', color: tokens.colors.viridian },
+  yourPickPnlNegative: { color: tokens.colors.vermillion },
+  picksTabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  displayTab: {
+    height: 28,
+    borderRadius: 8,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
   },
-  bnBtnYes: {
-    backgroundColor: semantic.polymarket.outcomeYesBg,
+  displayTabActive: {
+    backgroundColor: tokens.colors.surface,
   },
-  bnBtnNo: {
-    backgroundColor: semantic.polymarket.outcomeNoBg,
-  },
-  bnBtnYesSelected: {
-    backgroundColor: 'rgba(74,140,111,0.25)',
-    borderWidth: 1,
-    borderColor: 'rgba(74,140,111,0.35)',
-  },
-  bnBtnNoSelected: {
-    backgroundColor: 'rgba(217,83,79,0.20)',
-    borderWidth: 1,
-    borderColor: 'rgba(217,83,79,0.35)',
-  },
-  bnBtnYesPrice: {
-    fontFamily: 'monospace',
-    fontSize: 18,
-    fontWeight: '700',
-    color: semantic.sentiment.positive,
-    lineHeight: 22,
-  },
-  bnBtnYesLabel: {
+  displayTabText: {
     fontFamily: 'monospace',
     fontSize: 8,
-    letterSpacing: 1.5,
+    letterSpacing: 0.7,
     textTransform: 'uppercase',
-    color: 'rgba(74,140,111,0.55)',
+    color: semantic.text.faint,
   },
-  bnBtnNoPrice: {
-    fontFamily: 'monospace',
-    fontSize: 18,
-    fontWeight: '700',
-    color: semantic.sentiment.negative,
-    lineHeight: 22,
+  displayTabTextActive: {
+    color: semantic.text.primary,
   },
-  bnBtnNoLabel: {
+  statsView: {
+    gap: 8,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  statsCard: {
+    width: '48%',
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: semantic.background.surface,
+    borderRadius: 12,
+    padding: 10,
+  },
+  statsLabel: {
     fontFamily: 'monospace',
     fontSize: 8,
-    letterSpacing: 1.5,
+    letterSpacing: 1,
+    color: semantic.text.faint,
     textTransform: 'uppercase',
-    color: 'rgba(217,83,79,0.45)',
+  },
+  statsValue: {
+    marginTop: 4,
+    fontFamily: 'monospace',
+    fontSize: 15,
+    fontWeight: '800',
+    color: semantic.text.primary,
+  },
+  rulesLink: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: tokens.colors.surface,
+  },
+  rulesLinkText: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.accent,
+  },
+
+  // Event ladder sheet (the old soft zone content)
+  ladderSheet: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  ladderSheetTitle: {
+    fontFamily: 'monospace',
+    fontSize: 11,
+    fontWeight: '700',
+    color: semantic.text.primary,
+  },
+  marketClosedText: {
+    fontFamily: 'monospace',
+    fontSize: 8,
+    color: tokens.colors.vermillion,
+  },
+  ladderToggleRow: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  ladderToggle: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colors.lift,
+  },
+  ladderToggleActive: {
+    backgroundColor: tokens.colors.surface,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+  },
+  ladderToggleText: {
+    fontFamily: 'monospace',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    color: semantic.text.faint,
+  },
+  ladderToggleTextActive: {
+    color: semantic.text.primary,
   },
 });

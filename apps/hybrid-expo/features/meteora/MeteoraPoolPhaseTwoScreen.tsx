@@ -1,3 +1,14 @@
+/**
+ * Meteora pool detail — composed onto the shared MarketScreen (#651).
+ *
+ * Pure refactor of the Phase Two screen: every hook, preview/recovery flow,
+ * validation and execution path is the previous inline screen's code
+ * unchanged. The position draft form (amount + price range + distribution)
+ * moved from the scroll into the shared action sheet with its Review CTA;
+ * pool/preview/operation statuses render as an on-screen notice stack, and
+ * the pinned bar carries Create position / Refresh pool.
+ */
+
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import type {
   MeteoraFreshness,
@@ -14,18 +25,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
-  KeyboardAvoidingView,
   Linking,
-  Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AutoFillControl,
   FormSection,
@@ -70,7 +77,6 @@ import {
   tokenQuoteLabel,
 } from '@/features/meteora/meteora.position-form';
 import { tokens } from '@/theme/tokens';
-import { AppProfileButton } from '@/components/AppProfileButton';
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { meteoraPhaseTwoAdapter } from '@/features/meteora/meteora.form-execution';
 import {
@@ -104,6 +110,8 @@ import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import { walletBalanceClient } from '@/features/wallet/wallet.balance-client';
 import { notifyWalletDataChanged, subscribeWalletDataChanged } from '@/features/wallet/wallet.refresh';
+import { MarketScreen } from '@/features/markets/MarketScreen';
+import type { MarketDetailViewModel } from '@/features/markets/detail-view-model';
 
 const PREVIEW_DEBOUNCE_MS = 450;
 
@@ -167,7 +175,6 @@ export function MeteoraPoolPhaseTwoScreen({
   liquidityRefreshSignal?: number;
 }) {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const connectedWallet = useWallet();
   const wallet = walletOverride ?? connectedWallet;
   const walletReady = wallet.connected && !!wallet.address;
@@ -1435,426 +1442,457 @@ export function MeteoraPoolPhaseTwoScreen({
     void handleExecute();
   }
 
-  return (
-    <KeyboardAvoidingView
-      style={[styles.screen, { paddingTop: insets.top }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.header}>
-        <View style={styles.headerTitleRow}>
-          <Pressable
-            onPress={() => router.back()}
-            accessibilityRole="button"
-            accessibilityLabel="Go back to Meteora pools"
-            hitSlop={8}
-            style={styles.headerBack}
-          >
-            <MaterialIcons name="arrow-back" size={19} color={METEORA_COLORS.text} />
-          </Pressable>
-          <View style={styles.headerCopy}>
-            <Text style={styles.headerTitle} numberOfLines={1}>{pair}</Text>
-            <Text style={styles.headerPrice} numberOfLines={1}>{conversion}</Text>
-          </View>
-        </View>
-        <AppProfileButton
-          onPress={() => router.push('/markets/meteora/profile')}
-          connected={wallet.connected}
-          label="Open Meteora profile"
-          hint="View your Meteora positions, orders, and history"
+  // ── Shared-frame composition (#651) ─────────────────────────────────────────
+
+  const chartBody = pool ? (
+    <View style={styles.fullWidthChart}>
+      <MeteoraPriceChart
+        poolAddress={pool.address}
+        currentPrice={chartCurrentPrice}
+        quoteLabel={quoteLabel}
+        inverted={priceInverted}
+        defaultMode="line"
+        height={208}
+      />
+    </View>
+  ) : (
+    <View style={styles.chartLoading}>
+      <ActivityIndicator color={METEORA_COLORS.accent} />
+      <Text style={styles.chartLoadingText}>Loading pool…</Text>
+    </View>
+  );
+
+  const notice = !loading && (loadError || !pool) ? (
+    <View style={styles.noticeCard}>
+      <Text style={styles.noticeTitle}>Pool unavailable</Text>
+      <Text style={styles.noticeText}>{loadError ?? 'This pool is unavailable'}</Text>
+      <Pressable
+        style={styles.noticeRetryBtn}
+        onPress={() => void loadPool({ clearCache: true })}
+        accessibilityRole="button"
+      >
+        <Text style={styles.noticeRetryText}>Try again</Text>
+      </Pressable>
+    </View>
+  ) : (
+    <>
+      {stalePool ? (
+        <InlineNotice
+          tone="warning"
+          title="Pool data needs a refresh"
+          message="Refresh this pool before creating a position."
         />
-      </View>
-
-      {loading ? (
-        <LoadingPool />
-      ) : loadError || !pool ? (
-        <LoadFailure message={loadError ?? 'This pool is unavailable'} onRetry={() => loadPool()} />
-      ) : (
-        <ScrollView
-          style={styles.scroll}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          refreshControl={(
-            <RefreshControl
-              refreshing={refreshing}
-              enabled={!executionBusy}
-              onRefresh={onRefresh}
-              tintColor={METEORA_COLORS.accent}
-              colors={[METEORA_COLORS.accent]}
-            />
-          )}
-          contentContainerStyle={[
-            styles.content,
-            { paddingBottom: 20 },
-          ]}
+      ) : null}
+      {addModeError ? (
+        <InlineNotice tone="error" title="Position unavailable" message={addModeError} />
+      ) : null}
+      {positionAddress && walletReady && !addModePosition && !addModeError ? (
+        <InlineNotice tone="pending" title="Loading your position…" message="Reading the position you are adding to." />
+      ) : null}
+      {previewError ? (
+        <InlineNotice tone="error" title={previewBlocker ?? 'Preview unavailable'} message={previewError} />
+      ) : null}
+      {preview?.warnings.filter((warning) => warning.blocking && !(
+        warning.code === 'INSUFFICIENT_TOKEN_BALANCE' && (insufficientX || insufficientY)
+      )).map((warning) => (
+        <InlineNotice
+          key={warning.code}
+          tone={warning.blocking ? 'error' : 'warning'}
+          title={warning.blocking ? 'Action required' : 'Check before signing'}
+          message={warning.message}
+        />
+      ))}
+      {operationMessage ? (
+        <InlineNotice
+          tone={
+            operationState === 'success'
+              ? 'success'
+              : operationState === 'error' || operationState === 'partial'
+                ? 'error'
+                : 'pending'
+          }
+          title={
+            operationState === 'success'
+              ? 'Complete'
+              : operationState === 'error' || operationState === 'partial'
+                ? 'Needs attention'
+                : 'Transaction status'
+          }
+          message={operationMessage}
+        />
+      ) : null}
+      {operationExplorerUrl ? (
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Open transaction in Solana Explorer"
+          onPress={() => {
+            void Linking.openURL(operationExplorerUrl);
+          }}
+          style={styles.explorerLink}
         >
-          <View style={styles.fullWidthChart}>
-            <MeteoraPriceChart
-              poolAddress={pool.address}
-              currentPrice={chartCurrentPrice}
-              quoteLabel={quoteLabel}
-              inverted={priceInverted}
-              defaultMode="line"
-              height={208}
-            />
-          </View>
-          {stalePool ? (
-            <InlineNotice
-              tone="warning"
-              title="Pool data needs a refresh"
-              message="Refresh this pool before creating a position."
-            />
-          ) : null}
+          <MaterialIcons name="open-in-new" size={16} color={METEORA_COLORS.accent} />
+          <Text style={styles.explorerLinkText}>View transaction</Text>
+        </Pressable>
+      ) : null}
+    </>
+  );
 
-          {addModeError ? (
-            <InlineNotice tone="error" title="Position unavailable" message={addModeError} />
-          ) : null}
+  // The moved position draft form — amount + range + distribution, with the
+  // Review CTA beneath it. Edit here, review, then execute; the review sheet
+  // and every execution guard are unchanged.
+  const reviewCtaButton = (
+    <Pressable
+      onPress={handlePrimaryAction}
+      disabled={footerDisabled}
+      accessibilityRole="button"
+      accessibilityLabel={footerLabel}
+      accessibilityState={{
+        disabled: footerDisabled,
+        busy: footerBusy,
+      }}
+      style={({ pressed }) => [
+        styles.cta,
+        footerDisabled && styles.ctaDisabled,
+        walletReady && operationState === 'success' && styles.ctaSuccess,
+        walletReady && operationState === 'error' && styles.ctaError,
+        pressed && !footerDisabled && styles.ctaPressed,
+      ]}
+    >
+      {footerBusy ? (
+        <ActivityIndicator size="small" color={ctaForeground} />
+      ) : (
+        <MaterialIcons
+          name={
+            !walletReady
+              ? 'account-balance-wallet'
+              : operationState === 'success'
+              ? 'check-circle'
+              : operationState === 'error'
+                ? 'error-outline'
+                : 'arrow-forward'
+          }
+          size={19}
+          color={ctaForeground}
+        />
+      )}
+      <Text style={[styles.ctaText, { color: ctaForeground }]}>{footerLabel}</Text>
+    </Pressable>
+  );
 
-          {positionAddress && walletReady && !addModePosition && !addModeError ? (
-            <View style={styles.centerState}>
-              <ActivityIndicator color={METEORA_COLORS.accent} />
-              <Text style={styles.centerBody}>Loading your position…</Text>
+  const actionSheet = (
+    <View style={styles.orderSheet}>
+      {activeTab === 'position' ? (
+        <>
+          <View style={styles.amountSection}>
+            <View style={styles.amountHeading}>
+              <Text style={styles.rangeTitle}>Amount</Text>
+              {!positionAddress ? (
+                <AutoFillControl compact value={positionDraft.autoFill} onChange={toggleAutoFill} disabled={executionBusy} />
+              ) : null}
             </View>
-          ) : activeTab === 'position' ? (
-            <>
-              <View style={styles.amountSection}>
-                <View style={styles.amountHeading}>
-                  <Text style={styles.rangeTitle}>Amount</Text>
+            {addModePosition ? (
+              <Text style={styles.selectionExplanation}>Adding to your position · Fixed range · Spot distribution</Text>
+            ) : null}
+            <View style={styles.amountGroup}>
+              <TokenAmountField
+                compact
+                symbol={pool?.tokenX.symbol ?? 'X'}
+                iconUrl={tokenXIconUrl}
+                iconReloadKey={iconReloadKey}
+                venueIconUrl={pool?.tokenX.iconUrl}
+                value={displayedAmountX}
+                calculated={calculatedX}
+                estimated={estimatedX}
+                disabled={executionBusy}
+                secondaryValue={calculatedX && !displayedAmountX
+                  ? autoFillPendingLabel
+                  : pool ? tokenQuoteLabel(displayedAmountX, chartCurrentPrice, 'x', pool.tokenY.symbol)
+                        ?? (!autoFillActive && isEmptyTokenAmount(displayedAmountX) ? 'Optional' : undefined) : undefined}
+                balance={walletReady
+                  ? balanceX ?? 'Checking…'
+                  : undefined}
+                error={pool ? (insufficientX ? `Insufficient ${pool.tokenX.symbol} balance` : calculatedX ? null : amountXError) : amountXError}
+                hideErrorMessage={insufficientX}
+                accent={METEORA_COLORS.tokenX}
+                onChangeText={(value) => changeAmount('x', value)}
+                onBlur={() => markTouched('amountX')}
+                onHalf={walletReady && canSpendX ? () => fillFromBalance('x', 2) : undefined}
+                onMax={walletReady && canSpendX ? () => fillFromBalance('x', 1) : undefined}
+              />
+              <TokenAmountField
+                compact
+                symbol={pool?.tokenY.symbol ?? 'Y'}
+                iconUrl={tokenYIconUrl}
+                iconReloadKey={iconReloadKey}
+                venueIconUrl={pool?.tokenY.iconUrl}
+                value={displayedAmountY}
+                calculated={calculatedY}
+                estimated={estimatedY}
+                disabled={executionBusy}
+                secondaryValue={calculatedY && !displayedAmountY
+                  ? autoFillPendingLabel
+                  : pool ? tokenQuoteLabel(displayedAmountY, chartCurrentPrice, 'y', pool.tokenX.symbol)
+                        ?? (!autoFillActive && isEmptyTokenAmount(displayedAmountY) ? 'Optional' : undefined) : undefined}
+                balance={walletReady
+                  ? balanceY ?? 'Checking…'
+                  : undefined}
+                error={pool ? (insufficientY ? `Insufficient ${pool.tokenY.symbol} balance` : calculatedY ? null : amountYError) : amountYError}
+                hideErrorMessage={insufficientY}
+                accent={METEORA_COLORS.tokenY}
+                onChangeText={(value) => changeAmount('y', value)}
+                onBlur={() => markTouched('amountY')}
+                onHalf={walletReady && canSpendY ? () => fillFromBalance('y', 2) : undefined}
+                onMax={walletReady && canSpendY ? () => fillFromBalance('y', 1) : undefined}
+              />
+            </View>
+
+            {walletBalanceError ? (
+              <Text style={styles.fieldErrorText} accessibilityRole="alert">{walletBalanceError}</Text>
+            ) : null}
+
+            {pool && walletReady && !preview && currentPositionCost?.loading ? (
+              <Text style={styles.selectionExplanation}>Calculating native cost and refundable rent…</Text>
+            ) : !preview && currentPositionCost?.error ? (
+              <Pressable
+                onPress={retryNativeCost}
+                accessibilityRole="button"
+                accessibilityLabel="Retry native cost estimate"
+              >
+                <Text style={styles.fieldErrorText}>Native cost estimate unavailable. Tap to retry.</Text>
+              </Pressable>
+            ) : actualPreviewCostUnavailable ? (
+              <Pressable
+                onPress={retryNativeCost}
+                accessibilityRole="button"
+                accessibilityLabel="Retry current preview native cost estimate"
+              >
+                <Text style={styles.fieldErrorText}>Current preview native cost is unavailable. Tap to retry.</Text>
+              </Pressable>
+            ) : effectivePositionCost ? (
+              <View style={styles.costSummary} testID="meteora-native-cost-estimate">
+                {effectivePositionCost.costs.map((cost) => (
+                  <View key={cost.label} style={styles.costSummaryRow}>
+                    <Text style={styles.costSummaryLabel}>{cost.label}{cost.refundable ? ' · refundable' : ''}</Text>
+                    <Text style={styles.costSummaryValue}>{cost.value}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {pool && walletReady && nativeBalance?.key === nativeBalanceKey && nativeBalance.error ? (
+              <Pressable
+                onPress={() => setWalletBalanceNonce((value) => value + 1)}
+                accessibilityRole="button"
+                accessibilityLabel="Retry native SOL balance"
+              >
+                <Text style={styles.fieldErrorText}>Native SOL balance unavailable. Tap to retry.</Text>
+              </Pressable>
+            ) : null}
+
+            {insufficientX || insufficientY ? (
+              <InlineNotice
+                tone="info"
+                title={`Insufficient balance for ${[
+                  insufficientX ? pool?.tokenX.symbol ?? '' : null,
+                  insufficientY ? pool?.tokenY.symbol ?? '' : null,
+                ].filter(Boolean).join(' and ')}`}
+                message="Lower the amount or add tokens to your wallet to create this position."
+              />
+            ) : autoFillActive && !positionDraft.amountX && !positionDraft.amountY ? (
+              <Text style={styles.selectionExplanation}>Enter either token amount to calculate the other.</Text>
+            ) : null}
+            {nativeCostInsufficient ? (
+              <InlineNotice tone="info" title="Insufficient native SOL for fees" message="This wallet needs enough native SOL for the displayed rent and maximum network fee." />
+            ) : null}
+          </View>
+
+          {pool ? (
+            <View style={styles.rangeSection}>
+              <View style={styles.rangeHeading}>
+                <View style={styles.rangeTitleRow}>
+                  <Text style={styles.rangeTitle}>Price Range</Text>
                   {!positionAddress ? (
-                    <AutoFillControl compact value={positionDraft.autoFill} onChange={toggleAutoFill} disabled={executionBusy} />
+                    <Pressable
+                      onPress={resetRange}
+                      disabled={executionBusy}
+                      accessibilityRole="button"
+                      accessibilityLabel="Reset price range"
+                      accessibilityState={{ disabled: executionBusy }}
+                      style={styles.rangeIconButton}
+                    >
+                      <MaterialIcons name="restart-alt" size={17} color={METEORA_COLORS.textDim} />
+                    </Pressable>
                   ) : null}
                 </View>
-                {addModePosition ? (
-                  <Text style={styles.selectionExplanation}>Adding to your position · Fixed range · Spot distribution</Text>
-                ) : null}
-                <View style={styles.amountGroup}>
-                  <TokenAmountField
-                    compact
-                    symbol={pool.tokenX.symbol}
-                    iconUrl={tokenXIconUrl}
-                    iconReloadKey={iconReloadKey}
-                    venueIconUrl={pool.tokenX.iconUrl}
-                    value={displayedAmountX}
-                    calculated={calculatedX}
-                    estimated={estimatedX}
-                    disabled={executionBusy}
-                    secondaryValue={calculatedX && !displayedAmountX
-                      ? autoFillPendingLabel
-                      : tokenQuoteLabel(displayedAmountX, chartCurrentPrice, 'x', pool.tokenY.symbol)
-                        ?? (!autoFillActive && isEmptyTokenAmount(displayedAmountX) ? 'Optional' : undefined)}
-                    balance={walletReady
-                      ? balanceX ?? 'Checking…'
-                      : undefined}
-                    error={insufficientX ? `Insufficient ${pool.tokenX.symbol} balance` : calculatedX ? null : amountXError}
-                    hideErrorMessage={insufficientX}
-                    accent={METEORA_COLORS.tokenX}
-                    onChangeText={(value) => changeAmount('x', value)}
-                    onBlur={() => markTouched('amountX')}
-                    onHalf={walletReady && canSpendX ? () => fillFromBalance('x', 2) : undefined}
-                    onMax={walletReady && canSpendX ? () => fillFromBalance('x', 1) : undefined}
-                  />
-                  <TokenAmountField
-                    compact
-                    symbol={pool.tokenY.symbol}
-                    iconUrl={tokenYIconUrl}
-                    iconReloadKey={iconReloadKey}
-                    venueIconUrl={pool.tokenY.iconUrl}
-                    value={displayedAmountY}
-                    calculated={calculatedY}
-                    estimated={estimatedY}
-                    disabled={executionBusy}
-                    secondaryValue={calculatedY && !displayedAmountY
-                      ? autoFillPendingLabel
-                      : tokenQuoteLabel(displayedAmountY, chartCurrentPrice, 'y', pool.tokenX.symbol)
-                        ?? (!autoFillActive && isEmptyTokenAmount(displayedAmountY) ? 'Optional' : undefined)}
-                    balance={walletReady
-                      ? balanceY ?? 'Checking…'
-                      : undefined}
-                    error={insufficientY ? `Insufficient ${pool.tokenY.symbol} balance` : calculatedY ? null : amountYError}
-                    hideErrorMessage={insufficientY}
-                    accent={METEORA_COLORS.tokenY}
-                    onChangeText={(value) => changeAmount('y', value)}
-                    onBlur={() => markTouched('amountY')}
-                    onHalf={walletReady && canSpendY ? () => fillFromBalance('y', 2) : undefined}
-                    onMax={walletReady && canSpendY ? () => fillFromBalance('y', 1) : undefined}
-                  />
-                </View>
-
-                {walletBalanceError ? (
-                  <Text style={styles.fieldErrorText} accessibilityRole="alert">{walletBalanceError}</Text>
-                ) : null}
-
-                {walletReady && !preview && currentPositionCost?.loading ? (
-                  <Text style={styles.selectionExplanation}>Calculating native cost and refundable rent…</Text>
-                ) : !preview && currentPositionCost?.error ? (
-                  <Pressable
-                    onPress={retryNativeCost}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry native cost estimate"
-                  >
-                    <Text style={styles.fieldErrorText}>Native cost estimate unavailable. Tap to retry.</Text>
-                  </Pressable>
-                ) : actualPreviewCostUnavailable ? (
-                  <Pressable
-                    onPress={retryNativeCost}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry current preview native cost estimate"
-                  >
-                    <Text style={styles.fieldErrorText}>Current preview native cost is unavailable. Tap to retry.</Text>
-                  </Pressable>
-                ) : effectivePositionCost ? (
-                  <View style={styles.costSummary} testID="meteora-native-cost-estimate">
-                    {effectivePositionCost.costs.map((cost) => (
-                      <View key={cost.label} style={styles.costSummaryRow}>
-                        <Text style={styles.costSummaryLabel}>{cost.label}{cost.refundable ? ' · refundable' : ''}</Text>
-                        <Text style={styles.costSummaryValue}>{cost.value}</Text>
-                      </View>
-                    ))}
-                  </View>
-                ) : null}
-                {walletReady && nativeBalance?.key === nativeBalanceKey && nativeBalance.error ? (
-                  <Pressable
-                    onPress={() => setWalletBalanceNonce((value) => value + 1)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry native SOL balance"
-                  >
-                    <Text style={styles.fieldErrorText}>Native SOL balance unavailable. Tap to retry.</Text>
-                  </Pressable>
-                ) : null}
-
-                {insufficientX || insufficientY ? (
-                  <InlineNotice
-                    tone="info"
-                    title={`Insufficient balance for ${[
-                      insufficientX ? pool.tokenX.symbol : null,
-                      insufficientY ? pool.tokenY.symbol : null,
-                    ].filter(Boolean).join(' and ')}`}
-                    message="Lower the amount or add tokens to your wallet to create this position."
-                  />
-                ) : autoFillActive && !positionDraft.amountX && !positionDraft.amountY ? (
-                  <Text style={styles.selectionExplanation}>Enter either token amount to calculate the other.</Text>
-                ) : null}
-                {nativeCostInsufficient ? (
-                  <InlineNotice tone="info" title="Insufficient native SOL for fees" message="This wallet needs enough native SOL for the displayed rent and maximum network fee." />
-                ) : null}
+                <Pressable
+                  onPress={() => { setPriceInverted((inverted) => !inverted); setPriceInputText({}); }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Invert price quote. Currently ${quoteLabel}`}
+                  style={styles.quoteToggle}
+                >
+                  <Text style={styles.quoteText}>{quoteLabel}</Text>
+                  <MaterialIcons name="swap-horiz" size={16} color={METEORA_COLORS.textDim} />
+                </Pressable>
               </View>
-
-              <View style={styles.rangeSection}>
-                <View style={styles.rangeHeading}>
-                  <View style={styles.rangeTitleRow}>
-                    <Text style={styles.rangeTitle}>Price Range</Text>
-                    {!positionAddress ? (
-                      <Pressable
-                        onPress={resetRange}
-                        disabled={executionBusy}
-                        accessibilityRole="button"
-                        accessibilityLabel="Reset price range"
-                        accessibilityState={{ disabled: executionBusy }}
-                        style={styles.rangeIconButton}
-                      >
-                        <MaterialIcons name="restart-alt" size={17} color={METEORA_COLORS.textDim} />
-                      </Pressable>
-                    ) : null}
-                  </View>
-                  <Pressable
-                    onPress={() => { setPriceInverted((inverted) => !inverted); setPriceInputText({}); }}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Invert price quote. Currently ${quoteLabel}`}
-                    style={styles.quoteToggle}
-                  >
-                    <Text style={styles.quoteText}>{quoteLabel}</Text>
-                    <MaterialIcons name="swap-horiz" size={16} color={METEORA_COLORS.textDim} />
-                  </Pressable>
-                </View>
-                {!addModePosition ? (
-                  <SegmentedControl
-                    value={positionDraft.strategy}
-                    onChange={(strategy) => updatePosition({ strategy })}
-                    accessibilityLabel="Liquidity distribution strategy"
-                    options={STRATEGIES}
-                    disabled={executionBusy}
-                  />
-                ) : null}
-                  <RangeVisualization
-                  bars={liquidityDistribution.bars}
-                  poolLiquidityBars={poolLiquidityBars}
-                  poolLiquidityState={poolLiquidityState}
-                  tokenMode={depositTokenMode}
-                  priceInverted={priceInverted}
-                  interactive={!positionAddress && !executionBusy}
-                  minLabel={formatMeteoraRangePrice(chartMinPrice)}
-                  maxLabel={formatMeteoraRangePrice(chartMaxPrice)}
-                  currentLabel={formatMeteoraRangePrice(displayCurrentPrice)}
-                  quoteLabel={quoteLabel}
-                  tokenXSymbol={pool.tokenX.symbol}
-                  tokenYSymbol={pool.tokenY.symbol}
-                  leftTokenSymbol={priceInverted ? pool.tokenX.symbol : pool.tokenY.symbol}
-                  rightTokenSymbol={priceInverted ? pool.tokenY.symbol : pool.tokenX.symbol}
-                  leftColor={priceInverted ? METEORA_COLORS.primary : METEORA_COLORS.accent}
-                  rightColor={priceInverted ? METEORA_COLORS.accent : METEORA_COLORS.primary}
-                  minPercent={chartGeometry?.minPercent}
-                  maxPercent={chartGeometry?.maxPercent}
-                  currentPercent={chartGeometry?.currentPercent}
-                  dragBinSpan={chartGeometry?.binSpan}
-                  axisMinLabel={formatMeteoraRangePrice(axisMinPrice || null)}
-                  axisMaxLabel={formatMeteoraRangePrice(axisMaxPrice || null)}
-                  onAdjustMin={(delta) => adjustRangePrice('min', delta)}
-                  onAdjustMax={(delta) => adjustRangePrice('max', delta)}
-                  onShiftRange={shiftRange}
+              {!addModePosition ? (
+                <SegmentedControl
+                  value={positionDraft.strategy}
+                  onChange={(strategy) => updatePosition({ strategy })}
+                  accessibilityLabel="Liquidity distribution strategy"
+                  options={STRATEGIES}
+                  disabled={executionBusy}
                 />
-                <Text style={styles.selectionExplanation} testID="meteora-live-bin-count">
-                  {liveBinCount === null ? 'Calculating executable bins…' : `${liveBinCount} bins selected`}
-                </Text>
-                {poolLiquidityState === 'loading' ? (
-                  <Text style={styles.selectionExplanation}>Loading real pool liquidity for these bins…</Text>
-                ) : null}
-                <Text style={styles.selectionExplanation} testID="meteora-distribution-source">
-                  {sdkAllocationReady ? 'Live SDK strategy allocation' : 'Deposit distribution is an estimate until the SDK preview is ready.'}
-                </Text>
-                {poolLiquidityState === 'error' ? (
-                  <Pressable
-                    onPress={() => setPoolLiquidityNonce((value) => value + 1)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry pool liquidity"
-                  >
-                    <Text style={styles.selectionExplanation}>Pool liquidity unavailable. Tap to retry.</Text>
-                  </Pressable>
-                ) : null}
-                <View style={styles.priceFields}>
-                  <PriceField
-                    compact
-                    label="Min Price"
-                    value={priceInputText.min ?? displayMinPrice}
-                    displayValue={formatMeteoraRangePrice(displayMinPrice)}
-                    suffix={priceDeltaLabel(displayMinPrice, displayCurrentPrice)}
-                    disabled={!!positionAddress || executionBusy}
-                    error={touched.range ? localRangeError : null}
-                    hideErrorMessage
-                    onChangeText={(value) => changeRangePrice('min', value)}
-                    onBlur={() => blurRangePrice('min')}
-                    onStep={(direction) => adjustRangePrice('min', direction === 'increment' ? 1 : -1)}
-                  />
-                  <PriceField
-                    compact
-                    label="Max Price"
-                    value={priceInputText.max ?? displayMaxPrice}
-                    displayValue={formatMeteoraRangePrice(displayMaxPrice)}
-                    suffix={priceDeltaLabel(displayMaxPrice, displayCurrentPrice)}
-                    disabled={!!positionAddress || executionBusy}
-                    error={touched.range ? localRangeError : null}
-                    hideErrorMessage
-                    onChangeText={(value) => changeRangePrice('max', value)}
-                    onBlur={() => blurRangePrice('max')}
-                    onStep={(direction) => adjustRangePrice('max', direction === 'increment' ? 1 : -1)}
-                  />
-                </View>
-                {touched.range && localRangeError ? (
-                  <Text style={styles.fieldErrorText} accessibilityRole="alert">{localRangeError}</Text>
-                ) : null}
-              </View>
-            </>
-          ) : (
-            <LimitOrderForm
-              pool={pool}
-              draft={limitDraft}
-              amountError={limitAmountError}
-              priceError={limitPriceError}
-              preview={preview}
-              connected={walletReady}
-              onChange={updateLimit}
-              onTouch={markTouched}
-            />
-          )}
-
-          {previewError ? (
-            <InlineNotice tone="error" title={previewBlocker ?? 'Preview unavailable'} message={previewError} />
-          ) : null}
-          {preview?.warnings.filter((warning) => warning.blocking && !(
-            warning.code === 'INSUFFICIENT_TOKEN_BALANCE' && (insufficientX || insufficientY)
-          )).map((warning) => (
-            <InlineNotice
-              key={warning.code}
-              tone={warning.blocking ? 'error' : 'warning'}
-              title={warning.blocking ? 'Action required' : 'Check before signing'}
-              message={warning.message}
-            />
-          ))}
-          {operationMessage ? (
-            <InlineNotice
-              tone={
-                operationState === 'success'
-                  ? 'success'
-                  : operationState === 'error' || operationState === 'partial'
-                    ? 'error'
-                    : 'pending'
-              }
-              title={
-                operationState === 'success'
-                  ? 'Complete'
-                  : operationState === 'error' || operationState === 'partial'
-                    ? 'Needs attention'
-                    : 'Transaction status'
-              }
-              message={operationMessage}
-            />
-          ) : null}
-          {operationExplorerUrl ? (
-            <Pressable
-              accessibilityRole="link"
-              accessibilityLabel="Open transaction in Solana Explorer"
-              onPress={() => {
-                void Linking.openURL(operationExplorerUrl);
-              }}
-              style={styles.explorerLink}
-            >
-              <MaterialIcons name="open-in-new" size={16} color={METEORA_COLORS.accent} />
-              <Text style={styles.explorerLinkText}>View transaction</Text>
-            </Pressable>
-          ) : null}
-
-        </ScrollView>
-      )}
-
-      {!loading && !loadError && pool ? (
-        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <Pressable
-            onPress={handlePrimaryAction}
-            disabled={footerDisabled}
-            accessibilityRole="button"
-            accessibilityLabel={footerLabel}
-            accessibilityState={{
-              disabled: footerDisabled,
-              busy: footerBusy,
-            }}
-            style={({ pressed }) => [
-              styles.cta,
-              footerDisabled && styles.ctaDisabled,
-              walletReady && operationState === 'success' && styles.ctaSuccess,
-              walletReady && operationState === 'error' && styles.ctaError,
-              pressed && !footerDisabled && styles.ctaPressed,
-            ]}
-          >
-            {footerBusy ? (
-              <ActivityIndicator size="small" color={ctaForeground} />
-            ) : (
-              <MaterialIcons
-                name={
-                  !walletReady
-                    ? 'account-balance-wallet'
-                    : operationState === 'success'
-                    ? 'check-circle'
-                    : operationState === 'error'
-                      ? 'error-outline'
-                      : 'arrow-forward'
-                }
-                size={19}
-                color={ctaForeground}
+              ) : null}
+                <RangeVisualization
+                bars={liquidityDistribution.bars}
+                poolLiquidityBars={poolLiquidityBars}
+                poolLiquidityState={poolLiquidityState}
+                tokenMode={depositTokenMode}
+                priceInverted={priceInverted}
+                interactive={!positionAddress && !executionBusy}
+                minLabel={formatMeteoraRangePrice(chartMinPrice)}
+                maxLabel={formatMeteoraRangePrice(chartMaxPrice)}
+                currentLabel={formatMeteoraRangePrice(displayCurrentPrice)}
+                quoteLabel={quoteLabel}
+                tokenXSymbol={pool.tokenX.symbol}
+                tokenYSymbol={pool.tokenY.symbol}
+                leftTokenSymbol={priceInverted ? pool.tokenX.symbol : pool.tokenY.symbol}
+                rightTokenSymbol={priceInverted ? pool.tokenY.symbol : pool.tokenX.symbol}
+                leftColor={priceInverted ? METEORA_COLORS.primary : METEORA_COLORS.accent}
+                rightColor={priceInverted ? METEORA_COLORS.accent : METEORA_COLORS.primary}
+                minPercent={chartGeometry?.minPercent}
+                maxPercent={chartGeometry?.maxPercent}
+                currentPercent={chartGeometry?.currentPercent}
+                dragBinSpan={chartGeometry?.binSpan}
+                axisMinLabel={formatMeteoraRangePrice(axisMinPrice || null)}
+                axisMaxLabel={formatMeteoraRangePrice(axisMaxPrice || null)}
+                onAdjustMin={(delta) => adjustRangePrice('min', delta)}
+                onAdjustMax={(delta) => adjustRangePrice('max', delta)}
+                onShiftRange={shiftRange}
               />
-            )}
-            <Text style={[styles.ctaText, { color: ctaForeground }]}>{footerLabel}</Text>
-          </Pressable>
-        </View>
-      ) : null}
+              <Text style={styles.selectionExplanation} testID="meteora-live-bin-count">
+                {liveBinCount === null ? 'Calculating executable bins…' : `${liveBinCount} bins selected`}
+              </Text>
+              {poolLiquidityState === 'loading' ? (
+                <Text style={styles.selectionExplanation}>Loading real pool liquidity for these bins…</Text>
+              ) : null}
+              <Text style={styles.selectionExplanation} testID="meteora-distribution-source">
+                {sdkAllocationReady ? 'Live SDK strategy allocation' : 'Deposit distribution is an estimate until the SDK preview is ready.'}
+              </Text>
+              {poolLiquidityState === 'error' ? (
+                <Pressable
+                  onPress={() => setPoolLiquidityNonce((value) => value + 1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Retry pool liquidity"
+                >
+                  <Text style={styles.selectionExplanation}>Pool liquidity unavailable. Tap to retry.</Text>
+                </Pressable>
+              ) : null}
+              <View style={styles.priceFields}>
+                <PriceField
+                  compact
+                  label="Min Price"
+                  value={priceInputText.min ?? displayMinPrice}
+                  displayValue={formatMeteoraRangePrice(displayMinPrice)}
+                  suffix={priceDeltaLabel(displayMinPrice, displayCurrentPrice)}
+                  disabled={!!positionAddress || executionBusy}
+                  error={touched.range ? localRangeError : null}
+                  hideErrorMessage
+                  onChangeText={(value) => changeRangePrice('min', value)}
+                  onBlur={() => blurRangePrice('min')}
+                  onStep={(direction) => adjustRangePrice('min', direction === 'increment' ? 1 : -1)}
+                />
+                <PriceField
+                  compact
+                  label="Max Price"
+                  value={priceInputText.max ?? displayMaxPrice}
+                  displayValue={formatMeteoraRangePrice(displayMaxPrice)}
+                  suffix={priceDeltaLabel(displayMaxPrice, displayCurrentPrice)}
+                  disabled={!!positionAddress || executionBusy}
+                  error={touched.range ? localRangeError : null}
+                  hideErrorMessage
+                  onChangeText={(value) => changeRangePrice('max', value)}
+                  onBlur={() => blurRangePrice('max')}
+                  onStep={(direction) => adjustRangePrice('max', direction === 'increment' ? 1 : -1)}
+                />
+              </View>
+              {touched.range && localRangeError ? (
+                <Text style={styles.fieldErrorText} accessibilityRole="alert">{localRangeError}</Text>
+              ) : null}
+            </View>
+          ) : null}
+        </>
+      ) : (
+        <LimitOrderForm
+          pool={pool}
+          draft={limitDraft}
+          amountError={limitAmountError}
+          priceError={limitPriceError}
+          preview={preview}
+          connected={walletReady}
+          onChange={updateLimit}
+          onTouch={markTouched}
+        />
+      )}
+      {reviewCtaButton}
+    </View>
+  );
+
+  const vm: MarketDetailViewModel = {
+    topBar: {
+      marketName: pair,
+      venueBadge: 'Meteora',
+      onBack: () => router.back(),
+      onInfoPress: () => router.push('/markets/meteora/profile'),
+    },
+    priceRow: {
+      price: pool
+        ? formatPoolPrice(rangePoolState?.activePrice ?? pool.currentPrice, 3)
+        : '--',
+      change: null as { text: string; tone: 'up' | 'down' | 'flat' } | null,
+      live: false as boolean,
+      secondaryStat: pool
+        ? { label: 'Range', value: `${formatMeteoraRangePrice(chartMinPrice) ?? ''} – ${formatMeteoraRangePrice(chartMaxPrice) ?? ''}` }
+        : null,
+    },
+    range: {
+      ranges: [] as string[],
+      activeRange: '',
+      onSelectRange: () => {},
+      newsVisible: false as boolean,
+    },
+    notice,
+    chartBody,
+    newsStories: [] as readonly never[],
+    positionsTitle: 'Your position',
+    positionRows: [] as readonly never[],
+    actionBar: !walletReady
+      ? {
+          connected: false as const,
+          connectReason: 'Connect your Solana wallet to create Meteora positions',
+          onConnect: () => connectSheet.open('solana'),
+          buttons: [
+            { label: 'Create position', variant: 'primary' as const },
+            { label: 'Refresh pool', variant: 'secondary' as const },
+          ],
+        }
+      : {
+          connected: true as const,
+          buttons: [
+            { label: addModePosition ? 'Add liquidity' : 'Create position', variant: 'primary' as const, disabled: executionBusy },
+            { label: 'Refresh pool', variant: 'secondary' as const, disabled: executionBusy, opensSheet: false, onPress: () => void onRefresh() },
+          ],
+        },
+    actionSheet,
+  };
+
+  return (
+    <View style={styles.screen}>
+      <MarketScreen
+        vm={vm}
+        refreshing={refreshing}
+        onRefresh={() => void onRefresh()}
+        refreshEnabled={!executionBusy}
+      />
 
       <MeteoraPositionReviewSheet
         visible={!!review}
@@ -1878,7 +1916,7 @@ export function MeteoraPoolPhaseTwoScreen({
         chain={connectSheet.chain}
         onClose={connectSheet.close}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -1892,7 +1930,7 @@ function LimitOrderForm({
   onChange,
   onTouch,
 }: {
-  pool: MeteoraPoolDetail;
+  pool: MeteoraPoolDetail | null;
   draft: MeteoraLimitDraft;
   amountError: string | null;
   priceError: string | null;
@@ -1901,8 +1939,8 @@ function LimitOrderForm({
   onChange: (patch: Partial<MeteoraLimitDraft>) => void;
   onTouch: (field: string) => void;
 }) {
-  const fundingToken = limitFundingToken(pool, draft.side)!;
-  const receiveToken = draft.side === 'buy' ? pool.tokenX : pool.tokenY;
+  const fundingToken = limitFundingToken(pool, draft.side);
+  const receiveToken = draft.side === 'buy' ? pool?.tokenX : pool?.tokenY;
   const spendableBalance = draft.side === 'buy'
     ? preview?.spendableBalanceY
     : preview?.spendableBalanceX;
@@ -1919,25 +1957,25 @@ function LimitOrderForm({
           options={[
             {
               id: 'buy',
-              label: `Buy ${pool.tokenX.symbol}`,
-              description: `Fund with ${pool.tokenY.symbol} below the current price`,
+              label: `Buy ${pool?.tokenX.symbol ?? ''}`,
+              description: `Fund with ${pool?.tokenY.symbol ?? ''} below the current price`,
             },
             {
               id: 'sell',
-              label: `Sell ${pool.tokenX.symbol}`,
-              description: `Fund with ${pool.tokenX.symbol} above the current price`,
+              label: `Sell ${pool?.tokenX.symbol ?? ''}`,
+              description: `Fund with ${pool?.tokenX.symbol ?? ''} above the current price`,
             },
           ]}
         />
         <TokenAmountField
-          symbol={fundingToken.symbol}
-          iconUrl={fundingToken.iconUrl}
+          symbol={fundingToken?.symbol ?? ''}
+          iconUrl={fundingToken?.iconUrl ?? null}
           value={draft.amount}
           balance={connected ? spendableBalance ?? 'Checking…' : undefined}
           error={amountError}
           accent={draft.side === 'buy' ? METEORA_COLORS.tokenY : METEORA_COLORS.tokenX}
           onChangeText={(amount) => onChange({
-            amount: sanitizeDecimalInput(amount, fundingToken.decimals),
+            amount: sanitizeDecimalInput(amount, fundingToken?.decimals ?? 9),
           })}
           onBlur={() => onTouch('limitAmount')}
         />
@@ -1945,7 +1983,7 @@ function LimitOrderForm({
 
       <FormSection
         title="Target Price"
-        caption={`Current: 1 ${pool.tokenX.symbol} = ${formatPoolPrice(pool.currentPrice)} ${pool.tokenY.symbol}`}
+        caption={pool ? `Current: 1 ${pool.tokenX.symbol} = ${formatPoolPrice(pool.currentPrice)} ${pool.tokenY.symbol}` : undefined}
       >
         <View style={styles.limitPriceField}>
           <TextInput
@@ -1961,7 +1999,7 @@ function LimitOrderForm({
             style={styles.limitPriceInput}
           />
           <Text style={styles.limitPriceSuffix}>
-            {pool.tokenY.symbol} per {pool.tokenX.symbol}
+            {pool?.tokenY.symbol ?? ''} per {pool?.tokenX.symbol ?? ''}
           </Text>
         </View>
         {priceError ? (
@@ -1975,7 +2013,7 @@ function LimitOrderForm({
             <PreviewRow label="Executable bin" value={formatPoolPrice(preview.executableTargetPrice)} />
             <PreviewRow label="From current price" value={preview.distanceFromCurrentPct ?? '—'} />
             <PreviewRow
-              label={`Estimated ${receiveToken.symbol} at full fill`}
+              label={`Estimated ${receiveToken?.symbol ?? ''} at full fill`}
               value={preview.estimatedOutput ?? '—'}
             />
           </View>
@@ -2003,39 +2041,6 @@ function PreviewRow({
     <View style={styles.previewRow}>
       <Text style={styles.previewRowLabel}>{label}</Text>
       <Text style={[styles.previewRowValue, accent && styles.previewRowAccent]}>{value}</Text>
-    </View>
-  );
-}
-
-function LoadingPool() {
-  return (
-    <View style={styles.centerState}>
-      <ActivityIndicator color={METEORA_COLORS.accent} />
-      <Text style={styles.centerTitle}>Loading pool…</Text>
-      <Text style={styles.centerBody}>Reading the latest approved Meteora pool state.</Text>
-    </View>
-  );
-}
-
-function LoadFailure({
-  message,
-  onRetry,
-}: {
-  message: string;
-  onRetry: () => void;
-}) {
-  return (
-    <View style={styles.centerState}>
-      <MaterialIcons name="cloud-off" size={28} color={METEORA_COLORS.negative} />
-      <Text style={styles.centerTitle}>Pool unavailable</Text>
-      <Text style={styles.centerBody}>{message}</Text>
-      <Pressable
-        onPress={onRetry}
-        accessibilityRole="button"
-        style={styles.retryButton}
-      >
-        <Text style={styles.retryText}>Try again</Text>
-      </Pressable>
     </View>
   );
 }
@@ -2150,52 +2155,62 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: METEORA_COLORS.screen,
   },
-  headerTitleRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  header: {
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 4,
-  },
-  headerBack: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 22,
-    backgroundColor: METEORA_COLORS.surfaceRaised,
-  },
-  headerCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  headerTitle: {
-    color: METEORA_COLORS.text,
-    fontSize: 17,
-    lineHeight: 21,
-    fontWeight: '800',
-  },
-  headerPrice: {
-    marginTop: 1,
-    color: METEORA_COLORS.textDim,
-    fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 13,
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-  },
-  scroll: { flex: 1 },
   fullWidthChart: {
     marginHorizontal: -16,
+  },
+  chartLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 84,
+    gap: 10,
+  },
+  chartLoadingText: {
+    color: METEORA_COLORS.textDim,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  // Inline notice (pool fetch failed)
+  noticeCard: {
+    padding: 14,
+    marginHorizontal: 16,
+    gap: 6,
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: METEORA_COLORS.border,
+    backgroundColor: METEORA_COLORS.surfaceRaised,
+  },
+  noticeTitle: {
+    color: METEORA_COLORS.text,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  noticeText: {
+    color: METEORA_COLORS.textDim,
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+  },
+  noticeRetryBtn: {
+    minWidth: 110,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    borderRadius: 22,
+    backgroundColor: METEORA_COLORS.surfaceLift,
+  },
+  noticeRetryText: {
+    color: METEORA_COLORS.accent,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  // Position draft sheet
+  orderSheet: {
+    gap: 8,
+    paddingBottom: 8,
   },
   amountSection: {
     gap: 8,
@@ -2352,13 +2367,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '900',
   },
-  footer: {
-    paddingTop: 8,
-    paddingHorizontal: 16,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: METEORA_COLORS.border,
-    backgroundColor: METEORA_COLORS.screen,
-  },
   limitPriceField: {
     minHeight: 70,
     flexDirection: 'row',
@@ -2385,42 +2393,5 @@ const styles = StyleSheet.create({
     fontSize: 9,
     lineHeight: 13,
     textAlign: 'right',
-  },
-  centerState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 28,
-  },
-  centerTitle: {
-    marginTop: 13,
-    color: METEORA_COLORS.text,
-    fontSize: 18,
-    lineHeight: 23,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-  centerBody: {
-    maxWidth: 300,
-    marginTop: 6,
-    color: METEORA_COLORS.textDim,
-    fontSize: 12,
-    lineHeight: 17,
-    textAlign: 'center',
-  },
-  retryButton: {
-    minWidth: 110,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 16,
-    borderRadius: 22,
-    backgroundColor: METEORA_COLORS.surfaceLift,
-  },
-  retryText: {
-    color: METEORA_COLORS.accent,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: '800',
   },
 });

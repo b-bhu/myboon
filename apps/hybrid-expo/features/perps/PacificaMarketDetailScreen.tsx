@@ -1,3 +1,13 @@
+/**
+ * Pacifica market detail — composed onto the shared MarketScreen (#651).
+ *
+ * Pure refactor: hooks, signed-api calls and hold-to-confirm submission are the
+ * previous inline screen's code unchanged; the layout is the shared frame and
+ * the inline order form moved into the action sheet (until the issue-652 action
+ * panel supplies its own internals). Position cards became venue-worded rows.
+ * The inline SVG chart was retired for the shared MarketChart.
+ */
+
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Haptics from 'expo-haptics';
 import { useWallet } from '@/hooks/useWallet';
@@ -9,21 +19,17 @@ import {
   ActivityIndicator,
   Animated,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppTopBar } from '@/components/AppTopBar';
 import {
   fetchPerpsMarkets,
   fetchPerpsAccount,
   fetchPerpsPositions,
   fetchOpenOrders,
   formatChange,
-  formatFunding,
   formatPrice,
   formatUsdCompact,
 } from '@/features/perps/perps.public-api';
@@ -36,10 +42,20 @@ import {
 } from '@/features/perps/perps.signed-api';
 import type { PerpsMarket, PerpsOrder, PerpsPosition } from '@/features/perps/perps.types';
 import { usePerpsLivePrice } from '@/features/perps/usePerpsWebSocket';
-import { PacificaPriceChart } from '@/features/perps/PacificaPriceChart';
+import {
+  PacificaPriceChart,
+  PACIFICA_CHART_TIMEFRAMES,
+  DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX,
+} from '@/features/perps/PacificaPriceChart';
 import { PACIFIC_BUILDER_CODE } from '@/features/perps/pacific.config';
 import { PacificaDepositModal } from '@/features/perps/PacificaDepositModal';
 import { semantic, tokens } from '@/theme';
+import { MarketScreen } from '@/features/markets/MarketScreen';
+import type {
+  MarketDetailViewModel,
+  PositionRowVM,
+  ValueTone,
+} from '@/features/markets/detail-view-model';
 
 type Side = 'long' | 'short';
 type AmountMode = 'usd' | 'native';
@@ -70,6 +86,9 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   // Whether the user has a Pacific account at all
   const [hasAccount, setHasAccount] = useState<boolean | null>(null);
 
+  // Chart frame state (timeframe lifted to the shared range strip)
+  const [timeframeIndex, setTimeframeIndex] = useState(DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX);
+
   // UI state
   const [side, setSide] = useState<Side>('long');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -89,7 +108,6 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   // My Positions
   const [positions, setPositions] = useState<PerpsPosition[]>([]);
   const [orders, setOrders] = useState<PerpsOrder[]>([]);
-  const [positionsLoading, setPositionsLoading] = useState(false);
   const [closingSymbol, setClosingSymbol] = useState<string | null>(null);
 
   // Deposit modal
@@ -100,19 +118,6 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   const [buttonMsg, setButtonMsg] = useState('');
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdProgressAnim = useRef(new Animated.Value(0)).current;
-
-  // Live dot pulse animation
-  const dotOpacity = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(dotOpacity, { toValue: 0.2, duration: 800, useNativeDriver: true }),
-        Animated.timing(dotOpacity, { toValue: 1, duration: 800, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, [dotOpacity]);
 
   const handleScrub = useCallback((price: number | null, _time: number | null) => {
     setScrubPrice(price);
@@ -125,11 +130,6 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   const displayPrice = useMemo(() => {
     if (livePrice?.mark) return parseFloat(livePrice.mark);
     return market?.markPrice ?? 0;
-  }, [livePrice, market]);
-
-  const displayFunding = useMemo(() => {
-    if (livePrice?.funding) return parseFloat(livePrice.funding);
-    return market?.fundingRate ?? 0;
   }, [livePrice, market]);
 
   // Load market info (REST snapshot for initial render)
@@ -150,6 +150,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
 
   useEffect(() => {
     void loadMarket();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);
 
   // Fetch available balance
@@ -177,8 +178,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       setOrders([]);
       return;
     }
-    setPositionsLoading(true);
-    Promise.all([
+    void Promise.all([
       fetchPerpsPositions(address),
       fetchOpenOrders(address),
     ])
@@ -189,8 +189,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       .catch(() => {
         setPositions([]);
         setOrders([]);
-      })
-      .finally(() => setPositionsLoading(false));
+      });
   }, [connected, address]);
 
   useEffect(() => {
@@ -208,7 +207,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
     return map;
   }, [orders]);
 
-  // Close a position from My Positions section (C-08: no Alert)
+  // Close a position from My Positions rows (C-08: no Alert)
   const handleClosePositionCard = useCallback(async (pos: PerpsPosition) => {
     if (!address) return;
     setClosingSymbol(pos.symbol);
@@ -218,14 +217,14 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       loadPositions();
       // Refresh balance
       fetchPerpsAccount(address).then((acc) => setAvailableBalance(acc.availableToSpend)).catch(() => {});
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // Error shown inline — closingSymbol resets
     } finally {
       setClosingSymbol(null);
     }
   }, [address, signMessage, loadPositions]);
 
-  // TP/SL modal for position cards (C-11: pre-populate)
+  // TP/SL modal for position rows (C-11: pre-populate)
   const [tpslModalPos, setTpslModalPos] = useState<PerpsPosition | null>(null);
   const [tpslModalTp, setTpslModalTp] = useState('');
   const [tpslModalSl, setTpslModalSl] = useState('');
@@ -417,7 +416,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
               address,
               signMessage,
             );
-          } catch (_tpslErr) {
+          } catch (_tpslErr: unknown) {
             // Order placed but TP/SL failed — show warning, don't roll back
             setButtonState('success');
             setButtonMsg(`Order #${orderId} placed — TP/SL failed, set manually`);
@@ -441,6 +440,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       setButtonMsg(msg);
       setTimeout(() => { setButtonState('idle'); setButtonMsg(''); }, 3000);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, address, amountUsdc, availableBalance, maxNotional, symbol, side, signMessage, maxLeverage, orderType, limitPriceText, tpPriceText, slPriceText, loadPositions]);
 
   // Cleanup hold timer on unmount
@@ -452,8 +452,6 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
 
   const change24h = market?.change24h ?? 0;
   const isUp = change24h >= 0;
-
-  const insets = useSafeAreaInsets();
 
   // Submit button color based on state
   const submitBtnStyle = useMemo(() => {
@@ -472,421 +470,365 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
     return `Hold — ${typeLabel}${side === 'long' ? 'Long' : 'Short'} $${amountUsdc.toFixed(0)}`;
   }, [buttonState, buttonMsg, amountUsdc, side, orderType]);
 
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <AppTopBar
-        left={(
-        <Pressable
-          style={({ pressed }) => [styles.backBtn, pressed && styles.backBtnPressed]}
-          onPress={() => router.back()}>
-          <MaterialIcons name="arrow-back-ios" size={14} color={semantic.text.primary} />
-          <Text style={styles.detailSym}>{symbol}</Text>
+  const positionRows = useMemo<PositionRowVM[]>(() => positions.map((pos) => {
+    const posIsUp = pos.unrealizedPnl >= 0;
+    const isClosing = closingSymbol === pos.symbol;
+    const tpsl = tpslBySymbol[pos.symbol];
+    const hasTpsl = !!(tpsl?.tp || tpsl?.sl);
+    const detailBits = [
+      `Size ${pos.size} ${pos.symbol.replace('USDC', '').replace('-PERP', '')}`,
+      `Entry ${formatPrice(pos.entryPrice)}`,
+      `Mark ${formatPrice(pos.markPrice)}`,
+      tpsl?.tp ? `TP ${formatPrice(tpsl.tp.stopPrice)}` : null,
+      tpsl?.sl ? `SL ${formatPrice(tpsl.sl.stopPrice)}` : null,
+    ].filter((bit): bit is string => bit !== null).join(' · ');
+    return {
+      id: `pos-${pos.symbol}`,
+      title: `${pos.side === 'long' ? 'Long' : 'Short'} ${pos.symbol}`,
+      detail: detailBits,
+      value: `${posIsUp ? '+' : ''}$${pos.unrealizedPnl.toFixed(2)}`,
+      tone: (posIsUp ? 'up' : 'down') as ValueTone,
+      actions: [
+        { label: hasTpsl ? 'Edit TP/SL' : 'TP/SL', onPress: () => openTPSLModal(pos) },
+        { label: isClosing ? 'Closing…' : 'Close', onPress: () => void handleClosePositionCard(pos) },
+      ],
+    };
+  }), [positions, closingSymbol, tpslBySymbol, openTPSLModal, handleClosePositionCard]);
+
+  const chartBody = (
+    <PacificaPriceChart
+      symbol={symbol}
+      timeframeIndex={timeframeIndex}
+      onTimeframeIndexChange={setTimeframeIndex}
+      onScrub={handleScrub}
+    />
+  );
+
+  const baseSymbol = symbol.replace('PERP', '');
+
+  const vm: MarketDetailViewModel = {
+    topBar: {
+      marketName: market?.symbol ?? symbol,
+      venueBadge: 'Pacifica',
+      onBack: () => router.back(),
+      onInfoPress: () => router.push('/markets/pacifica/profile'),
+    },
+    priceRow: {
+      price: displayPrice > 0 ? formatPrice(scrubPrice ?? displayPrice) : '--',
+      change: market
+        ? { text: `${isUp ? '+' : ''}${formatChange(change24h)}`, tone: (isUp ? 'up' : 'down') as ValueTone }
+        : null,
+      live: scrubPrice === null && livePrice !== null,
+      secondaryStat: market
+        ? { label: '24h Vol', value: formatUsdCompact(market.volume24h) }
+        : null,
+    },
+    notice: marketError ? (
+      <View style={styles.noticeCard}>
+        <Text style={styles.noticeTitle}>Market unavailable</Text>
+        <Text style={styles.noticeText}>{marketError}</Text>
+        <Pressable style={styles.noticeRetryBtn} onPress={() => void loadMarket()}>
+          <Text style={styles.noticeRetryText}>Retry</Text>
         </Pressable>
-        )}
-        center={(
-          <View style={styles.headerPriceCenter}>
-          <View style={styles.headerPriceRow}>
-            {livePrice !== null && (
-              <Animated.View style={[styles.liveDot, { opacity: dotOpacity }]} />
-            )}
-            <Text style={styles.headerPrice}>
-              {formatPrice(scrubPrice ?? displayPrice)}
-            </Text>
+      </View>
+    ) : null,
+    range: {
+      ranges: PACIFICA_CHART_TIMEFRAMES.map((candidate) => candidate.label),
+      activeRange: PACIFICA_CHART_TIMEFRAMES[timeframeIndex]?.label
+        ?? PACIFICA_CHART_TIMEFRAMES[DEFAULT_PACIFICA_CHART_TIMEFRAME_INDEX]?.label
+        ?? '1D',
+      onSelectRange: (label) => {
+        const index = PACIFICA_CHART_TIMEFRAMES.findIndex((candidate) => candidate.label === label);
+        if (index >= 0) setTimeframeIndex(index);
+      },
+      newsVisible: false,
+    },
+    chartBody,
+    newsStories: [],
+    positionsTitle: 'My Positions',
+    positionRows,
+    actionBar: !connected
+      ? {
+          connected: false,
+          connectReason: `Connect your wallet to trade ${symbol} perpetuals`,
+          onConnect: () => connectSheet.open('solana'),
+          buttons: [
+            { label: 'Long', variant: 'primary' as const },
+            { label: 'Short', variant: 'secondary' as const },
+          ],
+        }
+      : hasAccount === false
+        ? {
+            connected: false,
+            connectReason: 'Deposit USDC to create your trading account',
+            connectLabel: 'Deposit to Start',
+            onConnect: () => setDepositOpen(true),
+            buttons: [
+              { label: 'Long', variant: 'primary' as const },
+              { label: 'Short', variant: 'secondary' as const },
+            ],
+          }
+        : {
+            connected: true,
+            buttons: [
+              { label: 'Long', variant: 'primary' as const, disabled: !market, onPress: () => setSide('long') },
+              { label: 'Short', variant: 'secondary' as const, disabled: !market, onPress: () => setSide('short') },
+            ],
+          },
+    actionSheet: (
+      <View style={styles.orderSheet}>
+        {/* Side toggle */}
+        <View style={styles.sideToggle}>
+          <Pressable
+            style={[styles.sideBtn, side === 'long' && styles.sideBtnLongActive]}
+            onPress={() => setSide('long')}>
+            <Text style={[styles.sideBtnText, side === 'long' && { color: tokens.colors.viridian }]}>Long</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.sideBtn, side === 'short' && styles.sideBtnShortActive]}
+            onPress={() => setSide('short')}>
+            <Text style={[styles.sideBtnText, side === 'short' && { color: tokens.colors.vermillion }]}>Short</Text>
+          </Pressable>
+        </View>
+
+        {/* C-10: Market/Limit toggle */}
+        <View style={styles.orderTypeRow}>
+          <Pressable
+            style={[styles.orderTypePill, orderType === 'market' && styles.orderTypePillActive]}
+            onPress={() => setOrderType('market')}>
+            <Text style={[styles.orderTypePillText, orderType === 'market' && styles.orderTypePillTextActive]}>Market</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.orderTypePill, orderType === 'limit' && styles.orderTypePillActive]}
+            onPress={() => { setOrderType('limit'); if (!limitPriceText && displayPrice > 0) setLimitPriceText(displayPrice.toFixed(2)); }}>
+            <Text style={[styles.orderTypePillText, orderType === 'limit' && styles.orderTypePillTextActive]}>Limit</Text>
+          </Pressable>
+        </View>
+
+        {/* Limit price input (C-10) */}
+        {orderType === 'limit' && (
+          <View style={styles.limitPriceSection}>
+            <Text style={styles.amountLabel}>Limit Price (USD)</Text>
+            <View style={styles.limitPriceRow}>
+              <Text style={styles.amountDollar}>$</Text>
+              <TextInput
+                style={styles.limitPriceInput}
+                value={limitPriceText}
+                onChangeText={(t) => setLimitPriceText(t.replace(/[^0-9.]/g, ''))}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+                placeholder={displayPrice > 0 ? displayPrice.toFixed(2) : '0'}
+                placeholderTextColor={semantic.text.faint}
+              />
+            </View>
           </View>
-          {scrubPrice === null && (
-            <Text style={[styles.headerChange, isUp ? styles.textPos : styles.textNeg]}>
-              {isUp ? '+' : ''}{formatChange(change24h)}
+        )}
+
+        {/* Amount input — tappable label toggles USD / native */}
+        <View style={styles.amountSection}>
+          <Pressable onPress={() => setAmountMode(amountMode === 'usd' ? 'native' : 'usd')}>
+            <Text style={styles.amountLabel}>
+              {amountMode === 'usd' ? 'Amount (USDC)' : `Amount (${symbol})`}
+              {'  '}
+              <Text style={styles.amountToggleHint}>tap to switch</Text>
+            </Text>
+          </Pressable>
+          <View style={styles.amountRow}>
+            <Text style={styles.amountDollar}>{amountMode === 'usd' ? '$' : ''}</Text>
+            <TextInput
+              style={styles.amountInput}
+              value={amountText}
+              onChangeText={(t) => {
+                const clean = t.replace(/[^0-9.]/g, '');
+                setAmountText(clean);
+                setActivePillPct(null);
+              }}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+              placeholder="0"
+              placeholderTextColor={semantic.text.faint}
+            />
+            {amountMode === 'native' && (
+              <Text style={styles.amountNativeSymbol}>{symbol}</Text>
+            )}
+          </View>
+          {/* Secondary display */}
+          {amountUsdc > 0 && (
+            <Text style={styles.amountSecondary}>
+              {amountMode === 'usd'
+                ? `≈ ${amountNative.toFixed(4)} ${symbol}`
+                : `≈ $${amountUsdc.toFixed(2)}`}
             </Text>
           )}
         </View>
-        )}
-        right={(
-        <Pressable onPress={() => router.push('/markets/pacifica/profile')} style={styles.avatarRing}>
-          <View style={styles.avatarInner}>
-            <MaterialIcons name="person" size={12} color={semantic.text.primary} />
+
+        {/* Quick-amount pills */}
+        {maxNotional !== null && (
+          <View style={styles.quickPillsRow}>
+            {([25, 50, 75, 100] as const).map((pct) => (
+              <Pressable
+                key={pct}
+                style={[styles.quickPill, activePillPct === pct && styles.quickPillActive]}
+                onPress={() => {
+                  const amount = (maxNotional * pct) / 100;
+                  if (amountMode === 'usd') {
+                    setAmountText(Math.floor(amount).toString());
+                  } else if (displayPrice > 0) {
+                    setAmountText((amount / displayPrice).toFixed(4));
+                  }
+                  setActivePillPct(pct);
+                }}>
+                <Text style={[styles.quickPillText, activePillPct === pct && styles.quickPillTextActive]}>
+                  {pct === 100 ? 'MAX' : `${pct}%`}
+                </Text>
+              </Pressable>
+            ))}
           </View>
-        </Pressable>
         )}
-      />
 
-      {loadingMarket ? (
-        <View style={styles.centeredState}>
-          <ActivityIndicator size="small" color={semantic.text.accent} />
-          <Text style={styles.stateText}>Loading {symbol}...</Text>
-        </View>
-      ) : marketError ? (
-        <View style={styles.centeredState}>
-          <Text style={styles.errorTitle}>Market unavailable</Text>
-          <Text style={styles.stateText}>{marketError}</Text>
-          <Pressable style={styles.retryButton} onPress={() => void loadMarket()}>
-            <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <>
-          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-            {/* Chart */}
-            <PacificaPriceChart symbol={symbol} height={140} onScrub={handleScrub} />
+        {/* C-09: Dynamic leverage indicator */}
+        {availableBalance !== null && maxNotional !== null && (
+          <View style={styles.leverageRow}>
+            <Text style={styles.availText}>
+              ${availableBalance.toFixed(0)} balance
+            </Text>
+            {effectiveLeverage !== null && effectiveLeverage > 0 && (
+              <Text style={[styles.leverageText, effectiveLeverage > maxLeverage * 0.8 ? styles.leverageTextWarn : styles.leverageText]}>
+                {effectiveLeverage.toFixed(1)}x leverage
+              </Text>
+            )}
+            <Text style={styles.availText}>
+              max {maxLeverage}x
+            </Text>
+          </View>
+        )}
 
-            {/* Stats strip */}
-            <View style={styles.statsStrip}>
-              <View style={styles.stat}>
-                <Text style={styles.statLabel}>Mark</Text>
-                <Text style={styles.statVal}>{formatPrice(displayPrice)}</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statLabel}>Fund/8h</Text>
-                <Text style={[styles.statVal, displayFunding >= 0 ? styles.textPos : styles.textNeg]}>
-                  {formatFunding(displayFunding)}
-                </Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statLabel}>OI</Text>
-                <Text style={styles.statVal}>{formatUsdCompact(market?.openInterest ?? 0)}</Text>
-              </View>
-              <View style={styles.stat}>
-                <Text style={styles.statLabel}>24h Vol</Text>
-                <Text style={styles.statVal}>{formatUsdCompact(market?.volume24h ?? 0)}</Text>
-              </View>
-            </View>
-
-            {/* ── Order section ── */}
-            {!connected ? (
-              /* Disconnected wallet CTA */
-              <View style={styles.disconnectedCta}>
-                <MaterialIcons name="lock" size={32} color={semantic.text.dim} />
-                <Text style={styles.disconnectedText}>
-                  {`Connect your wallet to trade ${symbol} perpetuals`}
-                </Text>
-                <Pressable style={styles.connectWalletBtn} onPress={() => connectSheet.open('solana')}>
-                  <Text style={styles.connectWalletText}>Connect wallet</Text>
-                </Pressable>
-              </View>
-            ) : hasAccount === false ? (
-              /* C-05: Connected but no Pacific account */
-              <View style={styles.disconnectedCta}>
-                <MaterialIcons name="rocket-launch" size={32} color={semantic.text.dim} />
-                <Text style={styles.disconnectedText}>
-                  Deposit USDC to create your trading account
-                </Text>
-                <Pressable style={styles.connectWalletBtn} onPress={() => setDepositOpen(true)}>
-                  <Text style={styles.connectWalletText}>Deposit to Start</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <View style={styles.orderSection}>
-                {/* Side toggle */}
-                <View style={styles.sideToggle}>
-                  <Pressable
-                    style={[styles.sideBtn, side === 'long' && styles.sideBtnLongActive]}
-                    onPress={() => setSide('long')}>
-                    <Text style={[styles.sideBtnText, side === 'long' && { color: tokens.colors.viridian }]}>Long</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.sideBtn, side === 'short' && styles.sideBtnShortActive]}
-                    onPress={() => setSide('short')}>
-                    <Text style={[styles.sideBtnText, side === 'short' && { color: tokens.colors.vermillion }]}>Short</Text>
-                  </Pressable>
+        {/* TP/SL collapsible */}
+        {orderType === 'market' && (
+          <View style={styles.tpslSection}>
+            <Pressable style={styles.tpslHeader} onPress={() => setTpslExpanded(!tpslExpanded)}>
+              <Text style={styles.tpslHeaderText}>Take Profit / Stop Loss</Text>
+              <MaterialIcons
+                name={tpslExpanded ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={semantic.text.dim}
+              />
+            </Pressable>
+            {tpslExpanded && (
+              <View style={styles.tpslInputRow}>
+                <View style={styles.tpslField}>
+                  <Text style={styles.tpslFieldLabel}>TP Price</Text>
+                  <TextInput
+                    style={styles.tpslInput}
+                    value={tpPriceText}
+                    onChangeText={setTpPriceText}
+                    placeholder="--"
+                    placeholderTextColor={semantic.text.faint}
+                    keyboardType="decimal-pad"
+                  />
                 </View>
-
-                {/* C-10: Market/Limit toggle */}
-                <View style={styles.orderTypeRow}>
-                  <Pressable
-                    style={[styles.orderTypePill, orderType === 'market' && styles.orderTypePillActive]}
-                    onPress={() => setOrderType('market')}>
-                    <Text style={[styles.orderTypePillText, orderType === 'market' && styles.orderTypePillTextActive]}>Market</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.orderTypePill, orderType === 'limit' && styles.orderTypePillActive]}
-                    onPress={() => { setOrderType('limit'); if (!limitPriceText && displayPrice > 0) setLimitPriceText(displayPrice.toFixed(2)); }}>
-                    <Text style={[styles.orderTypePillText, orderType === 'limit' && styles.orderTypePillTextActive]}>Limit</Text>
-                  </Pressable>
-                </View>
-
-                {/* Limit price input (C-10) */}
-                {orderType === 'limit' && (
-                  <View style={styles.limitPriceSection}>
-                    <Text style={styles.amountLabel}>Limit Price (USD)</Text>
-                    <View style={styles.limitPriceRow}>
-                      <Text style={styles.amountDollar}>$</Text>
-                      <TextInput
-                        style={styles.limitPriceInput}
-                        value={limitPriceText}
-                        onChangeText={(t) => setLimitPriceText(t.replace(/[^0-9.]/g, ''))}
-                        keyboardType="decimal-pad"
-                        selectTextOnFocus
-                        placeholder={displayPrice > 0 ? displayPrice.toFixed(2) : '0'}
-                        placeholderTextColor={semantic.text.faint}
-                      />
-                    </View>
-                  </View>
-                )}
-
-                {/* Amount input — tappable label toggles USD / native */}
-                <View style={styles.amountSection}>
-                  <Pressable onPress={() => setAmountMode(amountMode === 'usd' ? 'native' : 'usd')}>
-                    <Text style={styles.amountLabel}>
-                      {amountMode === 'usd' ? 'Amount (USDC)' : `Amount (${symbol})`}
-                      {'  '}
-                      <Text style={styles.amountToggleHint}>tap to switch</Text>
-                    </Text>
-                  </Pressable>
-                  <View style={styles.amountRow}>
-                    <Text style={styles.amountDollar}>{amountMode === 'usd' ? '$' : ''}</Text>
-                    <TextInput
-                      style={styles.amountInput}
-                      value={amountText}
-                      onChangeText={(t) => {
-                        const clean = t.replace(/[^0-9.]/g, '');
-                        setAmountText(clean);
-                        setActivePillPct(null);
-                      }}
-                      keyboardType="decimal-pad"
-                      selectTextOnFocus
-                      placeholder="0"
-                      placeholderTextColor={semantic.text.faint}
-                    />
-                    {amountMode === 'native' && (
-                      <Text style={styles.amountNativeSymbol}>{symbol}</Text>
-                    )}
-                  </View>
-                  {/* Secondary display */}
-                  {amountUsdc > 0 && (
-                    <Text style={styles.amountSecondary}>
-                      {amountMode === 'usd'
-                        ? `≈ ${amountNative.toFixed(4)} ${symbol}`
-                        : `≈ $${amountUsdc.toFixed(2)}`}
-                    </Text>
-                  )}
-                </View>
-
-                {/* Quick-amount pills */}
-                {maxNotional !== null && (
-                  <View style={styles.quickPillsRow}>
-                    {([25, 50, 75, 100] as const).map((pct) => (
-                      <Pressable
-                        key={pct}
-                        style={[styles.quickPill, activePillPct === pct && styles.quickPillActive]}
-                        onPress={() => {
-                          const amount = (maxNotional * pct) / 100;
-                          if (amountMode === 'usd') {
-                            setAmountText(Math.floor(amount).toString());
-                          } else if (displayPrice > 0) {
-                            setAmountText((amount / displayPrice).toFixed(4));
-                          }
-                          setActivePillPct(pct);
-                        }}>
-                        <Text style={[styles.quickPillText, activePillPct === pct && styles.quickPillTextActive]}>
-                          {pct === 100 ? 'MAX' : `${pct}%`}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-
-                {/* C-09: Dynamic leverage indicator */}
-                {availableBalance !== null && maxNotional !== null && (
-                  <View style={styles.leverageRow}>
-                    <Text style={styles.availText}>
-                      ${availableBalance.toFixed(0)} balance
-                    </Text>
-                    {effectiveLeverage !== null && effectiveLeverage > 0 && (
-                      <Text style={[styles.leverageText, effectiveLeverage > maxLeverage * 0.8 ? styles.textNeg : styles.textPos]}>
-                        {effectiveLeverage.toFixed(1)}x leverage
-                      </Text>
-                    )}
-                    <Text style={styles.availText}>
-                      max {maxLeverage}x
-                    </Text>
-                  </View>
-                )}
-
-                {/* TP/SL collapsible */}
-                {orderType === 'market' && (
-                  <View style={styles.tpslSection}>
-                    <Pressable style={styles.tpslHeader} onPress={() => setTpslExpanded(!tpslExpanded)}>
-                      <Text style={styles.tpslHeaderText}>Take Profit / Stop Loss</Text>
-                      <MaterialIcons
-                        name={tpslExpanded ? 'expand-less' : 'expand-more'}
-                        size={18}
-                        color={semantic.text.dim}
-                      />
-                    </Pressable>
-                    {tpslExpanded && (
-                      <View style={styles.tpslInputRow}>
-                        <View style={styles.tpslField}>
-                          <Text style={styles.tpslFieldLabel}>TP Price</Text>
-                          <TextInput
-                            style={styles.tpslInput}
-                            value={tpPriceText}
-                            onChangeText={setTpPriceText}
-                            placeholder="--"
-                            placeholderTextColor={semantic.text.faint}
-                            keyboardType="decimal-pad"
-                          />
-                        </View>
-                        <View style={styles.tpslField}>
-                          <Text style={[styles.tpslFieldLabel, { color: tokens.colors.vermillion }]}>SL Price</Text>
-                          <TextInput
-                            style={[styles.tpslInput, styles.tpslInputSl]}
-                            value={slPriceText}
-                            onChangeText={setSlPriceText}
-                            placeholder="--"
-                            placeholderTextColor={semantic.text.faint}
-                            keyboardType="decimal-pad"
-                          />
-                        </View>
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Order summary */}
-                <View style={styles.orderSummary}>
-                  <View style={styles.sumItem}>
-                    <Text style={styles.sumLabel}>Size</Text>
-                    <Text style={styles.sumVal}>
-                      {amountUsdc > 0 ? `$${amountUsdc.toFixed(0)}` : '--'}
-                    </Text>
-                    {amountNative > 0 && (
-                      <Text style={styles.sumSubVal}>{amountNative.toFixed(4)} {symbol}</Text>
-                    )}
-                  </View>
-                  <View style={[styles.sumItem, { alignItems: 'center' }]}>
-                    <Text style={styles.sumLabel}>Est. Fee</Text>
-                    <Text style={styles.sumVal}>
-                      {amountUsdc > 0 ? `$${(amountUsdc * 0.0002).toFixed(2)}` : '--'}
-                    </Text>
-                  </View>
-                  <View style={[styles.sumItem, { alignItems: 'flex-end' }]}>
-                    <Text style={styles.sumLabel}>Liq. Price</Text>
-                    <Text style={[styles.sumVal, styles.textNeg]}>
-                      {liqPrice !== null && liqPrice > 0
-                        ? `~${formatPrice(liqPrice)}`
-                        : '--'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* C-07: Hold-to-confirm submit button + C-08: feedback states */}
-                <View style={styles.submitContainer}>
-                  <Pressable
-                    style={[
-                      styles.submitBtn,
-                      submitBtnStyle,
-                      (amountUsdc <= 0 || buttonState === 'submitting') && styles.submitDisabled,
-                    ]}
-                    disabled={amountUsdc <= 0 || buttonState === 'submitting' || buttonState === 'success' || buttonState === 'error'}
-                    onPressIn={handlePressIn}
-                    onPressOut={handlePressOut}>
-                    {/* Hold progress bar overlay */}
-                    {buttonState === 'holding' && (
-                      <Animated.View
-                        style={[
-                          styles.holdProgress,
-                          side === 'long' ? styles.holdProgressLong : styles.holdProgressShort,
-                          {
-                            width: holdProgressAnim.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: ['0%', '100%'],
-                            }),
-                          },
-                        ]}
-                      />
-                    )}
-                    {buttonState === 'submitting' ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : buttonState === 'success' ? (
-                      <View style={styles.submitFeedbackRow}>
-                        <MaterialIcons name="check-circle" size={16} color="#fff" />
-                        <Text style={styles.submitText}>{submitBtnText}</Text>
-                      </View>
-                    ) : buttonState === 'error' ? (
-                      <View style={styles.submitFeedbackRow}>
-                        <MaterialIcons name="error" size={16} color="#fff" />
-                        <Text style={styles.submitText}>{submitBtnText}</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.submitText}>{submitBtnText}</Text>
-                    )}
-                  </Pressable>
-
-                  {/* C-05: Insufficient funds CTA */}
-                  {connected && availableBalance !== null && availableBalance <= 0 && (
-                    <Pressable style={styles.depositCta} onPress={() => setDepositOpen(true)}>
-                      <MaterialIcons name="add-circle-outline" size={14} color={tokens.colors.viridian} />
-                      <Text style={styles.depositCtaText}>Deposit funds to trade</Text>
-                    </Pressable>
-                  )}
-                </View>
-
-                {/* My Positions */}
-                <View style={styles.myPositionsSection}>
-                  <Text style={styles.myPositionsTitle}>My Positions</Text>
-                  {positionsLoading ? (
-                    <ActivityIndicator size="small" color={semantic.text.accent} style={{ marginTop: 8 }} />
-                  ) : positions.length === 0 ? (
-                    <Text style={styles.myPositionsEmpty}>No open positions</Text>
-                  ) : (
-                    positions.map((pos) => {
-                      const posIsUp = pos.unrealizedPnl >= 0;
-                      const isClosing = closingSymbol === pos.symbol;
-                      const tpsl = tpslBySymbol[pos.symbol];
-                      const hasTpsl = !!(tpsl?.tp || tpsl?.sl);
-                      return (
-                        <View key={pos.symbol} style={styles.posCard}>
-                          <View style={styles.posCardTop}>
-                            <View style={[styles.posSideBadge, pos.side === 'long' ? styles.posSideLong : styles.posSideShort]}>
-                              <Text style={[styles.posSideText, pos.side === 'long' ? styles.textPos : styles.textNeg]}>
-                                {pos.side === 'long' ? 'LONG' : 'SHORT'}
-                              </Text>
-                            </View>
-                            <Text style={styles.posSymbol}>{pos.symbol}</Text>
-                            <Text style={styles.posSize}>
-                              {pos.size} {pos.symbol.replace('USDC', '').replace('-PERP', '')}
-                            </Text>
-                            <Text style={[styles.posPnl, posIsUp ? styles.textPos : styles.textNeg]}>
-                              {posIsUp ? '+' : ''}${pos.unrealizedPnl.toFixed(2)}
-                            </Text>
-                          </View>
-                          <View style={styles.posCardMeta}>
-                            <Text style={styles.posMetaText}>Entry {formatPrice(pos.entryPrice)}</Text>
-                            <Text style={styles.posMetaText}>Mark {formatPrice(pos.markPrice)}</Text>
-                            {/* Show TP/SL inline on position card */}
-                            {tpsl?.tp && <Text style={[styles.posMetaText, styles.textPos]}>TP {formatPrice(tpsl.tp.stopPrice!)}</Text>}
-                            {tpsl?.sl && <Text style={[styles.posMetaText, styles.textNeg]}>SL {formatPrice(tpsl.sl.stopPrice!)}</Text>}
-                          </View>
-                          <View style={styles.posCardActions}>
-                            <Pressable
-                              style={styles.posActionBtn}
-                              onPress={() => openTPSLModal(pos)}>
-                              {/* C-11: Change button text when TP/SL exists */}
-                              <Text style={styles.posActionBtnText}>{hasTpsl ? 'Edit TP/SL' : 'TP/SL'}</Text>
-                            </Pressable>
-                            <Pressable
-                              style={[styles.posActionBtn, styles.posActionBtnClose]}
-                              onPress={() => handleClosePositionCard(pos)}
-                              disabled={isClosing}>
-                              <Text style={[styles.posActionBtnText, { color: tokens.colors.vermillion }]}>
-                                {isClosing ? 'Closing...' : 'Close'}
-                              </Text>
-                            </Pressable>
-                          </View>
-                        </View>
-                      );
-                    })
-                  )}
+                <View style={styles.tpslField}>
+                  <Text style={[styles.tpslFieldLabel, { color: tokens.colors.vermillion }]}>SL Price</Text>
+                  <TextInput
+                    style={[styles.tpslInput, styles.tpslInputSl]}
+                    value={slPriceText}
+                    onChangeText={setSlPriceText}
+                    placeholder="--"
+                    placeholderTextColor={semantic.text.faint}
+                    keyboardType="decimal-pad"
+                  />
                 </View>
               </View>
             )}
+          </View>
+        )}
 
-            {/* Bottom padding for scroll */}
-            <View style={{ height: 24 }} />
-          </ScrollView>
-        </>
-      )}
+        {/* Order summary */}
+        <View style={styles.orderSummary}>
+          <View style={styles.sumItem}>
+            <Text style={styles.sumLabel}>Size</Text>
+            <Text style={styles.sumVal}>
+              {amountUsdc > 0 ? `$${amountUsdc.toFixed(0)}` : '--'}
+            </Text>
+            {amountNative > 0 && (
+              <Text style={styles.sumSubVal}>{amountNative.toFixed(4)} {baseSymbol}</Text>
+            )}
+          </View>
+          <View style={[styles.sumItem, { alignItems: 'center' }]}>
+            <Text style={styles.sumLabel}>Est. Fee</Text>
+            <Text style={styles.sumVal}>
+              {amountUsdc > 0 ? `$${(amountUsdc * 0.0002).toFixed(2)}` : '--'}
+            </Text>
+          </View>
+          <View style={[styles.sumItem, { alignItems: 'flex-end' }]}>
+            <Text style={styles.sumLabel}>Liq. Price</Text>
+            <Text style={[styles.sumVal, { color: tokens.colors.vermillion }]}>
+              {liqPrice !== null && liqPrice > 0
+                ? `~${formatPrice(liqPrice)}`
+                : '--'}
+            </Text>
+          </View>
+        </View>
 
-      {/* TP/SL Modal for position cards (C-11 pre-populated, C-12 remove button) */}
+        {/* C-07: Hold-to-confirm submit button + C-08: feedback states */}
+        <View style={styles.submitContainer}>
+          <Pressable
+            style={[
+              styles.submitBtn,
+              submitBtnStyle,
+              (amountUsdc <= 0 || buttonState === 'submitting') && styles.submitDisabled,
+            ]}
+            disabled={amountUsdc <= 0 || buttonState === 'submitting' || buttonState === 'success' || buttonState === 'error'}
+            onPressIn={handlePressIn}
+            onPressOut={handlePressOut}>
+            {/* Hold progress bar overlay */}
+            {buttonState === 'holding' && (
+              <Animated.View
+                style={[
+                  styles.holdProgress,
+                  {
+                    width: holdProgressAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
+                  },
+                ]}
+              />
+            )}
+            {buttonState === 'submitting' ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : buttonState === 'success' ? (
+              <View style={styles.submitFeedbackRow}>
+                <MaterialIcons name="check-circle" size={16} color="#fff" />
+                <Text style={styles.submitText}>{submitBtnText}</Text>
+              </View>
+            ) : buttonState === 'error' ? (
+              <View style={styles.submitFeedbackRow}>
+                <MaterialIcons name="error" size={16} color="#fff" />
+                <Text style={styles.submitText}>{submitBtnText}</Text>
+              </View>
+            ) : (
+              <Text style={styles.submitText}>{submitBtnText}</Text>
+            )}
+          </Pressable>
+
+          {/* C-05: Insufficient funds CTA */}
+          {connected && availableBalance !== null && availableBalance <= 0 && (
+            <Pressable style={styles.depositCta} onPress={() => setDepositOpen(true)}>
+              <MaterialIcons name="add-circle-outline" size={14} color={tokens.colors.viridian} />
+              <Text style={styles.depositCtaText}>Deposit funds to trade</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+    ),
+  };
+
+  return (
+    <View style={styles.screen}>
+      <MarketScreen vm={vm} />
+
+      {/* TP/SL Modal for position rows (C-11 pre-populated, C-12 remove button) */}
       {tpslModalPos !== null && (
         <Pressable style={styles.modalOverlay} onPress={() => setTpslModalPos(null)}>
           <Pressable style={styles.modalCard} onPress={() => {}}>
@@ -922,7 +864,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
             {(tpslBySymbol[tpslModalPos.symbol]?.tp || tpslBySymbol[tpslModalPos.symbol]?.sl) && (
               <Pressable
                 style={styles.removeTPSLBtn}
-                onPress={() => handleRemoveTPSL(tpslModalPos, 'both')}
+                onPress={() => void handleRemoveTPSL(tpslModalPos, 'both')}
                 disabled={tpslModalLoading}>
                 <MaterialIcons name="delete-outline" size={14} color={tokens.colors.vermillion} />
                 <Text style={styles.removeTPSLText}>Remove All TP/SL</Text>
@@ -933,13 +875,13 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
               <Text style={styles.tpslModalMsg}>{tpslModalMsg}</Text>
             )}
 
-            <View style={styles.modalActions}>
+            <View style={styles.modalActionRow}>
               <Pressable style={styles.modalCancelBtn} onPress={() => setTpslModalPos(null)}>
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </Pressable>
               <Pressable
-                style={[styles.modalConfirmBtn, tpslModalLoading && { opacity: 0.5 }]}
-                onPress={handleSetTPSLCard}
+                style={[styles.modalConfirmBtn, tpslModalLoading && styles.submitDisabled]}
+                onPress={() => void handleSetTPSLCard()}
                 disabled={tpslModalLoading}>
                 <Text style={styles.modalConfirmText}>
                   {tpslModalLoading ? 'Setting...' : 'Confirm'}
@@ -965,136 +907,49 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: semantic.background.screen,
   },
-
-  // Header
-  backBtn: {
-    flexDirection: 'row',
+  // Inline notice (market fetch failed)
+  noticeCard: {
+    paddingHorizontal: tokens.spacing.lg,
+    paddingVertical: tokens.spacing.md,
+    gap: tokens.spacing.xs,
     alignItems: 'center',
-    opacity: 0.8,
-    padding: tokens.spacing.xs,
   },
-  backBtnPressed: { opacity: 1 },
-  detailSym: {
+  noticeTitle: {
     fontFamily: 'monospace',
     fontSize: tokens.fontSize.md,
     fontWeight: '700',
     color: semantic.text.primary,
-    letterSpacing: 0.5,
   },
-  headerPriceCenter: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  headerPrice: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.lg - 2,
-    fontWeight: '700',
-    color: semantic.text.primary,
-  },
-  headerChange: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-
-  // Avatar (matches PacificaMarketListScreen pattern)
-  avatarRing: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    padding: 2,
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
-    borderColor: semantic.text.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInner: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: semantic.background.surfaceRaised,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Loading / error states
-  centeredState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    padding: tokens.spacing.xl,
-  },
-  stateText: {
+  noticeText: {
     fontFamily: 'monospace',
     fontSize: tokens.fontSize.sm,
     color: semantic.text.dim,
     textAlign: 'center',
   },
-  errorTitle: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.md,
-    fontWeight: '700',
-    color: semantic.text.primary,
-  },
-  retryButton: {
+  noticeRetryBtn: {
+    marginTop: tokens.spacing.xs,
     backgroundColor: semantic.text.accent,
     paddingHorizontal: tokens.spacing.md,
     paddingVertical: tokens.spacing.sm,
     borderRadius: tokens.radius.xs,
-    marginTop: tokens.spacing.xs,
   },
-  retryText: {
+  noticeRetryText: {
     fontFamily: 'monospace',
     fontSize: tokens.fontSize.sm,
     fontWeight: '700',
     textTransform: 'uppercase',
     color: semantic.background.screen,
   },
-
-  // Stats strip
-  statsStrip: {
-    flexDirection: 'row',
-    paddingHorizontal: tokens.spacing.lg,
-    paddingVertical: tokens.spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: semantic.border.muted,
+  // Order sheet — the moved inline order form
+  orderSheet: {
+    gap: tokens.spacing.md,
+    paddingBottom: tokens.spacing.sm,
   },
-  stat: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 2,
-  },
-  statLabel: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs - 1,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    color: semantic.text.faint,
-  },
-  statVal: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '600',
-    color: semantic.text.primary,
-  },
-
-  // Order section
-  orderSection: {
-    padding: tokens.spacing.lg,
-    gap: 14,
-  },
-
-  // Side toggle
   sideToggle: {
     flexDirection: 'row',
     backgroundColor: semantic.background.surfaceRaised,
@@ -1109,14 +964,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   sideBtnLongActive: {
-    backgroundColor: 'rgba(74,140,111,0.15)',
     borderWidth: 1,
-    borderColor: 'rgba(74,140,111,0.25)',
+    borderColor: tokens.colors.viridian,
   },
   sideBtnShortActive: {
-    backgroundColor: 'rgba(217,83,79,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(217,83,79,0.22)',
+    borderColor: tokens.colors.vermillion,
   },
   sideBtnText: {
     fontFamily: 'monospace',
@@ -1126,7 +979,6 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: semantic.text.dim,
   },
-
   // C-10: Order type toggle (Market / Limit)
   orderTypeRow: {
     flexDirection: 'row',
@@ -1142,7 +994,7 @@ const styles = StyleSheet.create({
   },
   orderTypePillActive: {
     borderColor: tokens.colors.primary,
-    backgroundColor: 'rgba(199,183,112,0.10)',
+    backgroundColor: 'transparent',
   },
   orderTypePillText: {
     fontFamily: 'monospace',
@@ -1154,7 +1006,6 @@ const styles = StyleSheet.create({
   orderTypePillTextActive: {
     color: tokens.colors.primary,
   },
-
   // Limit price input
   limitPriceSection: {
     alignItems: 'center',
@@ -1173,7 +1024,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     padding: 0,
   },
-
   // Amount input
   amountSection: {
     alignItems: 'center',
@@ -1225,7 +1075,6 @@ const styles = StyleSheet.create({
     color: semantic.text.dim,
     letterSpacing: 0.5,
   },
-
   // C-09: Leverage indicator row
   leverageRow: {
     flexDirection: 'row',
@@ -1244,8 +1093,11 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.xxs,
     fontWeight: '700',
     letterSpacing: 0.5,
+    color: tokens.colors.viridian,
   },
-
+  leverageTextWarn: {
+    color: tokens.colors.vermillion,
+  },
   // Order summary
   orderSummary: {
     flexDirection: 'row',
@@ -1278,7 +1130,6 @@ const styles = StyleSheet.create({
     color: semantic.text.dim,
     letterSpacing: 0.3,
   },
-
   // Submit button (C-07 hold-to-confirm + C-08 feedback)
   submitContainer: {
     gap: 8,
@@ -1324,14 +1175,8 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     borderRadius: 10,
-  },
-  holdProgressLong: {
     backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  holdProgressShort: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
-  },
-
   // C-05: Deposit CTA for insufficient funds
   depositCta: {
     flexDirection: 'row',
@@ -1341,8 +1186,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: tokens.radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(74,140,111,0.3)',
-    backgroundColor: 'rgba(74,140,111,0.06)',
+    borderColor: tokens.colors.viridian,
+    backgroundColor: 'transparent',
   },
   depositCtaText: {
     fontFamily: 'monospace',
@@ -1351,24 +1196,6 @@ const styles = StyleSheet.create({
     color: tokens.colors.viridian,
     letterSpacing: 0.5,
   },
-
-  // Colors
-  textPos: { color: tokens.colors.viridian },
-  textNeg: { color: tokens.colors.vermillion },
-
-  // Live dot in header
-  headerPriceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  liveDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: tokens.colors.viridian,
-  },
-
   // Quick-amount pills
   quickPillsRow: {
     flexDirection: 'row',
@@ -1385,8 +1212,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   quickPillActive: {
-    backgroundColor: 'rgba(199,183,112,0.12)',
-    borderColor: 'rgba(199,183,112,0.35)',
+    borderColor: tokens.colors.primary,
   },
   quickPillText: {
     fontFamily: 'monospace',
@@ -1398,7 +1224,6 @@ const styles = StyleSheet.create({
   quickPillTextActive: {
     color: tokens.colors.primary,
   },
-
   // TP/SL collapsible section
   tpslSection: {
     borderWidth: 1,
@@ -1444,156 +1269,15 @@ const styles = StyleSheet.create({
     color: semantic.text.primary,
     backgroundColor: semantic.background.surfaceRaised,
     borderWidth: 1,
-    borderColor: 'rgba(74,140,111,0.3)',
+    borderColor: tokens.colors.viridian,
     borderRadius: tokens.radius.xs,
     paddingHorizontal: 8,
     paddingVertical: 6,
   },
   tpslInputSl: {
-    borderColor: 'rgba(217,83,79,0.3)',
+    borderColor: tokens.colors.vermillion,
   },
-
-  // Disconnected wallet CTA
-  disconnectedCta: {
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-    padding: tokens.spacing.xl,
-    margin: tokens.spacing.lg,
-    backgroundColor: semantic.background.surfaceRaised,
-    borderRadius: tokens.radius.md,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-  },
-  disconnectedText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.dim,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  connectWalletBtn: {
-    backgroundColor: tokens.colors.primary,
-    borderRadius: tokens.radius.md,
-    paddingVertical: tokens.spacing.sm + 2,
-    paddingHorizontal: tokens.spacing.xl,
-    marginTop: tokens.spacing.xs,
-  },
-  connectWalletText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '700',
-    color: semantic.background.screen,
-    letterSpacing: 1,
-  },
-
-  // My Positions section
-  myPositionsSection: {
-    gap: 8,
-    marginTop: 4,
-  },
-  myPositionsTitle: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
-    color: semantic.text.dim,
-  },
-  myPositionsEmpty: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.faint,
-    textAlign: 'center',
-    paddingVertical: tokens.spacing.sm,
-  },
-  posCard: {
-    backgroundColor: semantic.background.surfaceRaised,
-    borderRadius: tokens.radius.sm,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    gap: 6,
-    padding: tokens.spacing.sm,
-  },
-  posCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  posSideBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: tokens.radius.xs,
-  },
-  posSideLong: {
-    backgroundColor: 'rgba(74,140,111,0.15)',
-    borderWidth: 1,
-    borderColor: 'rgba(74,140,111,0.25)',
-  },
-  posSideShort: {
-    backgroundColor: 'rgba(217,83,79,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(217,83,79,0.22)',
-  },
-  posSideText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs - 1,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  posSymbol: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '700',
-    color: semantic.text.primary,
-    flex: 1,
-  },
-  posSize: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.dim,
-  },
-  posPnl: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '700',
-  },
-  posCardMeta: {
-    flexDirection: 'row',
-    gap: 12,
-    flexWrap: 'wrap',
-  },
-  posMetaText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.dim,
-  },
-  posCardActions: {
-    flexDirection: 'row',
-    gap: 6,
-    marginTop: 2,
-  },
-  posActionBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 6,
-    borderRadius: tokens.radius.xs,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.lift,
-  },
-  posActionBtnClose: {
-    borderColor: 'rgba(217,83,79,0.25)',
-    backgroundColor: 'rgba(217,83,79,0.08)',
-  },
-  posActionBtnText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    color: tokens.colors.primary,
-  },
-
-  // TP/SL modal (for position cards)
+  // TP/SL modal (position rows)
   modalOverlay: {
     position: 'absolute',
     top: 0,
@@ -1623,7 +1307,7 @@ const styles = StyleSheet.create({
     color: semantic.text.primary,
     letterSpacing: 0.5,
   },
-  modalActions: {
+  modalActionRow: {
     flexDirection: 'row',
     gap: 8,
     marginTop: 4,
@@ -1657,7 +1341,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
   },
-
   // C-12: Remove TP/SL button
   removeTPSLBtn: {
     flexDirection: 'row',
@@ -1667,8 +1350,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: tokens.radius.xs,
     borderWidth: 1,
-    borderColor: 'rgba(217,83,79,0.25)',
-    backgroundColor: 'rgba(217,83,79,0.06)',
+    borderColor: tokens.colors.vermillion,
+    backgroundColor: 'transparent',
   },
   removeTPSLText: {
     fontFamily: 'monospace',
