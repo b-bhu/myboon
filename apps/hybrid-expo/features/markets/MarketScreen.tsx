@@ -14,6 +14,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   View,
@@ -35,9 +36,13 @@ export interface MarketScreenProps {
   vm: MarketDetailViewModel;
   /** Fallback connect handler when the venue VM does not carry one. */
   onConnect?: () => void;
+  /** Pull-to-refresh wiring for venues that had it (Meteora). */
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  refreshEnabled?: boolean;
 }
 
-export function MarketScreen({ vm, onConnect }: MarketScreenProps) {
+export function MarketScreen({ vm, onConnect, refreshing, onRefresh, refreshEnabled = true }: MarketScreenProps) {
   const insets = useSafeAreaInsets();
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -62,6 +67,10 @@ export function MarketScreen({ vm, onConnect }: MarketScreenProps) {
         style={{ flex: 1 }}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom }]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={onRefresh ? (
+          <RefreshControl refreshing={refreshing ?? false} enabled={refreshEnabled} onRefresh={onRefresh} tintColor={semantic.text.accent} colors={[semantic.text.accent]} />
+        ) : undefined}
       >
         <TopBarSection vm={vm.topBar} />
         <PriceRowSection vm={vm.priceRow} />
