@@ -1,19 +1,29 @@
+/**
+ * Phoenix per-venue portfolio drill-down (#657, D2).
+ *
+ * Moves the retired `features/perps/PhoenixProfileScreen.tsx` onto the shared
+ * VenuePortfolioScreen shell with the fixed Positions · Orders · History tabs.
+ * The state, fetching, normalizers and every execution path are moved verbatim:
+ * TP/SL via buildPhoenixPositionConditionalOrder, close via
+ * buildPhoenixMarketOrder (isReduceOnly) and cancel via
+ * buildPhoenixCancelConditionalOrder — all through sendPhoenixBuiltTransaction,
+ * exactly as the retired screen called them. This file adds no new execution
+ * path; tapping a position opens the existing close modal pre-filled with it.
+ */
+
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
   Pressable,
-  RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AppTopBar, AppTopBarIconButton, AppTopBarTitle } from '@/components/AppTopBar';
+
 import { useWallet } from '@/hooks/useWallet';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
@@ -35,9 +45,10 @@ import {
   type PhoenixTraderState,
 } from '@/features/perps/phoenix.api';
 import { sendPhoenixBuiltTransaction, type PhoenixSignAndSendTransactionFn } from '@/features/perps/phoenix.execution';
+import { VenuePortfolioScreen } from '@/features/portfolio/VenuePortfolioScreen';
+import type { VenuePortfolioScreenTab } from '@/features/portfolio/VenuePortfolioScreen';
 import { semantic, tokens } from '@/theme';
 
-type Tab = 'positions' | 'orders' | 'history';
 type TransferAction = 'deposit' | 'withdraw';
 type TransferMessageTone = 'info' | 'success' | 'error';
 type PendingProfileAction =
@@ -124,9 +135,11 @@ interface PhoenixAccountSummary {
   riskLabel: string;
 }
 
-export function PhoenixProfileScreen() {
-  const router = useRouter();
+
+
+export function PhoenixPortfolioScreen() {
   const insets = useSafeAreaInsets();
+
   const wallet = useWallet();
   const connectSheet = useConnectionSheet('solana');
 
@@ -141,7 +154,6 @@ export function PhoenixProfileScreen() {
   const [accessCode, setAccessCode] = useState('');
   const [activationBusy, setActivationBusy] = useState(false);
   const [activationMessage, setActivationMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>('positions');
   const [transferAction, setTransferAction] = useState<TransferAction | null>(null);
   const [transferAmount, setTransferAmount] = useState('');
   const [transferBusy, setTransferBusy] = useState(false);
@@ -197,6 +209,7 @@ export function PhoenixProfileScreen() {
     });
     return rows;
   }, [pendingActions]);
+
 
   const phoenixSignAndSendTransaction = useMemo<PhoenixSignAndSendTransactionFn | null>(() => {
     if (typeof wallet.signAndSendTransaction !== 'function') return null;
@@ -588,32 +601,158 @@ export function PhoenixProfileScreen() {
     }
   }, [closePosition, closeAmountText, wallet.address, wallet.connection, phoenixSignAndSendTransaction, loadProfile]);
 
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
-      <AppTopBar
-        left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
-        center={<AppTopBarTitle align="left">Phoenix Profile</AppTopBarTitle>}
-        right={(
-          <View style={styles.headerActions}>
-            <HeaderAction
-              icon="arrow-downward"
-              label="Deposit"
-              tone="positive"
-              disabled={walletUnsupported}
-              onPress={() => openTransfer('deposit')}
-            />
-            <HeaderAction
-              icon="arrow-upward"
-              label="Withdraw"
-              disabled={walletUnsupported}
-              onPress={() => openTransfer('withdraw')}
-            />
+
+  const tabs = useMemo(() => {
+    const ready = accountChecked;
+    const build = (
+      rows: VenuePortfolioScreenTab['sections'],
+    ): VenuePortfolioScreenTab => ({ status: ready ? 'ready' : 'loading', sections: rows });
+
+    const messageBelow: VenuePortfolioScreenTab['below'] = actionMessage ? (
+      <View style={styles.actionMsgBar}>
+        <Text style={styles.actionMsgText}>{actionMessage}</Text>
+      </View>
+    ) : null;
+
+    const above = (
+      <>
+        {walletUnsupported && (
+          <View style={styles.noticeCard}>
+            <MaterialIcons name="error-outline" size={16} color={tokens.colors.accent} />
+            <Text style={styles.noticeText}>Phoenix order execution needs a Solana wallet that can sign and send transactions.</Text>
           </View>
         )}
-      />
+        {noPhoenixProfile && (
+          <View style={styles.emptyCard}>
+            <MaterialIcons name="vpn-key" size={26} color={semantic.text.faint} />
+            <Text style={styles.emptyTitle}>Phoenix Account Needed</Text>
+            <Text style={styles.emptyDesc}>{errorMessage ?? 'Activate with an invite code or open Phoenix after your account exists.'}</Text>
+            <View style={styles.accessRow}>
+              <TextInput
+                style={styles.accessInput}
+                value={accessCode}
+                onChangeText={setAccessCode}
+                placeholder="Invite code"
+                placeholderTextColor={semantic.text.faint}
+                autoCapitalize="characters"
+                autoCorrect={false}
+              />
+              <Pressable
+                style={[styles.activateBtn, (!accessCode.trim() || activationBusy) && styles.disabledBtn]}
+                disabled={!accessCode.trim() || activationBusy}
+                onPress={handleActivate}
+              >
+                {activationBusy ? (
+                  <ActivityIndicator size="small" color={semantic.background.screen} />
+                ) : (
+                  <Text style={styles.activateText}>Activate</Text>
+                )}
+              </Pressable>
+            </View>
+            {activationMessage && <Text style={styles.inlineMessage}>{activationMessage}</Text>}
+          </View>
+        )}
+      </>
+    );
 
-      {!wallet.connected ? (
-        <View style={styles.emptyState}>
+    const positionRows = positions.map((position) => {
+      const pendingAction = pendingPositionActions.get(position.id);
+      const pendingTpsl = pendingAction?.kind === 'set_tpsl' ? pendingAction : null;
+      const pendingClose = pendingAction?.kind === 'close_position';
+      const displayTakeProfit = pendingTpsl?.takeProfitPrice ?? position.takeProfitPrice;
+      const displayStopLoss = pendingTpsl?.stopLossPrice ?? position.stopLossPrice;
+      const hasTpsl = !!(displayTakeProfit || displayStopLoss);
+      return {
+        key: position.id,
+        title: position.symbol,
+        titleAccent: position.side.toUpperCase(),
+        subtitle: [
+          `${formatBase(position.size)} from ${formatPhoenixPrice(position.entryPrice)}`,
+          hasTpsl
+            ? `TP ${formatPhoenixPrice(displayTakeProfit)} · SL ${formatPhoenixPrice(displayStopLoss)}`
+            : null,
+          position.accountLabel,
+          pendingAction
+            ? `${pendingAction.kind === 'close_position' ? 'Close pending' : 'TP/SL pending'} ${shortKey(pendingAction.signature)}`
+            : null,
+        ].filter(Boolean).join(' · '),
+        value: formatSignedUsd(position.unrealizedPnl),
+        valueTone: (position.unrealizedPnl ?? 0) >= 0 ? ('pos' as const) : ('neg' as const),
+        subValue: `Liq ${formatPhoenixPrice(position.liquidationPrice)}`,
+        subValueTone: undefined,
+        actionLabel: pendingTpsl ? 'TP/SL …' : hasTpsl ? 'Edit TP/SL' : 'TP/SL',
+        actionPending: !!pendingTpsl,
+        actionDisabled: !!pendingClose,
+        onActionPress: () => openTPSLModal(position),
+        onPress: pendingClose ? undefined : () => openCloseModal(position),
+      };
+    });
+
+    const orderRows = orders.map((order) => {
+      const pendingCancel = pendingOrderActions.get(order.id);
+      return {
+        key: order.id,
+        title: order.symbol,
+        titleAccent: sideLabel(order.side).toUpperCase(),
+        subtitle: [
+          `${formatBase(order.sizeRemaining ?? 0)} remaining`,
+          order.accountLabel,
+          order.reduceOnly ? 'Reduce only' : null,
+          order.conditional ? 'Conditional' : null,
+          pendingCancel ? `Cancel pending ${shortKey(pendingCancel.signature)}` : null,
+        ].filter(Boolean).join(' · '),
+        value: formatPhoenixPrice(order.price),
+        actionLabel: order.canCancel ? (pendingCancel ? 'Canceling' : 'Cancel') : undefined,
+        actionPending: !!pendingCancel,
+        onActionPress: order.canCancel ? () => void handleCancelOrder(order) : undefined,
+        onPress: undefined,
+      };
+    });
+
+    const historyModel = historyRows.map((row) => ({
+      key: row.id,
+      title: row.title,
+      subtitle: `${row.kind} · ${row.detail}`,
+      value: row.value,
+      valueTone: row.tone === 'pos' ? ('pos' as const) : row.tone === 'neg' ? ('neg' as const) : undefined,
+      subValue: formatHistoryTime(row.timestamp),
+    }));
+
+    const emptyCopy = {
+      positions: { title: 'No open Phoenix positions', message: 'Positions you open on Phoenix appear here.' },
+      orders: { title: 'No open Phoenix orders', message: 'Limit orders you place will appear here until they fill.' },
+      history: { title: 'No Phoenix history yet', message: 'Trades, orders and transfers will appear here.' },
+    };
+
+    return {
+      positions: {
+        ...build([{ key: 'positions', label: 'Open positions', rows: positionRows }]),
+        empty: ready ? emptyCopy.positions : null,
+        above,
+        below: messageBelow,
+      },
+      orders: {
+        ...build([{ key: 'orders', label: 'Open orders', rows: orderRows }]),
+        empty: ready ? emptyCopy.orders : null,
+        below: messageBelow,
+      },
+      history: {
+        ...build([{ key: 'history', label: 'History', rows: historyModel }]),
+        empty: ready ? emptyCopy.history : null,
+        below: messageBelow,
+      },
+    };
+  }, [
+    accountChecked, positions, orders, historyRows, pendingPositionActions, pendingOrderActions,
+    actionMessage, walletUnsupported, noPhoenixProfile, errorMessage, accessCode, activationBusy,
+    activationMessage, handleActivate, openTPSLModal, openCloseModal, handleCancelOrder,
+  ]);
+
+  if (!wallet.connected) {
+    return (
+      <>
+        <View style={[styles.screen, { paddingTop: insets.top }]}>
+                  <View style={styles.emptyState}>
           <MaterialIcons name="account-balance-wallet" size={28} color={semantic.text.faint} />
           <Text style={styles.emptyTitle}>Connect wallet</Text>
           <Text style={styles.emptyDesc}>Connect a wallet to view your Phoenix trading account.</Text>
@@ -621,279 +760,33 @@ export function PhoenixProfileScreen() {
             <Text style={styles.primaryBtnText}>Connect wallet</Text>
           </Pressable>
         </View>
-      ) : loading ? (
-        <View style={styles.emptyState}>
-          <ActivityIndicator size="small" color={semantic.text.accent} />
-          <Text style={styles.emptyDesc}>Loading Phoenix account...</Text>
         </View>
-      ) : (
-        <ScrollView
-          style={styles.scroll}
-          showsVerticalScrollIndicator={false}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={semantic.text.accent} />}
-        >
-          <View style={styles.identity}>
-            <View style={styles.avatarRing}>
-              <View style={styles.avatarInner}>
-                <MaterialIcons name="person" size={18} color={semantic.text.primary} />
-              </View>
-            </View>
-            <View style={styles.identityInfo}>
-              <Text style={styles.handle}>{shortKey(wallet.address)}</Text>
-              <View style={styles.connectedChip}>
-                <View style={styles.connectedDot} />
-                <Text style={styles.connectedText}>{wallet.source.toUpperCase()} connected</Text>
-              </View>
-            </View>
-            {hasPhoenixProfile ? (
-              <View style={styles.accountActiveBadge}>
-                <View style={styles.connectedDot} />
-                <Text style={styles.accountActiveText}>Phoenix</Text>
-              </View>
-            ) : noPhoenixProfile ? (
-              <View style={styles.noAccountBadge}>
-                <MaterialIcons name="info-outline" size={12} color={tokens.colors.primary} />
-                <Text style={styles.noAccountText}>No Account</Text>
-              </View>
-            ) : null}
-          </View>
+        <ConnectionSheet
+          visible={connectSheet.visible}
+          chain={connectSheet.chain}
+          onClose={connectSheet.close}
+        />
+      </>
+    );
+  }
 
-          {walletUnsupported && (
-            <View style={styles.noticeCard}>
-              <MaterialIcons name="error-outline" size={16} color={tokens.colors.accent} />
-              <Text style={styles.noticeText}>Phoenix order execution needs a Solana wallet that can sign and send transactions.</Text>
-            </View>
-          )}
-
-          {noPhoenixProfile ? (
-            <View style={styles.emptyCard}>
-              <MaterialIcons name="vpn-key" size={26} color={semantic.text.faint} />
-              <Text style={styles.emptyTitle}>Phoenix Account Needed</Text>
-              <Text style={styles.emptyDesc}>{errorMessage ?? 'Activate with an invite code or open Phoenix after your account exists.'}</Text>
-              <View style={styles.accessRow}>
-                <TextInput
-                  style={styles.accessInput}
-                  value={accessCode}
-                  onChangeText={setAccessCode}
-                  placeholder="Invite code"
-                  placeholderTextColor={semantic.text.faint}
-                  autoCapitalize="characters"
-                  autoCorrect={false}
-                />
-                <Pressable
-                  style={[styles.activateBtn, (!accessCode.trim() || activationBusy) && styles.disabledBtn]}
-                  disabled={!accessCode.trim() || activationBusy}
-                  onPress={handleActivate}
-                >
-                  {activationBusy ? (
-                    <ActivityIndicator size="small" color={semantic.background.screen} />
-                  ) : (
-                    <Text style={styles.activateText}>Activate</Text>
-                  )}
-                </Pressable>
-              </View>
-              {activationMessage && <Text style={styles.inlineMessage}>{activationMessage}</Text>}
-            </View>
-          ) : hasPhoenixProfile ? (
-            <>
-              <View style={styles.equityCard}>
-                <Metric label="Equity" value={formatUsd(summary.portfolioValue)} />
-                <Metric label="Margin Used" value={formatUsd(summary.initialMargin)} align="center" />
-                <Metric label="Available" value={formatUsd(summary.withdrawable)} align="right" />
-                <View style={styles.equityDivider} />
-                <Metric
-                  label="Unrealized PnL"
-                  value={formatSignedUsd(summary.unrealizedPnl)}
-                  tone={summary.unrealizedPnl >= 0 ? 'pos' : 'neg'}
-                />
-                <Metric label="Acct Leverage" value={summary.accountLeverage === null ? '--' : `${summary.accountLeverage.toFixed(2)}x`} align="center" />
-                <Metric label="Risk" value={summary.riskLabel} align="right" />
-              </View>
-
-              <View style={styles.actionRow}>
-                <TransferActionButton
-                  icon="arrow-downward"
-                  label="Deposit"
-                  disabled={walletUnsupported}
-                  onPress={() => openTransfer('deposit')}
-                />
-                <TransferActionButton
-                  icon="arrow-upward"
-                  label="Withdraw"
-                  disabled={walletUnsupported}
-                  onPress={() => openTransfer('withdraw')}
-                />
-              </View>
-
-              <View style={styles.tabBar}>
-                <TabButton label="Positions" count={positions.length} active={activeTab === 'positions'} onPress={() => setActiveTab('positions')} />
-                <TabButton label="Orders" count={orders.length} active={activeTab === 'orders'} onPress={() => setActiveTab('orders')} />
-                <TabButton label="History" count={historyRows.length} active={activeTab === 'history'} onPress={() => setActiveTab('history')} />
-              </View>
-
-              {activeTab === 'positions' && (
-                <View style={styles.tabContent}>
-                  {positions.length === 0 ? (
-                    <EmptyRows icon="inbox" text="No open Phoenix positions" />
-                  ) : positions.map((position) => {
-                    const pendingAction = pendingPositionActions.get(position.id);
-                    const pendingTpsl = pendingAction?.kind === 'set_tpsl' ? pendingAction : null;
-                    const pendingClose = pendingAction?.kind === 'close_position';
-                    const displayTakeProfit = pendingTpsl?.takeProfitPrice ?? position.takeProfitPrice;
-                    const displayStopLoss = pendingTpsl?.stopLossPrice ?? position.stopLossPrice;
-                    const hasTpsl = !!(displayTakeProfit || displayStopLoss);
-                    return (
-                    <View
-                      key={position.id}
-                      style={[styles.positionCard, pendingAction && styles.pendingCard]}
-                    >
-                      <Pressable
-                        style={styles.positionRow}
-                        onPress={() => router.push(`/markets/phoenix/${encodeURIComponent(position.symbol)}`)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Open ${position.symbol} market details`}
-                      >
-                        <View style={styles.positionLeft}>
-                          <Text style={styles.positionSymbol}>{position.symbol}</Text>
-                          <Text style={[styles.positionSide, position.side === 'long' ? styles.textPos : styles.textNeg]}>
-                            {position.side.toUpperCase()} - {formatBase(position.size)}
-                          </Text>
-                          <Text style={styles.positionMeta}>{position.accountLabel}</Text>
-                          {pendingAction && (
-                            <Text style={styles.pendingRowText}>
-                              {pendingAction.kind === 'close_position' ? 'Close pending' : 'TP/SL pending'} {shortKey(pendingAction.signature)}
-                            </Text>
-                          )}
-                          {hasTpsl && (
-                            <View style={styles.tpslStack}>
-                              {displayTakeProfit && (
-                                <View style={styles.tpslRow}>
-                                  <Text style={styles.tpslLabelTP}>TP</Text>
-                                  <Text style={styles.tpslValueTP}>{formatPhoenixPrice(displayTakeProfit)}</Text>
-                                </View>
-                              )}
-                              {displayStopLoss && (
-                                <View style={styles.tpslRow}>
-                                  <Text style={styles.tpslLabelSL}>SL</Text>
-                                  <Text style={styles.tpslValueSL}>{formatPhoenixPrice(displayStopLoss)}</Text>
-                                </View>
-                              )}
-                            </View>
-                          )}
-                        </View>
-                        <View style={styles.positionRight}>
-                          <Text style={styles.positionMeta}>Entry {formatPhoenixPrice(position.entryPrice)}</Text>
-                          <Text style={[styles.positionPnl, (position.unrealizedPnl ?? 0) >= 0 ? styles.textPos : styles.textNeg]}>
-                            {formatSignedUsd(position.unrealizedPnl)}
-                          </Text>
-                          <Text style={styles.positionMeta}>Liq {formatPhoenixPrice(position.liquidationPrice)}</Text>
-                        </View>
-                      </Pressable>
-                      <View style={styles.positionActionRow}>
-                        <Pressable
-                          style={[styles.positionActionBtn, pendingClose && styles.actionDisabled]}
-                          onPress={() => openTPSLModal(position)}
-                          disabled={pendingClose}
-                        >
-                          <MaterialIcons name="flag" size={12} color={tokens.colors.primary} />
-                          <Text style={styles.positionActionText}>
-                            {pendingTpsl ? 'TP/SL Pending' : hasTpsl ? 'Edit TP/SL' : 'TP/SL'}
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          style={[styles.positionActionBtn, styles.positionActionBtnClose, pendingClose && styles.actionDisabled]}
-                          onPress={() => openCloseModal(position)}
-                          disabled={actionLoading || pendingClose}
-                        >
-                          <MaterialIcons name="close" size={12} color={tokens.colors.vermillion} />
-                          <Text style={[styles.positionActionText, styles.textNeg]}>{pendingClose ? 'Close Pending' : 'Close'}</Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  ); })}
-                </View>
-              )}
-
-              {activeTab === 'orders' && (
-                <View style={styles.tabContent}>
-                  {orders.length === 0 ? (
-                    <EmptyRows icon="receipt-long" text="No open Phoenix orders" />
-                  ) : orders.map((order) => {
-                    const pendingCancel = pendingOrderActions.get(order.id);
-                    return (
-                    <View key={order.id} style={[styles.orderCard, pendingCancel && styles.pendingCard]}>
-                      <View style={styles.orderLeft}>
-                        <Text style={styles.positionSymbol}>{order.symbol}</Text>
-                        <Text style={styles.orderMeta}>
-                          {sideLabel(order.side)} - {formatBase(order.sizeRemaining ?? 0)} remaining
-                        </Text>
-                        <Text style={styles.orderFlags}>
-                          {[
-                            order.accountLabel,
-                            order.reduceOnly ? 'Reduce only' : null,
-                            order.conditional ? 'Conditional' : null,
-                          ].filter(Boolean).join(' - ')}
-                        </Text>
-                        {pendingCancel && (
-                          <Text style={styles.pendingRowText}>Cancel pending {shortKey(pendingCancel.signature)}</Text>
-                        )}
-                      </View>
-                      <View style={styles.orderRight}>
-                        <Text style={styles.orderPrice}>{formatPhoenixPrice(order.price)}</Text>
-                        {order.canCancel && (
-                          <Pressable
-                            style={[styles.orderCancelBtn, (actionLoading || pendingCancel) && styles.disabledBtn]}
-                            onPress={() => handleCancelOrder(order)}
-                            disabled={actionLoading || !!pendingCancel}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Cancel ${order.symbol} order`}
-                          >
-                            <MaterialIcons name="close" size={12} color={tokens.colors.vermillion} />
-                            <Text style={styles.orderCancelText}>{pendingCancel ? 'Canceling' : 'Cancel'}</Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    </View>
-                  ); })}
-                </View>
-              )}
-
-              {activeTab === 'history' && (
-                <View style={styles.tabContent}>
-                  {historyRows.length === 0 ? (
-                    <EmptyRows icon="history" text="No Phoenix history yet" />
-                  ) : historyRows.map((row) => (
-                    <View key={row.id} style={styles.orderCard}>
-                      <View style={styles.orderLeft}>
-                        <View style={styles.historyTitleRow}>
-                          <Text style={styles.positionSymbol}>{row.title}</Text>
-                          <View style={styles.historyBadge}>
-                            <Text style={styles.historyBadgeText}>{row.kind}</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.orderMeta}>{row.detail}</Text>
-                        <Text style={styles.orderFlags}>{formatHistoryTime(row.timestamp)}</Text>
-                      </View>
-                      <Text style={[styles.orderPrice, row.tone === 'pos' && styles.textPos, row.tone === 'neg' && styles.textNeg]}>
-                        {row.value}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {actionMessage && (
-                <View style={styles.actionMsgBar}>
-                  <Text style={styles.actionMsgText}>{actionMessage}</Text>
-                </View>
-              )}
-            </>
-          ) : null}
-
-          <View style={{ height: 28 }} />
-        </ScrollView>
-      )}
-
+  return (
+    <>
+      <VenuePortfolioScreen
+        venueId="phoenix"
+        hero={{
+          value: formatUsd(summary.portfolioValue),
+          change: formatSignedUsd(summary.unrealizedPnl),
+          changeTone: summary.unrealizedPnl >= 0 ? 'pos' : 'neg',
+          note: `Margin ${formatUsd(summary.initialMargin)} · Available ${formatUsd(summary.withdrawable)} · Leverage ${summary.accountLeverage === null ? '--' : `${summary.accountLeverage.toFixed(2)}x`} · Risk ${summary.riskLabel}`,
+        }}
+        onDeposit={walletUnsupported ? undefined : () => openTransfer('deposit')}
+        onWithdraw={walletUnsupported ? undefined : () => openTransfer('withdraw')}
+        tabs={tabs}
+        refreshing={refreshing}
+        onRefresh={onRefresh}
+        testID="phoenix-portfolio"
+      />
       <PhoenixTransferModal
         action={transferAction}
         amount={transferAmount}
@@ -1034,65 +927,12 @@ export function PhoenixProfileScreen() {
         </Pressable>
       </Modal>
 
-      <ConnectionSheet
+            <ConnectionSheet
         visible={connectSheet.visible}
         chain={connectSheet.chain}
         onClose={connectSheet.close}
       />
-    </View>
-  );
-}
-
-function HeaderAction({
-  icon,
-  label,
-  tone,
-  disabled,
-  onPress,
-}: {
-  icon: keyof typeof MaterialIcons.glyphMap;
-  label: string;
-  tone?: 'positive';
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      style={[styles.headerActionBtn, disabled && styles.actionDisabled]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${label} Phoenix collateral`}
-    >
-      <MaterialIcons name={icon} size={12} color={tone === 'positive' ? tokens.colors.viridian : tokens.colors.primary} />
-      <Text style={[styles.headerActionText, tone === 'positive' && { color: tokens.colors.viridian }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function TransferActionButton({
-  icon,
-  label,
-  disabled,
-  onPress,
-}: {
-  icon: keyof typeof MaterialIcons.glyphMap;
-  label: string;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      style={[styles.disabledAction, !disabled && styles.transferActionEnabled, disabled && styles.actionDisabled]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${label} Phoenix collateral`}
-    >
-      <MaterialIcons name={icon} size={14} color={semantic.text.faint} />
-      <Text style={styles.disabledActionText}>{label}</Text>
-      <Text style={styles.disabledActionSub}>{disabled ? 'Unavailable' : 'USDC'}</Text>
-    </Pressable>
+    </>
   );
 }
 
@@ -1193,56 +1033,6 @@ function PhoenixTransferModal({
   );
 }
 
-function Metric({
-  label,
-  value,
-  align = 'left',
-  tone,
-}: {
-  label: string;
-  value: string;
-  align?: 'left' | 'center' | 'right';
-  tone?: 'pos' | 'neg';
-}) {
-  return (
-    <View style={[styles.metric, align === 'center' && styles.metricCenter, align === 'right' && styles.metricRight]}>
-      <Text style={styles.metricLabel}>{label}</Text>
-      <Text style={[styles.metricValue, tone === 'pos' && styles.textPos, tone === 'neg' && styles.textNeg]}>{value}</Text>
-    </View>
-  );
-}
-
-function TabButton({
-  label,
-  count,
-  active,
-  onPress,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable style={[styles.tab, active && styles.tabActive]} onPress={onPress}>
-      <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
-      {count > 0 && (
-        <View style={[styles.tabBadge, active && styles.tabBadgeActive]}>
-          <Text style={[styles.tabBadgeText, active && styles.tabBadgeTextActive]}>{count}</Text>
-        </View>
-      )}
-    </Pressable>
-  );
-}
-
-function EmptyRows({ icon, text }: { icon: keyof typeof MaterialIcons.glyphMap; text: string }) {
-  return (
-    <View style={styles.rowsEmpty}>
-      <MaterialIcons name={icon} size={22} color={semantic.text.faint} />
-      <Text style={styles.rowsEmptyText}>{text}</Text>
-    </View>
-  );
-}
 
 function normalizeTraders(state: PhoenixTraderState | null): PhoenixTraderRecord[] {
   return (state?.traders ?? [])
@@ -1581,32 +1371,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: semantic.background.screen,
   },
-  scroll: {
-    flex: 1,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: tokens.spacing.xs,
-  },
-  headerActionBtn: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: tokens.spacing.sm,
-    borderRadius: tokens.radius.xs,
-    backgroundColor: semantic.background.surface,
-    opacity: 0.58,
-  },
   actionDisabled: {
     opacity: 0.42,
-  },
-  headerActionText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.primary,
-    textTransform: 'uppercase',
   },
   emptyState: {
     flex: 1,
@@ -1650,95 +1416,6 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.xs,
     fontWeight: '900',
     color: semantic.background.screen,
-    textTransform: 'uppercase',
-  },
-  identity: {
-    marginHorizontal: tokens.spacing.lg,
-    marginTop: tokens.spacing.sm,
-    marginBottom: tokens.spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-  },
-  avatarRing: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(245,250,252,0.12)',
-    backgroundColor: 'rgba(6,51,67,0.82)',
-  },
-  avatarInner: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: semantic.background.surfaceRaised,
-  },
-  identityInfo: {
-    flex: 1,
-  },
-  handle: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.md,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  connectedChip: {
-    marginTop: 5,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  connectedDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: tokens.colors.viridian,
-  },
-  connectedText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  accountActiveBadge: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(0,212,170,0.44)',
-    paddingHorizontal: tokens.spacing.sm,
-    backgroundColor: 'rgba(0,212,170,0.10)',
-  },
-  accountActiveText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.viridian,
-    textTransform: 'uppercase',
-  },
-  noAccountBadge: {
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: 'rgba(245,250,252,0.12)',
-    paddingHorizontal: tokens.spacing.sm,
-    backgroundColor: semantic.background.surface,
-  },
-  noAccountText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: semantic.text.dim,
     textTransform: 'uppercase',
   },
   noticeCard: {
@@ -1802,352 +1479,6 @@ const styles = StyleSheet.create({
     fontSize: tokens.fontSize.xs,
     color: semantic.text.dim,
     textAlign: 'center',
-  },
-  equityCard: {
-    marginHorizontal: tokens.spacing.lg,
-    marginBottom: tokens.spacing.md,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: tokens.spacing.md,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: 'rgba(6,51,67,0.72)',
-  },
-  metric: {
-    width: '33.33%',
-  },
-  metricCenter: {
-    alignItems: 'center',
-  },
-  metricRight: {
-    alignItems: 'flex-end',
-  },
-  metricLabel: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-    marginBottom: 5,
-  },
-  metricValue: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  equityDivider: {
-    width: '100%',
-    height: 1,
-    backgroundColor: 'rgba(24,90,112,0.54)',
-    marginVertical: tokens.spacing.md,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: tokens.spacing.sm,
-    marginHorizontal: tokens.spacing.lg,
-    marginBottom: tokens.spacing.md,
-  },
-  disabledAction: {
-    flex: 1,
-    minHeight: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(245,250,252,0.10)',
-    backgroundColor: semantic.background.surface,
-    opacity: 0.62,
-  },
-  transferActionEnabled: {
-    opacity: 1,
-    borderColor: 'rgba(0,212,170,0.18)',
-    backgroundColor: 'rgba(6,51,67,0.76)',
-  },
-  disabledActionText: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '800',
-    color: semantic.text.dim,
-    textTransform: 'uppercase',
-  },
-  disabledActionSub: {
-    marginTop: 2,
-    fontFamily: 'monospace',
-    fontSize: 8,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  tabBar: {
-    flexDirection: 'row',
-    marginHorizontal: tokens.spacing.lg,
-    marginBottom: tokens.spacing.sm,
-    padding: 3,
-    borderRadius: 8,
-    backgroundColor: semantic.background.surface,
-  },
-  tab: {
-    flex: 1,
-    minHeight: 34,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    borderRadius: 6,
-  },
-  tabActive: {
-    backgroundColor: semantic.background.surfaceRaised,
-  },
-  tabText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  tabTextActive: {
-    color: semantic.text.primary,
-  },
-  tabBadge: {
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 9,
-    backgroundColor: semantic.background.screen,
-  },
-  tabBadgeActive: {
-    backgroundColor: tokens.colors.accent,
-  },
-  tabBadgeText: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '900',
-    color: semantic.text.faint,
-  },
-  tabBadgeTextActive: {
-    color: semantic.background.screen,
-  },
-  tabContent: {
-    marginHorizontal: tokens.spacing.lg,
-  },
-  rowsEmpty: {
-    minHeight: 130,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-  },
-  rowsEmptyText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.faint,
-  },
-  positionCard: {
-    gap: tokens.spacing.sm,
-    marginBottom: tokens.spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-    overflow: 'hidden',
-  },
-  pendingCard: {
-    borderColor: 'rgba(199,183,112,0.45)',
-    backgroundColor: 'rgba(199,183,112,0.08)',
-  },
-  positionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacing.md,
-    paddingHorizontal: tokens.spacing.md,
-    paddingTop: tokens.spacing.md,
-  },
-  positionLeft: {
-    flex: 1,
-    minWidth: 0,
-  },
-  positionRight: {
-    alignItems: 'flex-end',
-  },
-  positionSymbol: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '900',
-    color: semantic.text.primary,
-  },
-  positionSide: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    fontWeight: '800',
-  },
-  positionMeta: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-  },
-  pendingRowText: {
-    marginTop: 5,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.primary,
-    textTransform: 'uppercase',
-  },
-  positionPnl: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '900',
-  },
-  tpslStack: {
-    marginTop: 7,
-    gap: 4,
-  },
-  tpslRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  tpslLabelTP: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    fontWeight: '900',
-    color: tokens.colors.viridian,
-    letterSpacing: 0.8,
-  },
-  tpslValueTP: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.viridian,
-  },
-  tpslLabelSL: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    fontWeight: '900',
-    color: tokens.colors.vermillion,
-    letterSpacing: 0.8,
-  },
-  tpslValueSL: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.vermillion,
-  },
-  positionActionRow: {
-    flexDirection: 'row',
-    gap: 6,
-    paddingHorizontal: tokens.spacing.md,
-    paddingBottom: tokens.spacing.md,
-  },
-  positionActionBtn: {
-    flex: 1,
-    minHeight: 30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    borderRadius: tokens.radius.xs,
-    borderWidth: 1,
-    borderColor: 'rgba(199,183,112,0.25)',
-    backgroundColor: 'rgba(199,183,112,0.06)',
-  },
-  positionActionBtnClose: {
-    borderColor: 'rgba(217,83,79,0.25)',
-    backgroundColor: 'rgba(217,83,79,0.06)',
-  },
-  positionActionText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.primary,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  orderCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacing.md,
-    padding: tokens.spacing.md,
-    marginBottom: tokens.spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: semantic.background.surface,
-  },
-  orderLeft: {
-    flex: 1,
-    minWidth: 0,
-  },
-  orderMeta: {
-    marginTop: 5,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xs,
-    color: semantic.text.dim,
-  },
-  orderFlags: {
-    marginTop: 4,
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  orderRight: {
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  orderPrice: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.sm,
-    fontWeight: '900',
-    color: semantic.text.primary,
-    textAlign: 'right',
-  },
-  orderCancelBtn: {
-    minHeight: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    paddingHorizontal: tokens.spacing.sm,
-    borderRadius: tokens.radius.xs,
-    borderWidth: 1,
-    borderColor: 'rgba(217,83,79,0.25)',
-    backgroundColor: 'rgba(217,83,79,0.06)',
-  },
-  orderCancelText: {
-    fontFamily: 'monospace',
-    fontSize: tokens.fontSize.xxs,
-    fontWeight: '800',
-    color: tokens.colors.vermillion,
-    textTransform: 'uppercase',
-  },
-  historyTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.xs,
-  },
-  historyBadge: {
-    borderRadius: 4,
-    backgroundColor: semantic.background.screen,
-    paddingHorizontal: 5,
-    paddingVertical: 2,
-  },
-  historyBadgeText: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '900',
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
   },
   modalOverlay: {
     flex: 1,
@@ -2364,11 +1695,5 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: semantic.background.screen,
     textTransform: 'uppercase',
-  },
-  textPos: {
-    color: tokens.colors.viridian,
-  },
-  textNeg: {
-    color: tokens.colors.vermillion,
   },
 });

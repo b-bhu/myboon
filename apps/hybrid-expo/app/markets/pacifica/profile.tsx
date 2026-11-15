@@ -1,5 +1,5 @@
-import { PacificaProfileScreen } from '@/features/perps/PacificaProfileScreen';
+import { PacificaPortfolioScreen } from '@/features/portfolio/pacifica.portfolio';
 
 export default function PacificaProfileRoute() {
-  return <PacificaProfileScreen />;
+  return <PacificaPortfolioScreen />;
 }

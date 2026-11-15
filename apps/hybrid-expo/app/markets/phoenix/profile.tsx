@@ -1,5 +1,5 @@
-import { PhoenixProfileScreen } from '@/features/perps/PhoenixProfileScreen';
+import { PhoenixPortfolioScreen } from '@/features/portfolio/phoenix.portfolio';
 
 export default function PhoenixProfileRoute() {
-  return <PhoenixProfileScreen />;
+  return <PhoenixPortfolioScreen />;
 }

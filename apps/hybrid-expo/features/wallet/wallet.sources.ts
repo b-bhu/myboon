@@ -15,7 +15,7 @@ import { fetchPhoenixTraderState } from '@/features/perps/phoenix.api';
 import { fetchPerpsAccount, fetchPerpsPositions } from '@/features/perps/perps.public-api';
 import { getActivePolymarketClient } from '@/features/polymarket/polymarket.client';
 import { fetchPortfolio } from '@/features/polymarket/polymarket.api';
-import { resolveCashOutNow } from '@/features/polymarket/profile/portfolio-totals';
+import { resolveCashOutNow } from '@/features/polymarket/portfolio/portfolio-totals';
 import type {
   MeteoraRowDetail,
   PerpsRowDetail,
