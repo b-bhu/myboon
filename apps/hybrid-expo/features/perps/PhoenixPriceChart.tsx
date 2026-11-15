@@ -18,6 +18,7 @@ import {
   IconSparkles,
 } from '@tabler/icons-react-native';
 import {
+  buildRsiPaneData,
   chartStoryMarkersToAnnotations,
   MarketChart,
   type MarketCandle,
@@ -25,6 +26,7 @@ import {
   type MarketChartMode,
   type MarketChartSelection,
   type MarketChartStatus,
+  type RsiPaneData,
 } from '@/features/charts';
 import {
   adaptPhoenixCandles,
@@ -103,6 +105,11 @@ interface PhoenixPriceChartProps {
    * story is reported here; the shared frame renders it as the news rail card.
    */
   onSelectedStoryDisplayChange?: (display: PhoenixSelectedStoryDisplay | null) => void;
+  /**
+   * Reports the RSI pane inputs computed from this chart's candles (#656), on
+   * mount and whenever the candles or the chart status change.
+   */
+  onRsiData?: (data: RsiPaneData) => void;
 }
 
 export function PhoenixPriceChart({
@@ -117,6 +124,7 @@ export function PhoenixPriceChart({
   onLiveMarketStats,
   onLiveStatusChange,
   onSelectedStoryDisplayChange,
+  onRsiData,
 }: PhoenixPriceChartProps) {
   const [internalTimeframeIndex, setInternalTimeframeIndex] = useState(
     DEFAULT_PHOENIX_CHART_TIMEFRAME_INDEX,
@@ -416,6 +424,17 @@ export function PhoenixPriceChart({
         }
       : status
   ), [candles.length, resolvedSeriesKey, seriesKey, status, symbol]);
+
+  const rsiData = useMemo(
+    () => buildRsiPaneData(candles, chartStatus.kind),
+    [candles, chartStatus.kind],
+  );
+  const rsiDataCallbackRef = useRef(onRsiData);
+  rsiDataCallbackRef.current = onRsiData;
+
+  useEffect(() => {
+    rsiDataCallbackRef.current?.(rsiData);
+  }, [rsiData]);
 
   const handleSelectionChange = useCallback((next: MarketChartSelection) => {
     if (next.candle) {

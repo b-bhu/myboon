@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { semantic, tokens } from '@/theme';
+import { RsiPane, useRsiPaneOpen } from '@/features/charts';
 import type { MarketDetailViewModel } from '@/features/markets/detail-view-model';
 import {
   NewsRailSection,
@@ -28,7 +29,6 @@ import {
   PositionRowsSection,
   PriceRowSection,
   RangeNewsStrip,
-  RsiSlot,
   TopBarSection,
 } from '@/features/markets/detail-sections';
 
@@ -45,6 +45,8 @@ export interface MarketScreenProps {
 export function MarketScreen({ vm, onConnect, refreshing, onRefresh, refreshEnabled = true }: MarketScreenProps) {
   const insets = useSafeAreaInsets();
   const [sheetOpen, setSheetOpen] = useState(false);
+  // RSI pane open/closed choice is remembered across markets and sessions (#656).
+  const { open: rsiOpen, setOpen: setRsiPaneOpen } = useRsiPaneOpen();
 
   useEffect(() => {
     if (sheetOpen && vm.actionSheet == null) setSheetOpen(false);
@@ -77,7 +79,7 @@ export function MarketScreen({ vm, onConnect, refreshing, onRefresh, refreshEnab
         {vm.notice}
         {vm.chartBody}
         <RangeNewsStrip vm={vm.range} />
-        <RsiSlot />
+        <RsiPane data={vm.rsi} open={rsiOpen} onToggleOpen={() => setRsiPaneOpen(!rsiOpen)} />
         <NewsRailSection stories={vm.newsStories} />
         {vm.positionsBody ?? (
           <PositionRowsSection title={vm.positionsTitle} rows={vm.positionRows} footer={vm.positionsMessage} />

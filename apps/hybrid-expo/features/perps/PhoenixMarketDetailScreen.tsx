@@ -60,6 +60,7 @@ import type {
   PositionRowVM,
   ValueTone,
 } from '@/features/markets/detail-view-model';
+import type { RsiPaneData } from '@/features/charts';
 
 type Side = 'long' | 'short';
 type OrderType = 'market' | 'limit';
@@ -140,6 +141,8 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
   const [liveStatus, setLiveStatus] = useState<PhoenixLiveConnectionStatus>('connecting');
   const [timeframeIndex, setTimeframeIndex] = useState(DEFAULT_PHOENIX_CHART_TIMEFRAME_INDEX);
   const [storiesVisible, setStoriesVisible] = useState(true);
+  // RSI pane inputs reported by PhoenixPriceChart (#656).
+  const [rsiData, setRsiData] = useState<RsiPaneData>({ kind: 'loading' });
   const [selectedStoryDisplay, setSelectedStoryDisplay] = useState<PhoenixSelectedStoryDisplay | null>(null);
   const [side, setSide] = useState<Side>('long');
   const [orderType, setOrderType] = useState<OrderType>('market');
@@ -684,6 +687,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
       onLatestPrice={handleLatestPrice}
       onLiveMarketStats={handleLiveMarketStats}
       onLiveStatusChange={setLiveStatus}
+      onRsiData={setRsiData}
     />
   );
 
@@ -726,6 +730,7 @@ export function PhoenixMarketDetailScreen({ symbol }: PhoenixMarketDetailScreenP
       onToggleNews: () => setStoriesVisible((current) => !current),
     },
     chartBody,
+    rsi: rsiData,
     newsStories: storiesVisible && selectedStoryDisplay
       ? [{
           id: `story-${selectedStoryDisplay.id}`,

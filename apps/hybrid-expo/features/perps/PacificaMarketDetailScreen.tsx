@@ -56,6 +56,7 @@ import type {
   PositionRowVM,
   ValueTone,
 } from '@/features/markets/detail-view-model';
+import type { RsiPaneData } from '@/features/charts';
 
 type Side = 'long' | 'short';
 type AmountMode = 'usd' | 'native';
@@ -96,6 +97,8 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
   const [amountMode, setAmountMode] = useState<AmountMode>('usd');
   const [amountText, setAmountText] = useState('');
   const [scrubPrice, setScrubPrice] = useState<number | null>(null);
+  // RSI pane inputs reported by PacificaPriceChart (#656).
+  const [rsiData, setRsiData] = useState<RsiPaneData>({ kind: 'loading' });
 
   // Quick-amount pill active state
   const [activePillPct, setActivePillPct] = useState<number | null>(null);
@@ -501,6 +504,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       timeframeIndex={timeframeIndex}
       onTimeframeIndexChange={setTimeframeIndex}
       onScrub={handleScrub}
+      onRsiData={setRsiData}
     />
   );
 
@@ -544,6 +548,7 @@ export function PacificaMarketDetailScreen({ symbol }: PacificaMarketDetailScree
       newsVisible: false,
     },
     chartBody,
+    rsi: rsiData,
     newsStories: [],
     positionsTitle: 'My Positions',
     positionRows,

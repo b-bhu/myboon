@@ -8,6 +8,8 @@
 
 import type { ReactNode } from 'react';
 
+import type { RsiPaneData } from '@/features/charts/market-chart.rsi';
+
 export type ValueTone = 'up' | 'down' | 'flat';
 
 export interface MarketDetailTopBarVM {
@@ -86,6 +88,12 @@ export interface MarketDetailViewModel {
   notice?: ReactNode;
   /** Chart body — the only venue-swapped region of the screen. */
   chartBody: ReactNode;
+  /**
+   * RSI pane inputs from the venue's candle chart (#656). Omit on venues
+   * without a candle chart (Polymarket renders outcome probability lines) —
+   * the frame then hides the pane entirely rather than leaving an empty stub.
+   */
+  rsi?: RsiPaneData;
   /** News marker cards; an empty list hides the rail entirely. */
   newsStories: readonly NewsStoryCard[];
   positionsTitle: string;

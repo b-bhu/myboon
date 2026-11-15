@@ -6,10 +6,16 @@ import type {
   MeteoraTimeframe,
 } from '@myboon/shared/meteora';
 import { IconChartCandle, IconChartLine } from '@tabler/icons-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { MarketChart, type MarketChartMode, type MarketChartStatus } from '@/features/charts';
+import {
+  buildRsiPaneData,
+  MarketChart,
+  type MarketChartMode,
+  type MarketChartStatus,
+  type RsiPaneData,
+} from '@/features/charts';
 import { marketChartTheme } from '@/features/charts/market-chart.theme';
 import { adaptMeteoraCandles } from '@/features/meteora/meteora.chart-adapter';
 import { loadMeteoraChartData } from '@/features/meteora/meteora.chart-data';
@@ -31,6 +37,13 @@ export interface MeteoraPriceChartProps {
   client?: Pick<MeteoraDataApiClient, 'getOhlcv'>;
   defaultMode?: MarketChartMode;
   height?: number;
+  /**
+   * Reports the RSI pane inputs computed from this chart's candles (#656).
+   * The chart is collapsed until expanded, so nothing is reported (and the
+   * frame hides the pane) until there is data; a cleanup reports null on
+   * unmount instead of leaving a stale snapshot behind.
+   */
+  onRsiData?: (data: RsiPaneData | null) => void;
 }
 
 export function MeteoraPriceChart({
@@ -41,6 +54,7 @@ export function MeteoraPriceChart({
   client = meteoraClient,
   defaultMode = 'candles',
   height = CHART_HEIGHT,
+  onRsiData,
 }: MeteoraPriceChartProps) {
   const [expandedPoolAddress, setExpandedPoolAddress] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[1]);
@@ -122,6 +136,7 @@ export function MeteoraPriceChart({
             timeframe={timeframe}
             mode={mode}
             height={height}
+            onRsiData={onRsiData}
           />
         </View>
       ) : null}
@@ -138,11 +153,13 @@ function PoolMarketChart({
   timeframe,
   mode,
   height,
+  onRsiData,
 }: Required<Pick<MeteoraPriceChartProps,
   'poolAddress' | 'currentPrice' | 'quoteLabel' | 'inverted' | 'client' | 'height'
 >> & {
   timeframe: typeof TIMEFRAMES[number];
   mode: MarketChartMode;
+  onRsiData?: (data: RsiPaneData | null) => void;
 }) {
   const [series, setSeries] = useState<MeteoraOhlcvSeries | null>(null);
   const [freshness, setFreshness] = useState<MeteoraFreshness | null>(null);
@@ -187,6 +204,23 @@ function PoolMarketChart({
         : { kind: 'ready' };
   const poolPrice = Number(currentPrice);
   const displayPoolPrice = inverted ? 1 / poolPrice : poolPrice;
+
+  const rsiData = useMemo(
+    () => buildRsiPaneData(candles, status.kind),
+    [candles, status.kind],
+  );
+  const rsiDataCallbackRef = useRef(onRsiData);
+  rsiDataCallbackRef.current = onRsiData;
+
+  useEffect(() => {
+    rsiDataCallbackRef.current?.(rsiData);
+  }, [rsiData]);
+
+  // Report nothing once this inner chart unmounts (chart collapsed again,
+  // pool or timeframe changed) so the pane never shows a stale snapshot.
+  useEffect(() => () => {
+    rsiDataCallbackRef.current?.(null);
+  }, []);
 
   return (
     <>
