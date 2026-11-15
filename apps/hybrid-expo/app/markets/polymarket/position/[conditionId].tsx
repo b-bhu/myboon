@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
-import { PositionDetailScreen } from '@/features/polymarket/profile/PositionDetailScreen';
+import { PositionDetailScreen } from '@/features/polymarket/position/PositionDetailScreen';
 import { semantic, tokens } from '@/theme';
 
 export default function PolymarketPositionDetailRoute() {

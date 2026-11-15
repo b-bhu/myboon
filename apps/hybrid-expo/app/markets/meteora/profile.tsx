@@ -1,5 +1,5 @@
-import { MeteoraProfileScreen } from '@/features/meteora/MeteoraProfileScreen';
+import { MeteoraPortfolioScreen } from '@/features/portfolio/meteora.portfolio';
 
 export default function MeteoraProfileRoute() {
-  return <MeteoraProfileScreen />;
+  return <MeteoraPortfolioScreen />;
 }
