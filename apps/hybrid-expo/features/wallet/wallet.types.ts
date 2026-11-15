@@ -4,13 +4,14 @@
  * decisions #1-4, #11-13).
  */
 
-export type WalletProtocolId = 'spot' | 'meteora' | 'phoenix' | 'pacifica';
+export type WalletProtocolId = 'spot' | 'meteora' | 'phoenix' | 'pacifica' | 'polymarket';
 
 export const WALLET_PROTOCOL_IDS: readonly WalletProtocolId[] = [
   'spot',
   'meteora',
   'phoenix',
   'pacifica',
+  'polymarket',
 ];
 
 /**
@@ -38,7 +39,7 @@ export interface WalletSourceState {
    * alongside valueUsd. Null until resolved; shape depends on the protocol
    * (see SpotRowDetail / MeteoraRowDetail / PerpsRowDetail).
    */
-  detail: SpotRowDetail | MeteoraRowDetail | PerpsRowDetail | null;
+  detail: SpotRowDetail | MeteoraRowDetail | PerpsRowDetail | PredictionRowDetail | null;
 }
 
 export type WalletSourcesState = Record<WalletProtocolId, WalletSourceState>;
@@ -96,10 +97,30 @@ export interface PerpsRowDetail {
   pills: PerpsRowPill[];
 }
 
+/**
+ * Polymarket row content (issue #653). Prediction markets have no size or
+ * leverage, so a pill carries the market's question and the position's current
+ * value instead. `readyToCollect` surfaces resolved markets awaiting redeem;
+ * it is undefined when the portfolio summary did not report one, never 0 as a
+ * stand-in for unknown.
+ */
+export interface PredictionRowPill {
+  /** The market question, truncated by the row at render time. */
+  title: string;
+  /** Current USD value of the held shares. */
+  valueUsd: number;
+}
+
+export interface PredictionRowDetail {
+  pills: PredictionRowPill[];
+  readyToCollect?: number;
+}
+
 export type WalletRowDetail =
   | { protocol: 'spot'; data: SpotRowDetail }
   | { protocol: 'meteora'; data: MeteoraRowDetail }
-  | { protocol: 'phoenix' | 'pacifica'; data: PerpsRowDetail };
+  | { protocol: 'phoenix' | 'pacifica'; data: PerpsRowDetail }
+  | { protocol: 'polymarket'; data: PredictionRowDetail };
 
 export interface WalletTotals {
   /** Sum of every currently-resolved source's valueUsd. Null if none resolved yet. */

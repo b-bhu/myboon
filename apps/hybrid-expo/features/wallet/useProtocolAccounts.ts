@@ -3,11 +3,14 @@ import {
   fetchMeteoraValueUsd,
   fetchPacificaValueUsd,
   fetchPhoenixValueUsd,
+  fetchPolymarketValueUsd,
   fetchSpotValueUsd,
   invalidateSpotWalletSourceCache,
+  isNotConnectedError,
   type WalletFetchResult,
 } from '@/features/wallet/wallet.sources';
 import { subscribeWalletDataChanged } from '@/features/wallet/wallet.refresh';
+import { computeWalletTotals, isTotalPartial } from '@/features/wallet/wallet.totals';
 import {
   WALLET_PROTOCOL_IDS,
   type WalletProtocolId,
@@ -23,6 +26,7 @@ const FETCHERS: Record<WalletProtocolId, (walletAddress: string) => Promise<Wall
   meteora: fetchMeteoraValueUsd,
   phoenix: fetchPhoenixValueUsd,
   pacifica: fetchPacificaValueUsd,
+  polymarket: fetchPolymarketValueUsd,
 };
 
 function idleSource(): WalletSourceState {
@@ -35,6 +39,7 @@ function initialSources(): WalletSourcesState {
     meteora: idleSource(),
     phoenix: idleSource(),
     pacifica: idleSource(),
+    polymarket: idleSource(),
   };
 }
 
@@ -43,15 +48,21 @@ export interface UseProtocolAccountsResult {
   totals: WalletTotals;
   /** Call when the Wallet section's viewport visibility changes (debounced internally). */
   notifyVisibility: (isVisible: boolean) => void;
-  /** Manual refresh — re-fetches all four sources (explicit refresh affordance, no pull-to-refresh at scroll bottom). */
+  /** Manual refresh — re-fetches every source (explicit refresh affordance, no pull-to-refresh at scroll bottom). */
   refreshAll: () => void;
   /** Retry a single failed/pending source without touching the others. */
   retrySource: (id: WalletProtocolId) => void;
+  /**
+   * True when at least one venue has a value but another is still loading,
+   * failed or stale — the total is a lower bound and the UI must say so
+   * rather than presenting it as complete (#653).
+   */
+  totalIsPartial: boolean;
 }
 
 /**
- * Orchestrates independent fetches for Spot, Meteora, Phoenix, and Pacifica
- * for Home's Wallet section (issue #237).
+ * Orchestrates independent fetches for Spot, Meteora, Phoenix, Pacifica and
+ * Polymarket for Home's Wallet section (issue #237; Polymarket added by #653).
  *
  * - Each source has its own try/catch, loading/resolved/failed state, and
  *   retry — one source failing or being slow never blocks another.
@@ -59,7 +70,7 @@ export interface UseProtocolAccountsResult {
  *   (`notifyVisibility`), debounced so scroll wobble near the boundary
  *   doesn't refetch repeatedly.
  * - Each deliberate re-entry into view (leave, then return) re-triggers a
- *   fresh fetch of all four sources — the primary refresh mechanism.
+ *   fresh fetch of every source — the primary refresh mechanism.
  * - `refreshAll` backs the explicit manual-refresh affordance (no
  *   pull-to-refresh at the bottom of Home's scroll, no polling timer).
  */
@@ -72,6 +83,7 @@ export function useProtocolAccounts(walletAddress: string | null): UseProtocolAc
     meteora: 0,
     phoenix: 0,
     pacifica: 0,
+    polymarket: 0,
   });
 
   const fetchSource = useCallback((id: WalletProtocolId, address: string) => {
@@ -91,6 +103,14 @@ export function useProtocolAccounts(walletAddress: string | null): UseProtocolAc
       })
       .catch((error: unknown) => {
         if (requestSeq.current[id] !== seq) return;
+        // A venue that needs its own connection (Polymarket) and has none is
+        // not a failure — there is nothing to show and nothing to retry until
+        // the user connects it, so the source returns to idle rather than
+        // rendering an error the user cannot act on.
+        if (isNotConnectedError(error)) {
+          setSources((prev) => ({ ...prev, [id]: idleSource() }));
+          return;
+        }
         setSources((prev) => {
           const previous = prev[id];
           // A source that had already resolved at least once keeps its last
@@ -163,33 +183,10 @@ export function useProtocolAccounts(walletAddress: string | null): UseProtocolAc
     fetchSource('spot', walletAddress);
   }), [fetchSource, walletAddress]);
 
-  const totals = useMemo<WalletTotals>(() => {
-    // A source counts toward the total/mix whenever it holds a real,
-    // previously-fetched value — resolved, stale, or mid-retry (status
-    // 'loading' while a prior value is still retained) — so a retry-in-flight
-    // never causes the total to dip (TC-STATE-003, TC-STATE-005). Only a
-    // source that has never resolved (idle/loading-cold/failed-cold) is
-    // excluded.
-    const resolved = WALLET_PROTOCOL_IDS.filter(
-      (id) => sources[id].valueUsd !== null && sources[id].resolvedAt !== null,
-    );
-    if (resolved.length === 0) {
-      return { totalUsd: null, mix: {}, lastResolvedAt: null };
-    }
+  // The aggregation rule lives in wallet.totals.ts so it can be unit tested
+  // without React (#653). This hook owns fetching; that module owns the sum.
+  const totals = useMemo<WalletTotals>(() => computeWalletTotals(sources), [sources]);
+  const totalIsPartial = useMemo(() => isTotalPartial(sources), [sources]);
 
-    const totalUsd = resolved.reduce((sum, id) => sum + (sources[id].valueUsd ?? 0), 0);
-    const mix: Partial<Record<WalletProtocolId, number>> = {};
-    resolved.forEach((id) => {
-      mix[id] = totalUsd > 0 ? (sources[id].valueUsd ?? 0) / totalUsd : 0;
-    });
-    const lastResolvedAt = resolved.reduce<number | null>((latest, id) => {
-      const at = sources[id].resolvedAt;
-      if (at === null) return latest;
-      return latest === null ? at : Math.max(latest, at);
-    }, null);
-
-    return { totalUsd, mix, lastResolvedAt };
-  }, [sources]);
-
-  return { sources, totals, notifyVisibility, refreshAll, retrySource };
+  return { sources, totals, totalIsPartial, notifyVisibility, refreshAll, retrySource };
 }

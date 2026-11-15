@@ -20,12 +20,14 @@ export const tokens = {
   // Real per-protocol brand colors for Wallet account rows (PRD design decision #15).
   // Spot uses Solana's own purple; Meteora uses the violet end of its real gradient
   // mark (kept distinct from Phoenix's orange); Phoenix/Pacifica are their actual
-  // flat brand-mark fills (see features/home/marketBrandAssets.ts).
+  // flat brand-mark fills (see features/home/marketBrandAssets.ts). Polymarket
+  // is the blue from its own mark SVG (POLYMARKET_MARK_SVG, same file) — #653.
   walletBrand: {
     spot: '#9945FF',
     meteora: '#6E45FF',
     phoenix: '#FF8D2A',
     pacifica: '#61D7EF',
+    polymarket: '#2E5CFF',
   },
   spacing: {
     xxs: 2,

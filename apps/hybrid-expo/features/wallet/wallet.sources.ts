@@ -13,10 +13,15 @@ import { walletBalanceClient as spotClient } from '@/features/wallet/wallet.bala
 import { meteoraClient } from '@/features/meteora/meteora.client';
 import { fetchPhoenixTraderState } from '@/features/perps/phoenix.api';
 import { fetchPerpsAccount, fetchPerpsPositions } from '@/features/perps/perps.public-api';
+import { getActivePolymarketClient } from '@/features/polymarket/polymarket.client';
+import { fetchPortfolio } from '@/features/polymarket/polymarket.api';
+import { resolveCashOutNow } from '@/features/polymarket/profile/portfolio-totals';
 import type {
   MeteoraRowDetail,
   PerpsRowDetail,
   PerpsRowPill,
+  PredictionRowDetail,
+  PredictionRowPill,
   SpotChipToken,
   SpotRowDetail,
 } from '@/features/wallet/wallet.types';
@@ -30,8 +35,29 @@ const SPOT_TOP_TOKEN_COUNT = 3;
 
 export interface WalletFetchResult {
   valueUsd: number;
-  detail: SpotRowDetail | MeteoraRowDetail | PerpsRowDetail | null;
+  detail: SpotRowDetail | MeteoraRowDetail | PerpsRowDetail | PredictionRowDetail | null;
 }
+
+/**
+ * Thrown when Polymarket has no authenticated client for this wallet. It is
+ * not a fetch failure — the venue simply is not connected — so
+ * `useProtocolAccounts` leaves the source idle instead of showing an error.
+ */
+export class PolymarketNotConnectedError extends Error {
+  readonly notConnected = true;
+
+  constructor() {
+    super('Polymarket is not connected');
+    this.name = 'PolymarketNotConnectedError';
+  }
+}
+
+export function isNotConnectedError(error: unknown): boolean {
+  return error instanceof PolymarketNotConnectedError;
+}
+
+/** Position pills shown on the Polymarket row, largest current value first. */
+const PREDICTION_PILL_COUNT = 3;
 
 export async function fetchSpotValueUsd(walletAddress: string): Promise<WalletFetchResult> {
   const result = await spotClient.getWalletBalances(walletAddress);
@@ -237,4 +263,40 @@ function toUsd(input: unknown): number | null {
     return value / 1_000_000;
   }
   return value;
+}
+
+/**
+ * Polymarket account value (issue #653). Unlike the other venues, Polymarket
+ * needs an authenticated `SecureClient` rather than a wallet address, so this
+ * reads the already-active client and never triggers a signing prompt: if the
+ * user has not connected Polymarket, it throws `PolymarketNotConnectedError`
+ * and the row stays idle rather than reporting a failure.
+ *
+ * Totals come from the portfolio API's own summary via `resolveCashOutNow`
+ * (#653 reuses Polymarket's tested logic rather than re-deriving totals); a
+ * loaded portfolio that reports no cash-out figure is unknown, not zero.
+ */
+export async function fetchPolymarketValueUsd(walletAddress: string): Promise<WalletFetchResult> {
+  const client = getActivePolymarketClient(walletAddress);
+  if (!client) {
+    throw new PolymarketNotConnectedError();
+  }
+
+  const portfolio = await fetchPortfolio(client);
+  // Prefer the portfolio's own value; fall back to its cash-out summary. Both
+  // being absent means the API gave us no number, which is unknown — not $0.
+  const value = portfolio.portfolioValue ?? resolveCashOutNow(portfolio);
+  if (value === null) {
+    throw new Error('Polymarket value unavailable');
+  }
+
+  const pills: PredictionRowPill[] = [...portfolio.positions]
+    .sort((a, b) => b.currentValue - a.currentValue)
+    .slice(0, PREDICTION_PILL_COUNT)
+    .map((position) => ({ title: position.title, valueUsd: position.currentValue }));
+
+  return {
+    valueUsd: value,
+    detail: { pills, readyToCollect: portfolio.summary.readyToCollect },
+  };
 }
