@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseAnalystHandoff } from '@myboon/contracts';
 
-import { decide, emOutcome, signalImage, userMessage, validateDecision, type EntityRow, type RecentItem } from './decide.js';
+import { decide, emOutcome, signalImage, userMessage, validateDecision, clampTitle, MAX_TITLE_CHARS, type EntityRow, type RecentItem } from './decide.js';
 import { SYSTEM_PROMPT } from './prompt.js';
 
 const handoff = (over: Record<string, unknown> = {}) =>
@@ -48,10 +48,28 @@ describe('signalImage', () => {
 });
 
 describe('validateDecision', () => {
-  it('story needs title <= 90 and summary', () => {
+  it('story needs a title and summary', () => {
     expect(validateDecision({ decision: 'story', reason: 'r', title: 'T', summary: 'S' }, items)).toMatchObject({ decision: 'story' });
-    expect(() => validateDecision({ decision: 'story', title: 'x'.repeat(91), summary: 'S' }, items)).toThrow();
+    expect(() => validateDecision({ decision: 'story', title: '  ', summary: 'S' }, items)).toThrow();
     expect(() => validateDecision({ decision: 'story', title: 'T' }, items)).toThrow();
+  });
+  it('an over-long story title is trimmed at a word boundary, not sent to retry (#621)', () => {
+    // over 90 chars, like the 92-char catch-up row on #621
+    const long = 'Hyperliquid open interest climbs past $9B as traders pile into ETH and SOL perps, again today';
+    expect(long.length).toBeGreaterThan(MAX_TITLE_CHARS);
+    const d = validateDecision({ decision: 'story', reason: 'r', title: long, summary: 'S' }, items);
+    expect(d).toMatchObject({ decision: 'story', title: 'Hyperliquid open interest climbs past $9B as traders pile into ETH and SOL perps, again' });
+    if (d.decision !== 'story') throw new Error('unreachable');
+    expect(d.title.length).toBeLessThanOrEqual(MAX_TITLE_CHARS);
+  });
+  it('clampTitle', () => {
+    expect(clampTitle('Short title')).toBe('Short title');
+    expect(clampTitle('x'.repeat(90))).toBe('x'.repeat(90));
+    expect(clampTitle('x'.repeat(95))).toBe('x'.repeat(90));
+    expect(clampTitle(`${'a'.repeat(85)}, bb ccccccc`)).toBe(`${'a'.repeat(85)}, bb`);
+    expect(clampTitle(`${'a'.repeat(86)}, ccccccc`)).toBe('a'.repeat(86));
+    expect(clampTitle(`${'a'.repeat(89)} bbbb`)).toBe('a'.repeat(89));
+    expect(clampTitle(`${'a'.repeat(90)} bbbb`)).toBe('a'.repeat(90));
   });
   it('duplicate must point at a recent item', () => {
     expect(validateDecision({ decision: 'duplicate', duplicate_of: '0190-item-1' }, items)).toMatchObject({ duplicate_of: '0190-item-1' });
