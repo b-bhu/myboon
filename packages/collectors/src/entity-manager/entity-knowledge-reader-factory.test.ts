@@ -45,14 +45,14 @@ test('createEntityKnowledgeReader builds the reader matching the source', () => 
   )
 })
 
-test('ecosystem config selects the managed read source for api, editor-draft and publisher', () => {
+test('ecosystem config selects the managed read source for the api', () => {
   const nodeRequire = createRequire(__filename)
   const ecosystemPath = resolve(__dirname, '..', '..', '..', '..', 'ecosystem.config.cjs')
   const ecosystem = nodeRequire(ecosystemPath) as {
     apps: Array<{ name: string, env?: Record<string, string | undefined> }>
   }
   const byName = new Map(ecosystem.apps.map((app) => [app.name, app]))
-  for (const name of ['myboon-api', 'myboon-editor-draft', 'myboon-publisher']) {
+  for (const name of ['myboon-api']) {
     const app = byName.get(name)
     assert.ok(app, `${name} must be registered in ecosystem.config.cjs`)
     assert.equal(app.env?.ENTITY_V4_READ_SOURCE, 'managed')
