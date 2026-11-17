@@ -46,6 +46,13 @@ void [withClaims, withModel, withRunId, withVisibility]
 const missingField: LatestUpdate = { ...oneItem.updates[0]!, whatToWatch: undefined }
 void missingField
 
+// #670: imageUrl is optional and nullable, and must be a string when set.
+const withImage: LatestUpdate = { ...oneItem.updates[0]!, imageUrl: 'https://pbs.twimg.com/media/a.jpg' }
+const withNullImage: LatestUpdate = { ...oneItem.updates[0]!, imageUrl: null }
+// @ts-expect-error `imageUrl` is a string or null
+const withNumberImage: LatestUpdate = { ...oneItem.updates[0]!, imageUrl: 42 }
+void [withImage, withNullImage, withNumberImage]
+
 function testEmptyResponseSatisfiesType(): void {
   assert.deepEqual(empty, { updates: [] })
 }

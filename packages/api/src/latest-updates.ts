@@ -26,6 +26,8 @@ const SIGNAL_CHUNK = 25
 const ITEMS_ROW_LIMIT = 1000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SIGNAL_ID_RE = /^[0-9a-f]{64}$/i
+// Same rule as the entity manager's signalImage() (packages/entity-manager/src/decide.ts).
+const IMAGE_URL_MAX_CHARS = 2048
 
 const UPDATE_SELECT = 'id,entity_id,headline,what_happened,how_we_got_here,what_to_watch,published_at,visibility'
 
@@ -49,7 +51,7 @@ interface UpdateRow {
 interface EntityRow { id: unknown, slug: unknown, name: unknown, type: unknown, status: unknown }
 interface EntityInfo { slug: string, name: string, type: string }
 interface UpdateItemRow { latest_update_id: unknown, entity_item_id: unknown }
-interface ItemRow { id: unknown, title: unknown, occurred_at: unknown, signal_id: unknown }
+interface ItemRow { id: unknown, title: unknown, occurred_at: unknown, signal_id: unknown, image_url: unknown }
 interface ItemSignalRow { item_id: unknown, signal_id: unknown }
 interface SignalRow { signal_id: unknown, link: unknown }
 
@@ -162,11 +164,11 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
     }
 
     const itemIds = [...new Set([...itemIdsByUpdate.values()].flat())]
-    const items = new Map<string, { title: string, occurredAt: string, signalId: string | null }>()
+    const items = new Map<string, { title: string, occurredAt: string, signalId: string | null, imageUrl: string | null }>()
     const originSignalIds = new Map<string, string[]>()
     if (itemIds.length > 0) {
       const [itemRows, originRows] = await Promise.all([
-        readIn<ItemRow>('entity_items', 'id', itemIds, UUID_CHUNK, { select: 'id,title,occurred_at,signal_id' }),
+        readIn<ItemRow>('entity_items', 'id', itemIds, UUID_CHUNK, { select: 'id,title,occurred_at,signal_id,image_url' }),
         readIn<ItemSignalRow>('item_signals', 'item_id', itemIds, UUID_CHUNK, {
           select: 'item_id,signal_id',
           role: 'eq.origin',
@@ -179,6 +181,7 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
           title: row.title,
           occurredAt: row.occurred_at,
           signalId: typeof row.signal_id === 'string' && SIGNAL_ID_RE.test(row.signal_id) ? row.signal_id : null,
+          imageUrl: safeImageUrl(row.image_url),
         })
       }
       for (const row of originRows) {
@@ -218,6 +221,11 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
         sources.push({ itemId, title: item.title, link, occurredAt: item.occurredAt })
       }
       sources.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0))
+      const linkedItems = [...new Set(itemIdsByUpdate.get(update.id) ?? [])]
+        .flatMap((itemId) => {
+          const item = items.get(itemId)
+          return item ? [{ itemId, occurredAt: item.occurredAt, imageUrl: item.imageUrl }] : []
+        })
       out.push({
         id: update.id,
         entitySlug: entity.slug,
@@ -228,6 +236,7 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
         howWeGotHere: update.howWeGotHere,
         whatToWatch: update.whatToWatch,
         sources,
+        imageUrl: pickImageUrl(linkedItems),
         publishedAt: update.publishedAt,
       })
     }
@@ -262,6 +271,23 @@ function validUpdate(row: UpdateRow): ValidUpdate | null {
     whatToWatch: row.what_to_watch,
     publishedAt: row.published_at,
   }
+}
+
+/**
+ * The card image (#670): the newest linked item (by occurred_at, ties by the higher id) that has a
+ * usable image, else null. Uses every linked item, including one whose source link was dropped.
+ */
+export function pickImageUrl(linked: Array<{ itemId: string, occurredAt: string, imageUrl: string | null }>): string | null {
+  const newestFirst = [...linked].sort((a, b) =>
+    Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.itemId < b.itemId ? 1 : a.itemId > b.itemId ? -1 : 0))
+  return newestFirst.map((item) => safeImageUrl(item.imageUrl)).find((url): url is string => url !== null) ?? null
+}
+
+/** `https://` and at most 2048 characters, else null: the same rule as signalImage() upstream. */
+export function safeImageUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const url = value.trim()
+  return url.startsWith('https://') && url.length <= IMAGE_URL_MAX_CHARS ? url : null
 }
 
 function isUuid(value: unknown): value is string {

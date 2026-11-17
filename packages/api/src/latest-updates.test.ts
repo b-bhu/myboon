@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
 import type { LatestUpdatesResponse } from '@myboon/shared/latest-updates'
-import { createLatestUpdateRoutes } from './latest-updates.js'
+import { createLatestUpdateRoutes, pickImageUrl, safeImageUrl } from './latest-updates.js'
 import { createNarrativeRoutes } from './narratives.js'
 import { createStoryRoutes } from './stories.js'
 
@@ -40,8 +40,8 @@ function addEntity(db: Db, id: string, slug: string, name: string, type = 'asset
   db.entities.push({ id, slug, name, type, status })
 }
 
-function addItem(db: Db, id: string, title: string, occurredAt: string, signalId: string | null): void {
-  db.entity_items.push({ id, title, occurred_at: occurredAt, signal_id: signalId })
+function addItem(db: Db, id: string, title: string, occurredAt: string, signalId: string | null, imageUrl: string | null = null): void {
+  db.entity_items.push({ id, title, occurred_at: occurredAt, signal_id: signalId, image_url: imageUrl })
 }
 
 function addUpdate(
@@ -199,6 +199,7 @@ test('newest live row per entity with sources joined, ordered by publishedAt acr
       { itemId: itemNew, title: 'Newer source', link: 'https://example.com/c', occurredAt: '2026-11-10T14:26:06+00:00' },
       { itemId: itemOld, title: 'Older source', link: 'https://example.com/a', occurredAt: '2026-11-10T10:00:00+00:00' },
     ],
+    imageUrl: null,
     publishedAt: '2026-11-14T01:00:00+00:00',
   })
   assert.deepEqual(body.updates[0]!.sources, [
@@ -207,7 +208,7 @@ test('newest live row per entity with sources joined, ordered by publishedAt acr
   for (const update of body.updates) {
     assert.deepEqual(Object.keys(update).sort(), [
       'entityName', 'entitySlug', 'entityType', 'headline', 'howWeGotHere', 'id',
-      'publishedAt', 'sources', 'whatHappened', 'whatToWatch',
+      'imageUrl', 'publishedAt', 'sources', 'whatHappened', 'whatToWatch',
     ])
   }
   const text = JSON.stringify(body)
@@ -464,4 +465,93 @@ test('create-app mounts /latest-updates and leaves the /stories and /narratives 
   assert.match(source, /app\.route\('\/latest-updates', createLatestUpdateRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*\}\)\)/)
   assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*source: process\.env\.STORIES_SOURCE === 'atlas' \? 'atlas' : 'legacy',\s*\}\)\)/)
   assert.match(source, /app\.route\('\/narratives', createNarrativeRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*\}\)\)/)
+})
+
+// #670: card image from the newest linked entity item.
+const IMG_NEW = 'https://pbs.twimg.com/media/new.jpg'
+const IMG_OLD = 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png'
+
+test('imageUrl: the newest linked item with an https image wins, in the same single entity_items read', async () => {
+  const db = emptyDb()
+  seedBasics(db)
+  const itemOld = uuid()
+  const itemNew = uuid()
+  addItem(db, itemOld, 'Older', '2026-11-10T10:00:00+00:00', SIGNAL_1, IMG_OLD)
+  addItem(db, itemNew, 'Newer', '2026-11-10T14:00:00+00:00', SIGNAL_2, IMG_NEW)
+  const id = addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', [itemOld, itemNew])
+  const { fetchImpl, seen } = fakeRest(db)
+
+  const { status, body } = await get(routes(fetchImpl))
+
+  assert.equal(status, 200)
+  assert.equal(body.updates[0]!.id, id)
+  assert.equal(body.updates[0]!.imageUrl, IMG_NEW)
+  const itemReads = seen.filter((read) => read.table === 'entity_items')
+  assert.equal(itemReads.length, 1)
+  assert.equal(itemReads[0]!.params.get('select'), 'id,title,occurred_at,signal_id,image_url')
+  // Same reads as before #670: one per table, no extra query for images.
+  assert.deepEqual(seen.map((read) => read.table).sort(), [
+    'entities', 'entity_items', 'item_signals', 'latest_update_items', 'latest_updates', 'signals',
+  ])
+})
+
+test('imageUrl: newest item has no image or an invalid one, an older valid image is used', async () => {
+  for (const badNewest of [null, '', 'http://example.com/a.png', `https://example.com/${'x'.repeat(2048)}`]) {
+    const db = emptyDb()
+    seedBasics(db)
+    const itemOld = uuid()
+    const itemNew = uuid()
+    addItem(db, itemOld, 'Older', '2026-11-10T10:00:00+00:00', SIGNAL_1, IMG_OLD)
+    addItem(db, itemNew, 'Newer', '2026-11-10T14:00:00+00:00', SIGNAL_2, badNewest)
+    addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', [itemNew, itemOld])
+    const { body } = await get(routes(fakeRest(db).fetchImpl))
+    assert.equal(body.updates[0]!.imageUrl, IMG_OLD, `newest image ${String(badNewest).slice(0, 30)}`)
+  }
+})
+
+test('imageUrl: no linked image, or only invalid ones, gives null and leaves every other field unchanged', async () => {
+  const build = (images: Array<string | null>) => {
+    counter = 1000
+    const db = emptyDb()
+    seedBasics(db)
+    const ids = images.map(() => uuid())
+    images.forEach((image, i) => addItem(db, ids[i]!, `Item ${i}`, `2026-11-10T1${i}:00:00+00:00`, SIGNAL_1, image))
+    addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', ids)
+    return db
+  }
+  const withNone = (await get(routes(fakeRest(build([null, null])).fetchImpl))).body.updates[0]!
+  const withBad = (await get(routes(fakeRest(build(['http://example.com/a.png', `https://e.com/${'y'.repeat(2050)}`])).fetchImpl))).body.updates[0]!
+  const withGood = (await get(routes(fakeRest(build([null, IMG_NEW])).fetchImpl))).body.updates[0]!
+  assert.equal(withNone.imageUrl, null)
+  assert.equal(withBad.imageUrl, null)
+  assert.equal(withGood.imageUrl, IMG_NEW)
+  const { imageUrl: _a, ...restNone } = withNone
+  const { imageUrl: _b, ...restGood } = withGood
+  assert.deepEqual(restNone, restGood)
+})
+
+test('imageUrl: an update with no linked items gives null', async () => {
+  const db = emptyDb()
+  seedBasics(db)
+  addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', [])
+  const { body } = await get(routes(fakeRest(db).fetchImpl))
+  assert.equal(body.updates[0]!.imageUrl, null)
+  assert.deepEqual(body.updates[0]!.sources, [])
+})
+
+test('pickImageUrl: newest by occurred_at, ties go to the higher id; safeImageUrl: https only, at most 2048 chars', () => {
+  const a = '01a1d000-0000-7000-8000-00000000000a'
+  const b = '01a1d000-0000-7000-8000-00000000000b'
+  const t = '2026-11-10T10:00:00+00:00'
+  assert.equal(pickImageUrl([]), null)
+  assert.equal(pickImageUrl([{ itemId: a, occurredAt: t, imageUrl: IMG_OLD }, { itemId: b, occurredAt: t, imageUrl: IMG_NEW }]), IMG_NEW)
+  assert.equal(pickImageUrl([{ itemId: b, occurredAt: t, imageUrl: IMG_NEW }, { itemId: a, occurredAt: '2026-11-10T11:00:00+00:00', imageUrl: IMG_OLD }]), IMG_OLD)
+  const exact = `https://e.com/${'z'.repeat(2048 - 'https://e.com/'.length)}`
+  assert.equal(exact.length, 2048)
+  assert.equal(safeImageUrl(exact), exact)
+  assert.equal(safeImageUrl(`${exact}z`), null)
+  for (const bad of [null, undefined, '', '   ', 'http://e.com/a.png', 'ftp://e.com/a.png', 'javascript:alert(1)', 42]) {
+    assert.equal(safeImageUrl(bad), null)
+  }
+  assert.equal(safeImageUrl(`  ${IMG_NEW}  `), IMG_NEW)
 })
