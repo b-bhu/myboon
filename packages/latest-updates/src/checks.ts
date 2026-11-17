@@ -6,9 +6,14 @@
  *                  in a supplied source (the #612 check, kept)
  *   (c) watch      what_to_watch names a concrete date, price level or decision
  *   (d) period     see periods.ts
+ *   (e) repeat_previous  how_we_got_here and what_to_watch are not near-repeats of our last card's (#671)
+ *   (f) stale_timeframe  see timeframe.ts (#671)
+ * Bar (c) also holds a watch line whose concrete date, level, decision or fact is not in the new items or their
+ * origin signals (same check name, #671).
  * The model never gets to waive a check. The matching is heuristic by design; the eval set tests it.
  */
 import { checkPeriods } from './periods.js';
+import { checkStaleTimeframe } from './timeframe.js';
 import type { Bundle, CheckFailure, Claim, Draft } from './types.js';
 import { allSourcesText, canonicalizeNumberText, draftText, extractNumericTokens, maskIgnoredSpans, MONTH_WORDS, newSourcesText } from './text.js';
 
@@ -122,16 +127,83 @@ export function checkWatch(draft: Draft): CheckFailure[] {
   return [{ check: 'watch', detail: 'what_to_watch names no concrete date, price level or decision' }];
 }
 
-// ---------- all four ----------
+/** Lowercased decision words in a text, keyed like factKeys so they can be compared with the new sources. */
+function decisionKeys(text: string): Set<string> {
+  return new Set([...text.matchAll(new RegExp(WATCH_DECISION_RE.source, 'gi'))].map((m) => `k:${m[0].toLowerCase()}`));
+}
+const WEEKDAY_RE = /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi;
+function weekdayKeys(text: string): Set<string> {
+  return new Set([...text.matchAll(WEEKDAY_RE)].map((m) => `w:${m[1]!.toLowerCase()}`));
+}
+/** The concrete things a line names: numbers, dates, actors, weekdays and decision words. */
+const concreteKeys = (text: string): Set<string> => new Set([...factKeys(text), ...weekdayKeys(text), ...decisionKeys(text)]);
+
+/**
+ * The watch line must be about the new news: at least one of its concrete keys appears in the new items or their
+ * origin signals. The entity's own name does not count (it is in every item).
+ */
+export function checkWatchTied(draft: Draft, bundle: Bundle): CheckFailure[] {
+  const entityKeys = new Set([...bundle.entity.name.split(/\s+/), ...bundle.entity.slug.split(/[-_\s]+/)].map((w) => `a:${w.toLowerCase()}`));
+  const inNew = concreteKeys(newSourcesText(bundle));
+  const tied = [...concreteKeys(draft.what_to_watch)].some((k) => !entityKeys.has(k) && inNew.has(k));
+  if (tied) return [];
+  return [{ check: 'watch', detail: 'what_to_watch names no date, level or decision from the new items or their origin signals' }];
+}
+
+// ---------- (e) repeat_previous ----------
+
+export const REPEAT_JACCARD = 0.7;
+const REPEAT_MIN_WORDS = 8;
+const REPEAT_MIN_CHARS = 40;
+
+const repeatTokens = (text: string): string[] =>
+  text.toLowerCase().split(/\s+/).map((t) => t.replace(/^[^\p{L}\p{N}$]+|[^\p{L}\p{N}%]+$/gu, '')).filter(Boolean);
+
+/** Near-repeat: one line contains the other (8+ words or 40+ chars), or word Jaccard (stop words out) >= 0.7. */
+export function isNearRepeat(draftLine: string, lastLine: string, bundle: Bundle): boolean {
+  const a = repeatTokens(draftLine);
+  const b = repeatTokens(lastLine);
+  if (a.length === 0 || b.length === 0) return false;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  const shortText = short.join(' ');
+  if ((short.length >= REPEAT_MIN_WORDS || shortText.length >= REPEAT_MIN_CHARS) && ` ${long.join(' ')} `.includes(` ${shortText} `)) return true;
+  const sa = new Set(a.filter((t) => !STOP_ACTORS.has(t)));
+  const sb = new Set(b.filter((t) => !STOP_ACTORS.has(t)));
+  const union = new Set([...sa, ...sb]).size;
+  if (union === 0 || [...sa].filter((t) => sb.has(t)).length / union < REPEAT_JACCARD) return false;
+  // A reused phrase that adds a new date, level or decision from the new items is not a repeat.
+  const inNew = concreteKeys(newSourcesText(bundle));
+  const inLast = concreteKeys(lastLine);
+  const adds = [...concreteKeys(draftLine)].some((k) => /^[ndk]:/.test(k) && inNew.has(k) && !inLast.has(k));
+  return !adds;
+}
+
+export function checkRepeatPrevious(draft: Draft, bundle: Bundle): CheckFailure[] {
+  const last = bundle.last_update;
+  if (!last || last.kind !== 'published') return [];
+  const failures: CheckFailure[] = [];
+  if (isNearRepeat(draft.how_we_got_here, last.card.how_we_got_here, bundle)) {
+    failures.push({ check: 'repeat_previous', detail: 'how_we_got_here repeats the last card' });
+  }
+  if (isNearRepeat(draft.what_to_watch, last.card.what_to_watch, bundle)) {
+    failures.push({ check: 'repeat_previous', detail: 'what_to_watch repeats the last card' });
+  }
+  return failures;
+}
+
+// ---------- all of them ----------
 
 /** The failures of the whole write bar; empty means the draft may be published. */
 export function runWriteBar(draft: Draft, bundle: Bundle): CheckFailure[] {
   const { itemIds, signalIds } = loadedSourceIds(bundle);
+  const watch = checkWatch(draft);
   return [
     ...checkNovelty(draft, bundle),
     ...checkClaims(draft.claims, itemIds, signalIds),
     ...checkDraftNumbers(draftText(draft), canonicalizeNumberText(maskIgnoredSpans(allSourcesText(bundle)))),
-    ...checkWatch(draft),
+    ...(watch.length > 0 ? watch : checkWatchTied(draft, bundle)),
     ...checkPeriods(draft, bundle),
+    ...checkRepeatPrevious(draft, bundle),
+    ...checkStaleTimeframe(draft, bundle),
   ];
 }

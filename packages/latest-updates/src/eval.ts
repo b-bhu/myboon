@@ -53,7 +53,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv, out: (s: stri
     let results: EntityResult[] | null = null;
     if (llm) {
       results = [];
-      for (const e of snapshot.entities) results.push(await evaluateEntity(e, llm, attempts));
+      for (const e of snapshot.entities) results.push(await evaluateEntity(e, llm, attempts, snapshot.meta.frozen_at));
     }
     const scored = results ? score(results, labels) : null;
     out(formatReport({ entities: snapshot.entities.length, model: results ? model : null, results, score: scored, labels, skippedWhy: 'OLLAMA_API_KEY is not set' }));

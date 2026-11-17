@@ -10,7 +10,7 @@ import { evaluateEntity, loadSnapshot, parseLabels, score, snapshotToBundle, typ
 
 const EVAL_DIR = fileURLToPath(new URL('../eval/', import.meta.url));
 
-const entity = (slug: string, summary = 'ETF outflows hit $2.1 billion on Thursday; IBIT drove 78%.'): SnapshotEntity => ({
+const entity = (slug: string, summary = 'ETF outflows hit $2.1 billion on Thursday; IBIT drove 78% ahead of the Dec 10 Fed decision.'): SnapshotEntity => ({
   id: `id-${slug}`, slug, name: slug, type: 'asset', summary: null,
   new_items: [{ id: `item-${slug}`, title: `${slug} news`, summary, created_at: '2026-11-13T00:00:00Z', occurred_at: '2026-11-10T10:00:00Z', signal_id: null, note: null }],
   last_update: null, prior_items: [], origin_signals: [],

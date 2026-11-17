@@ -1,5 +1,8 @@
 /** Test fixtures (not shipped code): small builders for bundles and drafts. */
-import type { Bundle, Draft, Item, Signal } from './types.js';
+import type { Bundle, Draft, Item, LastCard, LastUpdate, Signal } from './types.js';
+
+/** Two hours after the default item time, the same IST day (14 Nov 2026, 13:30 IST). */
+export const FIXTURE_NOW = '2026-11-14T08:00:00.000Z';
 
 let n = 0;
 export const uuid = (): string => {
@@ -26,8 +29,15 @@ export function bundle(over: Partial<Bundle> & { new_items: Item[] }): Bundle {
     prior_items: [],
     origin_signals: [],
     last_update: null,
+    now: FIXTURE_NOW,
     ...over,
   };
+}
+
+/** A published (or dark) last card, with `text` joined the way loadBundle joins it. */
+export function publishedLast(card: Partial<LastCard> = {}, over: { id?: string; date?: string | null } = {}): LastUpdate {
+  const c: LastCard = { title: 'Last card', what_happened: '', how_we_got_here: '', what_to_watch: '', ...card };
+  return { kind: 'published', id: over.id ?? uuid(), title: c.title, date: over.date ?? null, text: [c.title, c.what_happened, c.how_we_got_here, c.what_to_watch].join('\n'), card: c };
 }
 
 export function draft(over: Partial<Draft> = {}): Draft {

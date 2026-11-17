@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { loadSnapshot, snapshotToBundle } from './eval-lib.js';
-import { bundle, draft, item, signal } from './fixtures.js';
+import { bundle, draft, item, publishedLast, signal } from './fixtures.js';
 import { checkPeriods, extractPeriods } from './periods.js';
 
 const labels = (text: string) => extractPeriods(text).map((p) => `${p.kind}:${p.n}:${p.year ?? ''}:${p.indicator ?? ''}`);
@@ -64,7 +64,7 @@ describe('write bar (d): September CPI', () => {
     const now = item({ title: 'Bitcoin edges lower', summary: 'Selling continued.' });
     const earlier = item({ title: 'September CPI hits risk assets', summary: 'September CPI above forecast.' });
     expect(checkPeriods(d(), bundle({ new_items: [now], prior_items: [earlier] }))).toEqual([]);
-    expect(checkPeriods(d(), bundle({ new_items: [now], last_update: { kind: 'published', id: 'u', title: 't', date: null, text: 'September CPI shook the market.' } }))).toEqual([]);
+    expect(checkPeriods(d(), bundle({ new_items: [now], last_update: publishedLast({ title: 't', what_happened: 'September CPI shook the market.' }) }))).toEqual([]);
   });
 
   it('holds a named month that no supplied source names', () => {

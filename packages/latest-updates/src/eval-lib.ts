@@ -55,8 +55,11 @@ const asItem = (i: Partial<Item> & { id: string; title: string; created_at?: str
   occurred_at: i.occurred_at ?? null, created_at: i.created_at ?? '', signal_id: i.signal_id ?? null,
 });
 
-/** The bundle the runner would build for this entity: its newest new item is the decision's key. */
-export function snapshotToBundle(e: SnapshotEntity): Bundle {
+/**
+ * The bundle the runner would build for this entity: its newest new item is the decision's key. `now` is the run's
+ * clock; pass the snapshot's `frozen_at`. Without it, the newest item's created_at (or occurred_at) stands in.
+ */
+export function snapshotToBundle(e: SnapshotEntity, now?: string): Bundle {
   const newItems = e.new_items.map(asItem);
   const newest = [...newItems].sort((a, b) => (Date.parse(b.occurred_at ?? '') || 0) - (Date.parse(a.occurred_at ?? '') || 0) || (a.id < b.id ? 1 : -1))[0]!;
   const newIds = new Set(newItems.map((i) => i.id));
@@ -71,6 +74,7 @@ export function snapshotToBundle(e: SnapshotEntity): Bundle {
       numbers: s.numbers ?? null, link: s.link ?? null, occurred_at: s.occurred_at ?? null, created_at: s.created_at ?? null,
     })),
     last_update: last ? { kind: 'earlier_item', id: last.id, title: last.title, date: last.occurred_at ?? last.created_at, text: [last.title, last.summary ?? '', last.note ?? ''].filter(Boolean).join('\n') } : null,
+    now: now ?? (newest.created_at || newest.occurred_at || new Date().toISOString()),
   };
 }
 
@@ -135,8 +139,8 @@ export type EntityResult = {
   periodMismatchesPublished: number;
 };
 
-export async function evaluateEntity(e: SnapshotEntity, llm: Llm, attempts = EVAL_ATTEMPTS): Promise<EntityResult> {
-  const bundle = snapshotToBundle(e);
+export async function evaluateEntity(e: SnapshotEntity, llm: Llm, attempts = EVAL_ATTEMPTS, now?: string): Promise<EntityResult> {
+  const bundle = snapshotToBundle(e, now);
   let last = await askEditor(bundle, llm);
   let tries = 1;
   while (last.kind === 'error' && tries < attempts) { last = await askEditor(bundle, llm); tries += 1; }

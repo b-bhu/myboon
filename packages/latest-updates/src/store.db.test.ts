@@ -128,7 +128,7 @@ describe.skipIf(ADMIN_URL === '')('latest-updates store and runner (local Postgr
       expect(first).toMatchObject({ candidates: 1, published: 1, failed: 0 });
       const updates = await q<{ visibility: string; newest_entity_item_id: string; model: string; editor_version: string; run_id: string; claims: unknown[] }>('select * from atlas.latest_updates');
       expect(updates).toHaveLength(1);
-      expect(updates[0]).toMatchObject({ visibility: 'dark', newest_entity_item_id: newest, model: 'glm-5.3-flash', editor_version: 'latest-updates-v1' });
+      expect(updates[0]).toMatchObject({ visibility: 'dark', newest_entity_item_id: newest, model: 'glm-5.3-flash', editor_version: 'latest-updates-v2' });
       expect(updates[0]!.claims).toHaveLength(1);
       expect((await q('select entity_item_id from atlas.latest_update_items')).map((r) => r.entity_item_id)).toEqual([newest]);
       const runs = await q<{ decision: string; attempt: number; id: string }>('select * from atlas.latest_update_runs');
@@ -283,6 +283,10 @@ describe.skipIf(ADMIN_URL === '')('latest-updates store and runner (local Postgr
       expect(cand!.newestItemId).toBe(second);
       const bundle = await store.loadBundle(cand!, { now: NOW, windowHours: 24 });
       expect(bundle!.last_update).toMatchObject({ kind: 'published', title: 'Bitcoin slips on ETF outflows' });
+      expect(bundle!.last_update).toMatchObject({ card: {
+        title: 'Bitcoin slips on ETF outflows', how_we_got_here: 'Spot funds have seen steady selling through the week.', what_to_watch: 'Watch the Dec 10 Fed decision.',
+      } });
+      expect(bundle!.now).toBe(NOW.toISOString());
       expect(bundle!.new_items.map((i) => i.id)).toEqual([second]);
       expect(bundle!.prior_items.map((i) => i.id)).toContain(first);
     });

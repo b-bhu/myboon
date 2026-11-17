@@ -136,6 +136,7 @@ export async function loadBundle(db: Q, c: Candidate, opts: { now: Date; windowH
     lastUpdate = {
       kind: 'published', id: published.id, title: published.headline, date: iso(published.published_at),
       text: [published.headline, published.what_happened, published.how_we_got_here, published.what_to_watch].join('\n'),
+      card: { title: published.headline, what_happened: published.what_happened, how_we_got_here: published.how_we_got_here, what_to_watch: published.what_to_watch },
     };
   } else if (priorItems[0]) {
     const p = priorItems[0];
@@ -157,7 +158,7 @@ export async function loadBundle(db: Q, c: Candidate, opts: { now: Date; windowH
     numbers: s.numbers, link: s.link, occurred_at: iso(s.occurred_at), created_at: iso(s.created_at),
   }));
 
-  return { entity, newest_item_id: c.newestItemId, new_items: newItems, prior_items: priorItems, origin_signals: signals, last_update: lastUpdate };
+  return { entity, newest_item_id: c.newestItemId, new_items: newItems, prior_items: priorItems, origin_signals: signals, last_update: lastUpdate, now: opts.now.toISOString() };
 }
 
 /**

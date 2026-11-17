@@ -23,15 +23,18 @@ export type Signal = {
   created_at: string | null;
 };
 
-/** What we last told readers: our own newest latest_updates row, or (none yet) the entity's newest earlier item. */
-export type LastUpdate = {
-  kind: 'published' | 'earlier_item';
+/** The labelled parts of our last card, shown to the model and compared by the repeat check (#671). */
+export type LastCard = { title: string; what_happened: string; how_we_got_here: string; what_to_watch: string };
+
+type LastUpdateBase = {
   id: string;
   title: string | null;
   /** All the text of the last update, used by the novelty and period checks. */
   text: string;
   date: string | null;
 };
+/** What we last told readers: our own newest latest_updates row, or (none yet) the entity's newest earlier item. */
+export type LastUpdate = (LastUpdateBase & { kind: 'published'; card: LastCard }) | (LastUpdateBase & { kind: 'earlier_item' });
 
 export type Bundle = {
   entity: { id: string; slug: string; name: string; type: string; summary: string | null };
@@ -41,6 +44,8 @@ export type Bundle = {
   prior_items: Item[];
   origin_signals: Signal[];
   last_update: LastUpdate | null;
+  /** The run's clock (ISO, UTC), set by loadBundle from the runner's `now`. The prompt and the time checks read it. */
+  now: string;
 };
 
 export type Claim = { text: string; source_item_id: string | null; source_signal_id: string | null };
@@ -53,7 +58,7 @@ export type Draft = {
   claims: Claim[];
 };
 
-export type CheckName = 'novelty' | 'claims' | 'numbers' | 'watch' | 'period';
+export type CheckName = 'novelty' | 'claims' | 'numbers' | 'watch' | 'period' | 'repeat_previous' | 'stale_timeframe';
 export type CheckFailure = { check: CheckName; detail: string };
 
 export type ModelDecision =
