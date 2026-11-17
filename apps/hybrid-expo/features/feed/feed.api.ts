@@ -1,10 +1,10 @@
+import type { LatestUpdate } from '@myboon/shared/latest-updates';
 import type { FeedItem, FeedUpdateSource } from '@/features/feed/feed.types';
 import { fetchLatestUpdates } from './latest-updates.api';
 import {
   LATEST_UPDATES_MOCK,
   LATEST_UPDATE_SAMPLES,
   sortLatestUpdatesNewestFirst,
-  type FeedLatestUpdate,
 } from './latest-updates';
 
 const MAX_SOURCE_NAME_LENGTH = 120;
@@ -42,7 +42,7 @@ export function toShortDate(iso: string): string {
 }
 
 /** One latest update as a Today slide or an All updates row. The full text stays on the row. */
-export function latestUpdateToFeedItem(update: FeedLatestUpdate, index: number): FeedItem {
+export function latestUpdateToFeedItem(update: LatestUpdate, index: number): FeedItem {
   const imageUrl = update.imageUrl ?? null;
   return {
     id: update.id,

@@ -5,10 +5,9 @@ import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { sectionFailureTitle } from '../feed-mosaic';
 import {
   latestUpdateTime,
-  type FeedLatestUpdate,
   type LatestUpdatesPresentation,
 } from '../latest-updates';
-import type { LatestUpdateSource } from '@myboon/shared/latest-updates';
+import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-updates';
 import { FeedBox } from './ui/FeedBox';
 import { SampleDataLabel } from './ui/SampleDataLabel';
 
@@ -57,7 +56,7 @@ export function LatestUpdateSegment({
   );
 }
 
-function LatestUpdateCard({ update, now }: { update: FeedLatestUpdate; now: Date }) {
+function LatestUpdateCard({ update, now }: { update: LatestUpdate; now: Date }) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const time = latestUpdateTime(update.publishedAt, now);
   const imageUrl = update.imageUrl && failedImage !== update.imageUrl ? update.imageUrl : null;

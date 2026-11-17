@@ -102,13 +102,6 @@ test('the payload parser keeps a valid update, drops a bad source link, and reje
   assert.equal(parsed.length, 1);
   assert.deepEqual(parsed[0]?.sources.map((source) => source.link), ['https://example.com/desk']);
   assert.equal(parsed[0]?.imageUrl, null);
-  const withImage = parseLatestUpdatesPayload({
-    updates: [{
-      ...update('pictured', '2026-11-14T16:00:00.000Z', 'Pictured'),
-      imageUrl: '  https://assets.coingecko.com/coins/images/1/large/bitcoin.png  ',
-    }],
-  });
-  assert.equal(withImage[0]?.imageUrl, 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png');
   assert.equal(readLatestUpdateImageUrl('http://example.com/a.png'), null);
   assert.equal(readLatestUpdateImageUrl('javascript:alert(1)'), null);
   assert.equal(readLatestUpdateImageUrl(`https://example.com/${'a'.repeat(2048)}`), null);
@@ -116,6 +109,30 @@ test('the payload parser keeps a valid update, drops a bad source link, and reje
   assert.throws(() => parseLatestUpdatesPayload({ updates: [{ id: 'nope' }] }), /Invalid latest updates response/);
   assert.throws(() => parseLatestUpdatesPayload(null), /Invalid latest updates response/);
   assert.deepEqual(parseLatestUpdatesPayload({ updates: [] }), []);
+});
+
+test('a row imageUrl survives parsing', () => {
+  const parsed = parseLatestUpdatesPayload({
+    updates: [{
+      ...update('pictured', '2026-11-14T16:00:00.000Z', 'Pictured'),
+      imageUrl: '  https://assets.coingecko.com/coins/images/1/large/bitcoin.png  ',
+    }],
+  });
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.imageUrl, 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png');
+  assert.equal(parsed[0]?.headline, 'Pictured');
+});
+
+test('a null imageUrl stays null after parsing', () => {
+  const parsed = parseLatestUpdatesPayload({
+    updates: [{
+      ...update('plain', '2026-11-14T16:00:00.000Z', 'Plain'),
+      imageUrl: null,
+    }],
+  });
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.imageUrl, null);
+  assert.equal(parsed[0]?.headline, 'Plain');
 });
 
 test('the hook hides an empty list, shows retry after a failure, and refetches newest first', async () => {

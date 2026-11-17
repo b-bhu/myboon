@@ -1,14 +1,6 @@
 import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-updates';
 import { isFeedMocksEnabled } from './feed-mocks';
 
-/**
- * App-layer latest update. `imageUrl` is read from the response until #670
- * adds it to the shared type. Missing or unusable values stay null.
- */
-export interface FeedLatestUpdate extends LatestUpdate {
-  imageUrl?: string | null;
-}
-
 /** Sample card image. A public https URL, the same hosts the live rows use. */
 export const SAMPLE_UPDATE_IMAGE_URL = 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png';
 
@@ -31,7 +23,7 @@ export const LATEST_UPDATE_LOADING_GRACE_MS = 400;
 
 export interface LatestUpdatesPresentation {
   status: 'loading' | 'empty' | 'unavailable' | 'ready';
-  updates: FeedLatestUpdate[];
+  updates: LatestUpdate[];
   message: string | null;
   sample: boolean;
 }
@@ -54,7 +46,7 @@ const sampleSource = (
  * Sample rows for the mock flag. The older row is first on purpose, so a
  * newest-first sort is visible when the flag fills an empty route.
  */
-export const LATEST_UPDATE_SAMPLES: readonly FeedLatestUpdate[] = [
+export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
   {
     id: 'sample-federal-reserve',
     entitySlug: 'federal-reserve',
@@ -139,7 +131,7 @@ export function latestUpdateTime(iso: string, now: Date): string {
  * Real rows always win over the sample.
  */
 export function presentLatestUpdates(
-  data: readonly FeedLatestUpdate[] | null,
+  data: readonly LatestUpdate[] | null,
   error: string | null,
   mocksEnabled: boolean,
 ): LatestUpdatesPresentation {
