@@ -93,16 +93,21 @@ async function run() {
     assert(body?.result === '0x89', 'expected Polygon mainnet chain ID 137');
   });
 
-  const narratives = await check('Feed narratives', async () => {
-    const body = await request('/narratives?limit=1&offset=0');
-    assert(Array.isArray(body), 'expected an array');
+  const latestUpdates = await check('Latest updates', async () => {
+    const body = await request('/latest-updates?limit=1');
+    assert(body && Array.isArray(body.updates), 'expected an updates array');
     return body;
   });
-  if (narratives.length > 0) {
-    await check('Narrative detail', async () => {
-      const updateKey = narratives[0]?.updateKey;
-      assert(typeof updateKey === 'string' && updateKey.length > 0, 'missing updateKey');
-      await request(`/narratives/${encodeURIComponent(updateKey)}`);
+  if (latestUpdates.updates.length > 0) {
+    await check('Latest update shape', async () => {
+      const row = latestUpdates.updates[0];
+      assert(typeof row?.id === 'string' && row.id.length > 0, 'missing id');
+      assert(typeof row?.headline === 'string' && row.headline.length > 0, 'missing headline');
+      assert(typeof row?.whatHappened === 'string', 'missing whatHappened');
+      assert(typeof row?.howWeGotHere === 'string', 'missing howWeGotHere');
+      assert(typeof row?.whatToWatch === 'string', 'missing whatToWatch');
+      assert(Array.isArray(row?.sources), 'missing sources');
+      assert(row.imageUrl === undefined || row.imageUrl === null || typeof row.imageUrl === 'string', 'imageUrl must be a string or empty');
     });
   }
 

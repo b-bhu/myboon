@@ -1,5 +1,21 @@
-import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-updates';
+import type { LatestUpdateSource } from '@myboon/shared/latest-updates';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
+import type { FeedLatestUpdate } from './latest-updates';
+
+/** Same bound as the API: https only, at most 2048 characters. Anything else is no image. */
+export const LATEST_UPDATE_IMAGE_MAX_LENGTH = 2048;
+
+export function readLatestUpdateImageUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > LATEST_UPDATE_IMAGE_MAX_LENGTH) return null;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 30;
@@ -16,7 +32,7 @@ function clamp(value: number, min: number, max: number): number {
 export async function fetchLatestUpdates(options?: {
   signal?: AbortSignal;
   limit?: number;
-}): Promise<LatestUpdate[]> {
+}): Promise<FeedLatestUpdate[]> {
   const limit = clamp(Math.floor(options?.limit ?? DEFAULT_LIMIT), 1, MAX_LIMIT);
   const response = await fetchWithTimeout(
     `${resolveApiBaseUrl()}/latest-updates?limit=${limit}`,
@@ -29,7 +45,7 @@ export async function fetchLatestUpdates(options?: {
   return parseLatestUpdatesPayload(payload);
 }
 
-export function parseLatestUpdatesPayload(payload: unknown): LatestUpdate[] {
+export function parseLatestUpdatesPayload(payload: unknown): FeedLatestUpdate[] {
   if (!isRecord(payload) || !Array.isArray(payload.updates)) {
     throw new Error('Invalid latest updates response');
   }
@@ -43,7 +59,7 @@ export function parseLatestUpdatesPayload(payload: unknown): LatestUpdate[] {
   return updates;
 }
 
-function parseLatestUpdate(value: unknown): LatestUpdate | null {
+function parseLatestUpdate(value: unknown): FeedLatestUpdate | null {
   if (!isRecord(value)) return null;
   if (
     !nonEmptyString(value.id)
@@ -74,6 +90,7 @@ function parseLatestUpdate(value: unknown): LatestUpdate | null {
       return parsed ? [parsed] : [];
     }),
     publishedAt: value.publishedAt,
+    imageUrl: readLatestUpdateImageUrl(value.imageUrl),
   };
 }
 

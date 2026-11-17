@@ -14,6 +14,12 @@ export interface NarrativeAction {
   slug?: string;  // polymarket: polymarket slug
 }
 
+export interface FeedUpdateSource {
+  itemId: string;
+  title: string;
+  link: string;
+}
+
 export interface FeedItem {
   id: string;
   category: FeedCategory;
@@ -26,6 +32,10 @@ export interface FeedItem {
   imageKind?: 'content' | 'source_avatar' | null;
   imageAttribution?: string | null;
   sourceName?: string | null;
+  /** Present when the row came from a latest update. */
+  howWeGotHere?: string;
+  whatToWatch?: string;
+  sources?: FeedUpdateSource[];
 }
 
 export interface StorySummary {

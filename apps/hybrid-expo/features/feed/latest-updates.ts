@@ -2,6 +2,17 @@ import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-upd
 import { isFeedMocksEnabled } from './feed-mocks';
 
 /**
+ * App-layer latest update. `imageUrl` is read from the response until #670
+ * adds it to the shared type. Missing or unusable values stay null.
+ */
+export interface FeedLatestUpdate extends LatestUpdate {
+  imageUrl?: string | null;
+}
+
+/** Sample card image. A public https URL, the same hosts the live rows use. */
+export const SAMPLE_UPDATE_IMAGE_URL = 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png';
+
+/**
  * Mock switch for the Feed latest-update segment (issue #636).
  * Same rules as EXPO_PUBLIC_FEED_MOCKS: only "1", "true" and "on" turn it on.
  * The literal env read is what Expo inlines. Default is off, so an empty
@@ -20,7 +31,7 @@ export const LATEST_UPDATE_LOADING_GRACE_MS = 400;
 
 export interface LatestUpdatesPresentation {
   status: 'loading' | 'empty' | 'unavailable' | 'ready';
-  updates: LatestUpdate[];
+  updates: FeedLatestUpdate[];
   message: string | null;
   sample: boolean;
 }
@@ -43,7 +54,7 @@ const sampleSource = (
  * Sample rows for the mock flag. The older row is first on purpose, so a
  * newest-first sort is visible when the flag fills an empty route.
  */
-export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
+export const LATEST_UPDATE_SAMPLES: readonly FeedLatestUpdate[] = [
   {
     id: 'sample-federal-reserve',
     entitySlug: 'federal-reserve',
@@ -53,6 +64,7 @@ export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
     whatHappened: 'The latest minutes say most officials still expect another cut this year if inflation keeps easing.',
     howWeGotHere: 'The Fed has already cut twice this year and has been waiting on slower services inflation before moving again.',
     whatToWatch: 'The December meeting, and whether the next CPI print stays under 3 percent.',
+    imageUrl: null,
     sources: [
       sampleSource(
         'sample-fed-minutes',
@@ -72,6 +84,7 @@ export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
     whatHappened: 'US spot bitcoin ETFs took in about $640 million on Thursday, the third straight day of net inflows.',
     howWeGotHere: 'Flows had turned negative in late October, then flipped back after the price found support near $96,000.',
     whatToWatch: 'Whether inflows hold through Friday and the price stays above $100,000.',
+    imageUrl: SAMPLE_UPDATE_IMAGE_URL,
     sources: [
       sampleSource(
         'sample-btc-flows',
@@ -96,7 +109,7 @@ function publishedAtMs(iso: string): number {
 }
 
 /** Newest publishedAt first. A tie falls back to id, matching the Feed's stable order. */
-export function sortLatestUpdatesNewestFirst(updates: readonly LatestUpdate[]): LatestUpdate[] {
+export function sortLatestUpdatesNewestFirst<T extends LatestUpdate>(updates: readonly T[]): T[] {
   return [...updates].sort((a, b) => (
     publishedAtMs(b.publishedAt) - publishedAtMs(a.publishedAt) || b.id.localeCompare(a.id)
   ));
@@ -126,7 +139,7 @@ export function latestUpdateTime(iso: string, now: Date): string {
  * Real rows always win over the sample.
  */
 export function presentLatestUpdates(
-  data: readonly LatestUpdate[] | null,
+  data: readonly FeedLatestUpdate[] | null,
   error: string | null,
   mocksEnabled: boolean,
 ): LatestUpdatesPresentation {
