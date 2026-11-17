@@ -1,12 +1,12 @@
 /**
  * The editor: one model call per entity, GLM glm-5.3-flash, temperature 0, strict JSON out. The POC prompt
- * (#612) is the base; it now carries bars (a), (c) and (d) and says hold is the default. The model only
+ * (#612) is the base; it now carries bars (a), (c) and (d), the repeat and time-word rules (#671), and says hold is the default. The model only
  * proposes: the write bar in checks.ts decides.
  */
 import type { Llm } from './clients.js';
 import type { Bundle, Claim, EditorOutcome, Item, ModelDecision, Signal } from './types.js';
 
-export const EDITOR_VERSION = 'latest-updates-v1';
+export const EDITOR_VERSION = 'latest-updates-v2';
 
 export const SYSTEM_PROMPT = `You are the Catch-up editor for MyBoon.
 
@@ -36,6 +36,12 @@ For write, draft a short latest update with:
 Aim for about 90-140 words across the three parts. Use concrete numbers only when they appear in the supplied items or their linked origin signals. Do not invent facts or numbers. Do not promise an edge. Do not give trading, investment, or any other advice. Do not overstate causality.
 
 If a last update is supplied, compare the new items with it and the earlier items before choosing write. If it already covers the new items, choose skip.
+
+Do not restate the last card. how_we_got_here and what_to_watch must be new: if they would only repeat the last card's how_we_got_here or what_to_watch, choose hold.
+
+The current time is given as NOW. Relative time words (today, yesterday, this morning, tonight, this week, "Monday's session" and the like) must be correct for NOW given the item timestamps. If a named session or day has already closed, do not write as if it is still in progress. Prefer a correct absolute date, or hold.
+
+what_to_watch must be tied to a fact in the new items or their origin signals: a date, level or decision those items actually support. Do not recycle a leftover watch line from the last card.
 
 Return strict JSON only, no markdown outside a JSON object:
 
@@ -67,7 +73,23 @@ export function buildUserMessage(bundle: Bundle): string {
       `numbers: ${s.numbers == null ? '{}' : JSON.stringify(s.numbers)}`,
     ].join('\n');
   const last = bundle.last_update;
+  const lastLines = !last
+    ? ['no earlier item']
+    : last.kind === 'published'
+      ? [
+          `id: ${last.id}`,
+          `date: ${last.date ?? 'unknown'}`,
+          `title: ${last.card.title}`,
+          `what_happened: ${last.card.what_happened}`,
+          `how_we_got_here: ${last.card.how_we_got_here}`,
+          `what_to_watch: ${last.card.what_to_watch}`,
+        ]
+      : [`id: ${last.id}`, `date: ${last.date ?? 'unknown'}`, `text: ${last.text}`];
   return [
+    'NOW:',
+    `utc: ${bundle.now}`,
+    `ist: ${istLabel(bundle.now)}`,
+    '',
     'ENTITY:',
     `name: ${bundle.entity.name}`,
     `slug: ${bundle.entity.slug}`,
@@ -84,8 +106,19 @@ export function buildUserMessage(bundle: Bundle): string {
     bundle.origin_signals.length ? bundle.origin_signals.map(signal).join('\n\n') : '(none)',
     '',
     last ? `LAST UPDATE (${last.kind === 'published' ? 'what we last published' : 'newest earlier item'}):` : 'LAST UPDATE:',
-    last ? [`id: ${last.id}`, `date: ${last.date ?? 'unknown'}`, `text: ${last.text}`].join('\n') : 'no earlier item',
+    lastLines.join('\n'),
   ].join('\n');
+}
+
+/** "2026-11-17 10:37 IST (Asia/Kolkata), Tuesday" for an ISO instant; the input back if it does not parse. */
+export function istLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'long',
+  }).formatToParts(d);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')} IST (Asia/Kolkata), ${get('weekday')}`;
 }
 
 export function parseJsonReply(raw: string): Record<string, unknown> {

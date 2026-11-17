@@ -6,7 +6,7 @@ Every 30 minutes, for each entity with a fresh item, the job asks one question: 
 flowchart LR
   EI["entity_items (occurred_at window)"] --> EL{"newest item has no final decision?"}
   EL -->|"yes, oldest first, capped"| ED["editor: GLM glm-5.3-flash, temp 0, strict JSON"]
-  ED --> BAR{"write bar a to d, in code"}
+  ED --> BAR{"write bar a to f, in code"}
   BAR -->|pass| W["insert run + update + items (visibility from env)"]
   BAR -->|fail| H["hold run row, failed checks listed"]
   ED -->|"model hold / skip"| HS["hold or skip run row"]
@@ -26,17 +26,20 @@ flowchart LR
 | **One transaction per entity** (run row, and for a write the update and its items). A kill loses at most the entity in flight and never leaves half-written rows. A per-entity advisory lock stops two runs publishing the same entity at once. | `record()` |
 | **Visibility is set at insert** from `LATEST_UPDATES_VISIBILITY` (`dark` default, or `live`). A bad value stops the run; it never falls back to `live`. The worker has no UPDATE grant. | `config.ts`, `runner.ts` |
 | **Last update.** The entity's newest `latest_updates` row (dark or live) is "what we last published"; with none, the newest earlier item stands in. Items already linked to the last update are not "new" again. | `store.ts` `loadBundle` |
+| **Prompt inputs (#671).** The user message opens with the run's `now` in UTC and IST (Asia/Kolkata). A published or dark last card is shown as labelled fields (title, what_happened, how_we_got_here, what_to_watch, date); an earlier-item stand-in keeps the joined `text`. `now` is on the in-memory `Bundle` (set by `loadBundle`), not in the schema. Rows carry `editor_version` `latest-updates-v2`. | `editor.ts` `buildUserMessage`, `store.ts` |
 
-## Write bar (all four, in code; otherwise hold)
+## Write bar (all six, in code; otherwise hold)
 
 | | Check | How |
 |---|---|---|
 | a | **Novelty backstop.** `what_happened` holds a number, calendar date or named actor that is in the new items and not in the last update's text. | `checks.ts` `checkNovelty`. Numbers: the #612 tokens (years and dates masked). Dates: `Dec 10`, `10 December`, ISO. Actors: ALL-CAPS tickers and acronyms anywhere, and capitalised words that are not at the start of a sentence, minus a small stop list. |
 | b | **Trace.** Every claim cites a supplied item id or origin signal id; every number in the draft appears in a supplied source (new items, earlier items, signals, the last update). | `checks.ts` (the #612 check, kept) |
-| c | **`what_to_watch` is concrete:** a date, a price level or a decision. | `checks.ts` `checkWatch`. Date: month and day, ISO, numeric, a month name, Q1-Q4, H1/H2, FY, a weekday. Level: `$` amounts, k/m/b, comma-grouped, 4+ digit numbers (not years), percentages. Decision words: decision, vote, ruling, verdict, approval, deadline, hearing, meeting, FOMC, earnings, auction, election, summit, expiry, launch, filing. |
+| c | **`what_to_watch` is concrete:** a date, a price level or a decision. | `checks.ts` `checkWatch`. Date: month and day, ISO, numeric, a month name, Q1-Q4, H1/H2, FY, a weekday. Level: `$` amounts, k/m/b, comma-grouped, 4+ digit numbers (not years), percentages. Decision words: decision, vote, ruling, verdict, approval, deadline, hearing, meeting, FOMC, earnings, auction, election, summit, expiry, launch, filing. **Tied to the new news (#671):** at least one concrete key in the watch line (number, date, actor, weekday or decision word) must also be in the new items or their origin signals; the entity's own name does not count, so a line whose only concrete tokens come from the last card or earlier items fails `watch`. |
 | d | **Period consistency.** Patterns: month names (full and 3-letter, optional year), Q1-Q4, H1/H2, FY25/FY2026. Held when the draft names a period no supplied source names; or the new sources give different periods for an indicator the draft mentions ("September CPI" vs "October CPI"); or the draft pairs a period with an indicator that the new sources name only for other periods. A figure the sources confirm ("September CPI, released in October") is not held. | `periods.ts`. A month inside a calendar date (`Dec 10`) is a date, not a period. `May` counts only after a preposition or before a year. `what_to_watch` is not checked for periods (it names the future; bar c covers it). |
+| e | **`repeat_previous` (#671).** Only with a published or dark last card. `how_we_got_here` and `what_to_watch` are each compared with the last card's: held if one line contains the other (shorter side 8+ words or 40+ chars, lowercased, whitespace collapsed) or word Jaccard (stop words out) is at least 0.7. A line over 0.7 that adds a number, date or decision word from the new items that the last card's line lacks still passes. | `checks.ts` `checkRepeatPrevious` |
+| f | **`stale_timeframe` (#671).** Relative time words anywhere in the draft must be true at `now`. "Monday's session / open / close" (Mon-Fri, optional "trading"/"cash"/"regular") is the most recent such weekday's 09:30-16:00 America/New_York session and is held once closed ("next Monday's open" is exempt). today / this morning / this afternoon / tonight need a new item on now's IST day; yesterday the IST day before; this week a new item in now's ISO week (IST). Item time is `occurred_at`, else `created_at`. The bar never rewrites prose. | `timeframe.ts` |
 
-These are heuristics. The eval set is where they are tested.
+These are heuristics. The eval set is where they are tested. A failed bar writes `hold` with reason `write bar failed: <checks>` (for example `write bar failed: repeat_previous, stale_timeframe`) and the rows in `check_failures`.
 
 ## Environment (names only; never values)
 

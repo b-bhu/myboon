@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { askEditor, buildUserMessage, parseModelReply, SYSTEM_PROMPT } from './editor.js';
-import { bundle, item, passingCase } from './fixtures.js';
+import { askEditor, buildUserMessage, EDITOR_VERSION, parseModelReply, SYSTEM_PROMPT } from './editor.js';
+import { bundle, item, passingCase, publishedLast } from './fixtures.js';
 
 const WRITE = {
   decision: 'write', reason: 'new number', title: 'T', what_happened: 'W', how_we_got_here: 'H', what_to_watch: 'Dec 10',
@@ -64,13 +64,37 @@ describe('the prompt', () => {
     expect(SYSTEM_PROMPT).toMatch(/\(d\) any month, quarter, half-year or fiscal year/);
     expect(SYSTEM_PROMPT).toMatch(/Catch-up editor/);
   });
-  it('the user message lists new items, earlier items, signals and the last update', () => {
+  it('carries the #671 rules: no restating the last card, time words true for NOW, watch tied to the new items', () => {
+    expect(SYSTEM_PROMPT).toMatch(/Do not restate the last card\. how_we_got_here and what_to_watch must be new/);
+    expect(SYSTEM_PROMPT).toMatch(/Relative time words .* must be correct for NOW/);
+    expect(SYSTEM_PROMPT).toMatch(/If a named session or day has already closed, do not write as if it is still in progress/);
+    expect(SYSTEM_PROMPT).toMatch(/what_to_watch must be tied to a fact in the new items or their origin signals/);
+    expect(EDITOR_VERSION).toBe('latest-updates-v2');
+  });
+  it('the user message lists new items, earlier items, signals and the last card as labelled fields', () => {
     const a = item({ title: 'New thing', summary: 'sum' });
     const e = item({ title: 'Earlier thing' });
-    const msg = buildUserMessage(bundle({ new_items: [a], prior_items: [e, a], last_update: { kind: 'published', id: 'u1', title: 'H', date: '2026-11-13T00:00:00Z', text: 'H\nbody' } }));
+    const last = publishedLast(
+      { title: 'H', what_happened: 'WH body', how_we_got_here: 'HWGH body', what_to_watch: 'WTW body' },
+      { id: 'u1', date: '2026-11-13T00:00:00Z' },
+    );
+    const msg = buildUserMessage(bundle({ new_items: [a], prior_items: [e, a], last_update: last }));
     expect(msg).toContain(`id: ${a.id}`);
     expect(msg).toContain('Earlier thing');
     expect(msg.match(new RegExp(`id: ${a.id}`, 'g'))).toHaveLength(1);
-    expect(msg).toContain('LAST UPDATE (what we last published):');
+    expect(msg).toContain(['LAST UPDATE (what we last published):', 'id: u1', 'date: 2026-11-13T00:00:00Z', 'title: H',
+      'what_happened: WH body', 'how_we_got_here: HWGH body', 'what_to_watch: WTW body'].join('\n'));
+    expect(msg).not.toContain('text: H');
+  });
+  it('states the run clock in UTC and IST, and keeps each item occurred_at', () => {
+    const a = item({ title: 'New thing', occurred_at: '2026-11-17T03:00:00.000Z' });
+    const msg = buildUserMessage(bundle({ new_items: [a], now: '2026-11-17T05:07:00.000Z' }));
+    expect(msg.startsWith('NOW:\nutc: 2026-11-17T05:07:00.000Z\nist: 2026-11-17 10:37 IST (Asia/Kolkata), Tuesday\n')).toBe(true);
+    expect(msg).toContain('occurred_at: 2026-11-17T03:00:00.000Z');
+  });
+  it('an earlier item stand-in keeps the old text fallback', () => {
+    const a = item({ title: 'New thing' });
+    const msg = buildUserMessage(bundle({ new_items: [a], last_update: { kind: 'earlier_item', id: 'e1', title: 'E', date: null, text: 'E\nolder body' } }));
+    expect(msg).toContain('LAST UPDATE (newest earlier item):\nid: e1\ndate: unknown\ntext: E\nolder body');
   });
 });

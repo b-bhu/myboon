@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { CANDIDATES_SQL } from './store.js';
 
 const SRC = fileURLToPath(new URL('.', import.meta.url));
-const RUNTIME = ['store.ts', 'runner.ts', 'entry.ts', 'run.ts', 'config.ts', 'editor.ts', 'checks.ts', 'periods.ts', 'text.ts', 'clients.ts', 'types.ts'];
+const RUNTIME = ['store.ts', 'runner.ts', 'entry.ts', 'run.ts', 'config.ts', 'editor.ts', 'checks.ts', 'periods.ts', 'timeframe.ts', 'text.ts', 'clients.ts', 'types.ts'];
 const read = (f: string) => readFileSync(`${SRC}${f}`, 'utf8');
 
 describe('the runner has no window override and only ever reads occurred_at for the window', () => {
