@@ -74,6 +74,21 @@ export function parseJsonReply(raw: string): Record<string, unknown> {
 
 const s = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 
+export const MAX_TITLE_CHARS = 90;
+
+/**
+ * Fit a model-written title into MAX_TITLE_CHARS instead of failing the row (#621: about 2% of rows ran a few
+ * characters over). Cuts at the last word boundary that fits and drops dangling punctuation; a single word longer
+ * than the limit is hard-cut.
+ */
+export function clampTitle(title: string): string {
+  if (title.length <= MAX_TITLE_CHARS) return title;
+  const head = title.slice(0, MAX_TITLE_CHARS + 1);
+  const cut = head.lastIndexOf(' ');
+  const base = cut > 0 ? head.slice(0, cut) : title.slice(0, MAX_TITLE_CHARS);
+  return base.replace(/[\s,;:\-–—]+$/u, '').trimEnd() || title.slice(0, MAX_TITLE_CHARS);
+}
+
 /**
  * Validate a decision. Jev's choice (when present) wins over the chat model's.
  * Throws on anything unusable, which the worker turns into em_fail.
@@ -89,9 +104,9 @@ export function validateDecision(reply: Record<string, unknown>, items: RecentIt
     return { decision, reason, duplicate_of: dup };
   }
   if (decision === 'story') {
-    const title = s(reply.title);
+    const title = clampTitle(s(reply.title));
     const summary = s(reply.summary);
-    if (!title || title.length > 90) throw new Error(`story title must be 1-90 chars (got ${title.length})`);
+    if (!title) throw new Error('story title is missing');
     if (!summary) throw new Error('story summary is missing');
     return { decision, reason, title, summary };
   }
