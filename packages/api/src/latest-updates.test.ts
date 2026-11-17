@@ -507,13 +507,29 @@ test('imageUrl: newest item has no image or an invalid one, an older valid image
     const { body } = await get(routes(fakeRest(db).fetchImpl))
     assert.equal(body.updates[0]!.imageUrl, IMG_OLD, `newest image ${String(badNewest).slice(0, 30)}`)
   }
+  // #678: the newest image is valid but its source link is a blocked Lookonchain domain; the older
+  // non-blocked image is used, and sources stay as they were.
+  for (const link of ['https://lookonchain.com/t/en/1', 'https://www.lookonchain.com/t/en/1']) {
+    const db = emptyDb()
+    seedBasics(db)
+    const itemOld = uuid()
+    const itemNew = uuid()
+    addItem(db, itemOld, 'Older', '2026-11-10T10:00:00+00:00', SIGNAL_1, IMG_OLD)
+    addItem(db, itemNew, 'Newer', '2026-11-10T14:00:00+00:00', SIGNAL_2, IMG_NEW)
+    db.signals.find((row) => row.signal_id === SIGNAL_2)!.link = link
+    addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', [itemNew, itemOld])
+    const { body } = await get(routes(fakeRest(db).fetchImpl))
+    assert.equal(body.updates[0]!.imageUrl, IMG_OLD, `blocked source ${link}`)
+    assert.deepEqual(body.updates[0]!.sources.map((source) => source.itemId), [itemNew, itemOld])
+  }
 })
 
 test('imageUrl: no linked image, or only invalid ones, gives null and leaves every other field unchanged', async () => {
-  const build = (images: Array<string | null>) => {
+  const build = (images: Array<string | null>, link?: string) => {
     counter = 1000
     const db = emptyDb()
     seedBasics(db)
+    if (link) db.signals.find((row) => row.signal_id === SIGNAL_1)!.link = link
     const ids = images.map(() => uuid())
     images.forEach((image, i) => addItem(db, ids[i]!, `Item ${i}`, `2026-11-10T1${i}:00:00+00:00`, SIGNAL_1, image))
     addUpdate(db, ENTITY_A, 'live', '2026-11-14T01:00:00+00:00', ids)
@@ -522,12 +538,23 @@ test('imageUrl: no linked image, or only invalid ones, gives null and leaves eve
   const withNone = (await get(routes(fakeRest(build([null, null])).fetchImpl))).body.updates[0]!
   const withBad = (await get(routes(fakeRest(build(['http://example.com/a.png', `https://e.com/${'y'.repeat(2050)}`])).fetchImpl))).body.updates[0]!
   const withGood = (await get(routes(fakeRest(build([null, IMG_NEW])).fetchImpl))).body.updates[0]!
+  // #678: only blocked images exist; the card gets no image, and only the image changes — sources
+  // keep pointing at the same items, even ones whose link is a blocked domain.
+  const withBlocked = (await get(routes(fakeRest(build([IMG_OLD, IMG_NEW], 'https://lookonchain.com/t/en/1')).fetchImpl))).body.updates[0]!
+  const withUnblocked = (await get(routes(fakeRest(build([IMG_OLD, IMG_NEW])).fetchImpl))).body.updates[0]!
   assert.equal(withNone.imageUrl, null)
   assert.equal(withBad.imageUrl, null)
   assert.equal(withGood.imageUrl, IMG_NEW)
+  assert.equal(withBlocked.imageUrl, null)
+  assert.equal(withUnblocked.imageUrl, IMG_NEW)
   const { imageUrl: _a, ...restNone } = withNone
   const { imageUrl: _b, ...restGood } = withGood
+  const { imageUrl: _c, sources: blockedSources, ...restBlocked } = withBlocked
+  const { imageUrl: _d, sources: unblockedSources, ...restUnblocked } = withUnblocked
   assert.deepEqual(restNone, restGood)
+  assert.deepEqual(restBlocked, restUnblocked)
+  assert.deepEqual(blockedSources.map((source) => source.itemId), unblockedSources.map((source) => source.itemId))
+  assert.deepEqual(blockedSources.map((source) => source.link), ['https://lookonchain.com/t/en/1', 'https://lookonchain.com/t/en/1'])
 })
 
 test('imageUrl: an update with no linked items gives null', async () => {
@@ -544,8 +571,26 @@ test('pickImageUrl: newest by occurred_at, ties go to the higher id; safeImageUr
   const b = '01a1d000-0000-7000-8000-00000000000b'
   const t = '2026-11-10T10:00:00+00:00'
   assert.equal(pickImageUrl([]), null)
-  assert.equal(pickImageUrl([{ itemId: a, occurredAt: t, imageUrl: IMG_OLD }, { itemId: b, occurredAt: t, imageUrl: IMG_NEW }]), IMG_NEW)
-  assert.equal(pickImageUrl([{ itemId: b, occurredAt: t, imageUrl: IMG_NEW }, { itemId: a, occurredAt: '2026-11-10T11:00:00+00:00', imageUrl: IMG_OLD }]), IMG_OLD)
+  assert.equal(pickImageUrl([
+    { itemId: a, occurredAt: t, imageUrl: IMG_OLD, sourceLink: null },
+    { itemId: b, occurredAt: t, imageUrl: IMG_NEW, sourceLink: null },
+  ]), IMG_NEW)
+  assert.equal(pickImageUrl([
+    { itemId: b, occurredAt: t, imageUrl: IMG_NEW, sourceLink: null },
+    { itemId: a, occurredAt: '2026-11-10T11:00:00+00:00', imageUrl: IMG_OLD, sourceLink: null },
+  ]), IMG_OLD)
+  // #678: the source link is what is matched, never the image URL (Lookonchain logos are hosted on
+  // CoinGecko alongside real images), so the CoinGecko image from a non-Lookonchain item is kept.
+  assert.equal(pickImageUrl([
+    { itemId: a, occurredAt: t, imageUrl: IMG_NEW, sourceLink: 'https://lookonchain.com/t/en/1' },
+    { itemId: b, occurredAt: t, imageUrl: IMG_OLD, sourceLink: 'https://example.com/old' },
+  ]), IMG_OLD)
+  assert.equal(pickImageUrl([
+    { itemId: a, occurredAt: t, imageUrl: IMG_NEW, sourceLink: 'https://www.lookonchain.com/t/en/1' },
+  ]), null)
+  for (const kept of [null, 'not a url', 'https://notlookonchain.com/t/en/1', 'https://lookonchain.com.evil.example/t/en/1']) {
+    assert.equal(pickImageUrl([{ itemId: a, occurredAt: t, imageUrl: IMG_NEW, sourceLink: kept }]), IMG_NEW, `source ${String(kept)}`)
+  }
   const exact = `https://e.com/${'z'.repeat(2048 - 'https://e.com/'.length)}`
   assert.equal(exact.length, 2048)
   assert.equal(safeImageUrl(exact), exact)
