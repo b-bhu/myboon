@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Spike for #617, not a workspace package. Run with node >= 22.6 and --experimental-strip-types (no install).",
+  "engines": { "node": ">=22.6" }
+}
