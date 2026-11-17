@@ -28,6 +28,13 @@ export interface LatestUpdate {
   howWeGotHere: string
   whatToWatch: string
   sources: LatestUpdateSource[]
+  /**
+   * Card image (#670): the `image_url` of the newest linked `atlas.entity_items` row that has a
+   * usable one (newest by `occurred_at`, ties by id). Only `https://` URLs of at most 2048
+   * characters; otherwise `null`. `GET /latest-updates` always sends it; it is optional here so
+   * older fixtures and mocks still type-check.
+   */
+  imageUrl?: string | null
   /** ISO-8601 publish time. */
   publishedAt: string
 }
