@@ -28,6 +28,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const SIGNAL_ID_RE = /^[0-9a-f]{64}$/i
 // Same rule as the entity manager's signalImage() (packages/entity-manager/src/decide.ts).
 const IMAGE_URL_MAX_CHARS = 2048
+// #678: source domains whose linked items only ever carry a logo as the image (every Lookonchain
+// item with an image has the Lookonchain logo). pickImageUrl() skips those images by matching the
+// item's source-link hostname, never the image URL (Lookonchain logos are hosted on CoinGecko
+// alongside real images).
+const BLOCKED_IMAGE_SOURCE_DOMAINS = ['lookonchain.com']
 
 const UPDATE_SELECT = 'id,entity_id,headline,what_happened,how_we_got_here,what_to_watch,published_at,visibility'
 
@@ -206,25 +211,33 @@ export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono
       }
     }
 
+    // One origin link per item, shared by `sources` and `linkedItems` (#678): item_signals
+    // role=origin first (stable order), else the item's own signal. Null when no candidate has a
+    // usable link in `links`.
+    const originLink = (itemId: string, itemSignalId: string | null): string | null => {
+      const candidates = [...(originSignalIds.get(itemId) ?? []).sort(), ...(itemSignalId ? [itemSignalId] : [])]
+      return candidates.map((id) => links.get(id)).find((value): value is string => value !== undefined) ?? null
+    }
     const out: LatestUpdate[] = []
     for (const update of updates) {
       const entity = entities.get(update.entityId)
       if (!entity) continue
+      const updateItemIds = [...new Set(itemIdsByUpdate.get(update.id) ?? [])]
       const sources: LatestUpdateSource[] = []
-      for (const itemId of new Set(itemIdsByUpdate.get(update.id) ?? [])) {
+      for (const itemId of updateItemIds) {
         const item = items.get(itemId)
         if (!item) continue
-        // The origin signal link: item_signals role=origin first (stable order), else the item's own signal.
-        const candidates = [...(originSignalIds.get(itemId) ?? []).sort(), ...(item.signalId ? [item.signalId] : [])]
-        const link = candidates.map((id) => links.get(id)).find((value): value is string => value !== undefined)
+        const link = originLink(itemId, item.signalId)
         if (!link) continue
         sources.push({ itemId, title: item.title, link, occurredAt: item.occurredAt })
       }
       sources.sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0))
-      const linkedItems = [...new Set(itemIdsByUpdate.get(update.id) ?? [])]
+      const linkedItems = updateItemIds
         .flatMap((itemId) => {
           const item = items.get(itemId)
-          return item ? [{ itemId, occurredAt: item.occurredAt, imageUrl: item.imageUrl }] : []
+          return item
+            ? [{ itemId, occurredAt: item.occurredAt, imageUrl: item.imageUrl, sourceLink: originLink(itemId, item.signalId) }]
+            : []
         })
       out.push({
         id: update.id,
@@ -276,11 +289,18 @@ function validUpdate(row: UpdateRow): ValidUpdate | null {
 /**
  * The card image (#670): the newest linked item (by occurred_at, ties by the higher id) that has a
  * usable image, else null. Uses every linked item, including one whose source link was dropped.
+ * Images whose item's source link hostname is a blocked domain (#678) are skipped, so the newest
+ * valid image from an unblocked source wins; if none is left, the card has no image.
  */
-export function pickImageUrl(linked: Array<{ itemId: string, occurredAt: string, imageUrl: string | null }>): string | null {
+export function pickImageUrl(
+  linked: Array<{ itemId: string, occurredAt: string, imageUrl: string | null, sourceLink: string | null }>,
+): string | null {
   const newestFirst = [...linked].sort((a, b) =>
     Date.parse(b.occurredAt) - Date.parse(a.occurredAt) || (a.itemId < b.itemId ? 1 : a.itemId > b.itemId ? -1 : 0))
-  return newestFirst.map((item) => safeImageUrl(item.imageUrl)).find((url): url is string => url !== null) ?? null
+  return newestFirst
+    .filter((item) => !isBlockedImageSource(item.sourceLink))
+    .map((item) => safeImageUrl(item.imageUrl))
+    .find((url): url is string => url !== null) ?? null
 }
 
 /** `https://` and at most 2048 characters, else null: the same rule as signalImage() upstream. */
@@ -288,6 +308,19 @@ export function safeImageUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const url = value.trim()
   return url.startsWith('https://') && url.length <= IMAGE_URL_MAX_CHARS ? url : null
+}
+
+/** #678: true when the source link's hostname is a blocked domain or a subdomain of one. A missing
+ * or unparsable link counts as not blocked. */
+function isBlockedImageSource(sourceLink: unknown): boolean {
+  if (typeof sourceLink !== 'string' || !sourceLink.trim()) return false
+  try {
+    const hostname = new URL(sourceLink.trim()).hostname
+    return BLOCKED_IMAGE_SOURCE_DOMAINS.includes(hostname)
+      || BLOCKED_IMAGE_SOURCE_DOMAINS.some((domain) => hostname.endsWith(`.${domain}`))
+  } catch {
+    return false
+  }
 }
 
 function isUuid(value: unknown): value is string {
