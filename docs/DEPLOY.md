@@ -15,18 +15,15 @@ absent from the list).
 | `myboon-polymarket-data-engineer` | `packages/collectors` | Polymarket markets Data Engineer |
 | `myboon-news-feed-ingestor` | `packages/collectors` | Structured article/social collection every 10 minutes |
 | `myboon-feed-v3-research` | `packages/collectors` | Shared News + Polymarket Research worker |
-| `myboon-editor-draft` | `packages/collectors` | Entity Memory to Editor Draft |
-| `myboon-publisher` | `packages/collectors` | Generic Editor Draft Publisher |
 | `myboon-feed-v3-entity-manager` | `packages/collectors` | no longer a live worker (still declared in the tracked file) |
 
-`myboon-editor-draft` and `myboon-publisher` remain registered, each with
-`autorestart: true`, even if they are currently stopped. Retiring them is a
-separate issue.
+The legacy `myboon-editor-draft` and `myboon-publisher` apps were retired in
+[#638](https://github.com/b-bhu/myboon/issues/638): their entries and code are
+gone, and latest updates (`myboon-latest-updates`) replace them.
 
 `myboon-feed-v3-entity-manager` is no longer a live process, but its app block
 is still declared in the tracked ecosystem file, so a plain `pm2 start` or
-`pm2 restart` of `ecosystem.config.cjs` would revive it — together with the
-stopped publisher and editor-draft registrations. That is why every PM2
+`pm2 restart` of `ecosystem.config.cjs` would revive it. That is why every PM2
 command in this guide uses `--only`: never start or restart the ecosystem file
 without `--only`.
 
@@ -50,8 +47,7 @@ The orphan sweeper, entity-catalogue maintenance and classification-shadow servi
 PM2 is the source of truth for VPS runtime. `infra/vps/systemd/*` is deprecated and should not be installed for the current Feed pipeline.
 
 Note: `packages/collectors/src/polymarket/run-editor.ts` and `run-publisher.ts`
-(the research-row editor/publisher lane) are intentionally NOT in PM2. The
-production path is researcher → entity-manager → editor-draft → publisher.
+(the research-row editor/publisher lane) are intentionally NOT in PM2.
 
 ---
 
@@ -151,14 +147,14 @@ LATEST_UPDATES_ENABLED=false MYBOON_V4_RUNTIME_ENABLED=1 pm2 restart ecosystem.c
 ```
 
 A plain `pm2 start` or `pm2 restart` of `ecosystem.config.cjs` without
-`--only` would also revive the legacy registrations (`myboon-feed-v3-entity-manager`,
-and the stopped publisher and editor-draft); always use `--only`.
+`--only` would also revive the legacy `myboon-feed-v3-entity-manager`
+registration; always use `--only`.
 
 ---
 
 ## Hermes CLI prerequisite
 
-The shared Research worker, shared Entity worker, and editor-draft can shell
+The shared Research worker and shared Entity worker can shell
 out to the `hermes` CLI. The two scouts do not use Hermes. Before starting PM2
 the box needs:
 
@@ -166,7 +162,7 @@ the box needs:
 # hermes installed, on PATH, and authenticated
 hermes --version
 
-# one-shot structured mode (gate, extractor, editor-draft)
+# one-shot structured mode (gate, extractor)
 hermes --ignore-rules -z 'Return exactly this JSON: {"ok": true}'
 
 # chat/tool mode with page reading (news research AND the research engine)
@@ -321,7 +317,7 @@ packages/collectors/.data/news.sqlite     # news candidates/dedupe/research/queu
 - News Entity Manager reads research packets from `news.sqlite` and writes only
   final `entities` and `entity_memories` records to Supabase.
 - Supabase product tables remain available to the app/API, including `entities`,
-  `entity_memories`, `published_narratives`, and `entity_published_history`.
+  `entity_memories`, and `entity_published_history`.
 - Migration `20260818145731_drop_retired_pipeline_tables.sql` removes the retired
   Supabase news, Polymarket working-state, and editor-draft tables. It does not
   touch either local SQLite file or any durable entity/publishing table.
@@ -518,8 +514,8 @@ Contract notes:
    `packages/collectors/.env`). Do not hardcode an active mode in the
    ecosystem file.
 4. Remove only the four retired registrations, then reload the two scouts and
-   two shared owners from the reviewed ecosystem. This leaves API, editor,
-   publisher, sweeper, and unrelated PM2 apps untouched:
+   two shared owners from the reviewed ecosystem. This leaves API, sweeper,
+   and unrelated PM2 apps untouched:
    ```bash
    pm2 delete myboon-news-researcher 2>/dev/null || true
    pm2 delete myboon-polymarket-researcher 2>/dev/null || true
@@ -539,8 +535,7 @@ Contract notes:
    - clean ownership: `pm2 list` contains none of
      `myboon-news-researcher`, `myboon-polymarket-researcher`,
      `myboon-news-entity-manager`, or `myboon-polymarket-entity-manager`;
-   - API, publisher, and editor unchanged: `myboon-api`, `myboon-publisher`,
-     and `myboon-editor-draft` remain online with no config change;
+   - API unchanged: `myboon-api` remains online with no config change;
    - source-local queue progress: `pnpm --filter @myboon/collectors
      feed-v3:status` shows News and Polymarket arrivals/admissions advancing;
    - no duplicate claims/memories: `feed-v3:status` reports zero duplicate
@@ -1233,8 +1228,6 @@ pm2 restart myboon-polymarket-data-engineer
 pm2 restart myboon-news-feed-ingestor
 pm2 restart myboon-feed-v3-research
 pm2 restart myboon-feed-v3-entity-manager
-pm2 restart myboon-editor-draft
-pm2 restart myboon-publisher
 
 # Stop everything
 pm2 stop all
@@ -1314,7 +1307,6 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 # HERMES_STRUCTURED_MAX_CONCURRENCY=4
 # HERMES_STRUCTURED_CONCURRENCY_LOCK_DIR=/tmp/myboon-hermes-structured-slots
 # Legacy HERMES_MAX_CONCURRENCY/HERMES_CONCURRENCY_LOCK_DIR are browser fallbacks
-# EDITOR_DRAFT_HERMES_TIMEOUT_MS=600000
 
 
 # --- Shared Feed V3 Research + Entity ---
@@ -1324,13 +1316,6 @@ NEWS_SQLITE_PATH=.data/news.sqlite
 POLYMARKET_MARKETS_RUN_ONCE=0
 NEWS_FEED_RUN_ONCE=0
 NEWS_FEED_INTERVAL_MS=600000
-EDITOR_DRAFT_RUN_ONCE=0
-EDITOR_DRAFT_INTERVAL_MS=3600000
-EDITOR_DRAFT_BATCH_SIZE=2
-PUBLISHER_RUN_ONCE=0
-PUBLISHER_INTERVAL_MS=300000
-PUBLISHER_BATCH_SIZE=10
-PUBLISHER_PREVIEW_ONLY=0
 ```
 
 ---

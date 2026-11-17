@@ -32,10 +32,6 @@
     "hyperliquid:collector": "tsx src/hyperliquid/run-collector.ts",
     "hyperliquid:collector:sqlite": "HYPERLIQUID_STORAGE=sqlite tsx src/hyperliquid/run-collector.ts",
     "hyperliquid:sqlite:inspect": "tsx src/hyperliquid/inspect-sqlite.ts",
-    "editor-draft": "tsx src/editor-draft/run.ts",
-    "editor-draft:preview": "tsx src/editor-draft/preview.ts",
-    "publisher": "tsx src/publisher/run.ts",
-    "publisher:preview": "tsx src/publisher/preview.ts",
     "x-desk": "tsx src/x-desk/run.ts",
     "x-desk:suggest": "tsx src/x-desk/run.ts",
     "x-desk:list": "tsx src/x-desk/list.ts",
@@ -59,8 +55,6 @@
     "test:researcher": "tsx --test src/polymarket/researcher.test.ts src/polymarket/egress-guards.test.ts",
     "test:hyperliquid": "tsx --test src/hyperliquid/*.test.ts",
     "test:entity-manager": "tsx --test src/entity-manager/*.test.ts",
-    "test:editor-draft": "tsx --test src/editor-draft/*.test.ts",
-    "test:publisher": "tsx --test src/publisher/*.test.ts",
     "test:x-desk": "tsx --test src/x-desk/*.test.ts",
     "test:inference-gateway": "tsx --test src/inference-gateway/*.test.ts",
     "test:signal-platform": "tsx --test src/signal-platform/*.test.ts src/signal-platform/adapters/*.test.ts",
@@ -88,9 +82,7 @@
     "feed-v3:verify-drain": "tsx src/signal-platform/run-verify-drain.ts",
     "lane-store:seed-watchlist": "tsx src/lane-store/run-seed-watchlist.ts",
     "lane-store:prune": "tsx src/lane-store/run-prune.ts",
-    "test:lane-store": "tsx --test src/lane-store/*.test.ts",
-    "catch-up-poc": "tsx src/catch-up-poc.ts",
-    "test:catch-up-poc": "tsx --test src/catch-up-poc.test.ts"
+    "test:lane-store": "tsx --test src/lane-store/*.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

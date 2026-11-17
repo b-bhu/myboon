@@ -3,6 +3,16 @@
 Status: current product and pipeline note (Feed V3 shared research and entity pipeline implemented)
 Scope: source-agnostic design for the myboon feed
 
+> **Superseded by latest updates.** The editor-draft and publisher stages
+> described below (and the `published_narratives` output they wrote) were
+> retired in [#638](https://github.com/b-bhu/myboon/issues/638). Feed cards now
+> come from the latest-updates job (`packages/latest-updates`,
+> [#623](https://github.com/b-bhu/myboon/issues/623)) and are served by
+> `GET /latest-updates`. The `/narratives` route and the `published_narratives`
+> table stay in place until the app has switched
+> ([#674](https://github.com/b-bhu/myboon/issues/674)). The editorial ideas
+> below still describe the product; the stage names are historical.
+
 ## What The Feed Is
 
 The myboon feed is the product's research and story layer. The intended user
