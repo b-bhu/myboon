@@ -3,7 +3,7 @@
 (function(){
 const cfg=window.PROTO_NOTES||{notes:[]},Q=new URLSearchParams(location.search),isProto=Q.has('proto'),embed=Q.has('embed');
 const esc=s=>String(s==null?'':s);
-if(embed&&window.parent!==window){
+if(embed){
  document.documentElement.classList.add('mb-embed');
  const st=document.createElement('style');
  st.textContent='html.mb-embed,html.mb-embed body{height:auto!important;min-height:0!important;background:#021821}'
@@ -11,6 +11,7 @@ if(embed&&window.parent!==window){
   +'html.mb-embed .stage{min-height:0!important;height:auto!important;justify-content:flex-start!important;padding:8px 0 16px!important}'
   +'html.mb-embed .phone,html.mb-embed .ap-ph,html.mb-embed #pp{height:844px!important}'
   +'html.mb-embed #ap{width:min(390px,100%);margin:0 auto}'
+  +'html.mb-embed .ap-tg{display:none!important}'
   +'html.mb-embed .nav>div,html.mb-embed nav.tabs>span{cursor:pointer}';
  document.head.appendChild(st);
  if(isProto){
@@ -82,7 +83,7 @@ if(embed&&window.parent!==window){
 const nav=document.createElement('nav');nav.className='pn-nav';
 const here=location.pathname.split('/').pop();
 nav.innerHTML=(cfg.pages||[]).map(([n,f])=>`<a href="${f}${isProto?'?proto':''}" class="${f===here?'on':''}">${n}</a>`).join('')+'<i></i>'+
- `<a href="${here}" class="${isProto?'':'on'}">Overview</a><a href="${here}?proto" class="${isProto?'on':''}">Prototype</a>`;
+ `<a href="${here}" class="${isProto?'':'on'}">Overview</a><a href="${here}?proto" class="${isProto?'on':''}">Screen</a>`;
 document.body.appendChild(nav);
 if(!isProto)return;
 document.querySelectorAll(cfg.phone||'.phone').forEach(ph=>{ph.querySelectorAll('.nav').forEach(n=>{if(getComputedStyle(n).position==='absolute'){n.parentElement.appendChild(n);Object.assign(n.style,{position:'sticky',bottom:'0',left:'auto',right:'auto',zIndex:20})}})});

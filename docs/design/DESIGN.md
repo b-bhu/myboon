@@ -4,9 +4,9 @@ Rules every screen follows. Change a rule here first, never ad hoc in code. Colo
 
 ## Where to review
 
-Open `index.html` in this folder. That file is the review entry for the design system and the application layouts.
+Open `language.html` in this folder. That file is the review entry for the design system and the application layouts. `index.html` is the reference hub: current screens, the demo, and the explorations.
 
-**Application layout** on that page shows Feed, Apps, Wallet, and Wallet Connect. Those are the existing files (`feed-mock.html`, `apps-mock.html`, `wallet-mock.html`, `wallet-connect/index.html`), embedded so Connect can be used without leaving the page. Opening a screen file directly still works. Do not add a new mock, variant, or HTML file for UX work here — edit the existing file. `web-landing-page/` is the landing mock and stays as it is.
+**Application layout** on that page shows Feed, Apps, Wallet, and Wallet Connect. Those are the existing files (`feed.html`, `apps.html`, `wallet.html`, `wallet-connect/index.html`), embedded so Connect can be used without leaving the page. Opening a screen file directly still works. Do not add a new screen, variant, or HTML file for UX work here — edit the existing file. `web-landing-page/` is the landing direction and stays as it is.
 
 ## Progress
 - [x] 1. Colour roles

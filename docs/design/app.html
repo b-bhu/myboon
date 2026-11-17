@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>🐴 myBoon · App</title>
+<style>
+:root{--screen:#031F2C;--ground:#063343;--lift:#0A4A60;--surface:#083D50;--border:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--gold:#E7B958}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--screen);color:var(--bone);font:15px/1.45 Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;overflow:hidden}
+header{position:fixed;inset:0 0 auto 0;height:52px;display:flex;align-items:center;gap:10px;padding:0 16px;border-bottom:1px solid var(--border);background:var(--screen);z-index:20}
+header img{height:20px;display:block}
+.brand{font-weight:600;font-size:14px}
+.sp{flex:1}
+.tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;max-width:60vw}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto;padding:7px 14px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--dim);font:600 13px/1 inherit;cursor:pointer}
+.tab[aria-selected="true"]{background:var(--bone);color:var(--screen);border-color:var(--bone)}
+#canvas{position:fixed;inset:52px 0 0 0;overflow:hidden;cursor:grab;touch-action:none;background-image:radial-gradient(rgba(143,178,192,.16) 1px,transparent 1px);background-size:26px 26px}
+#canvas.drag{cursor:grabbing}
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+#world.anim{transition:transform .5s cubic-bezier(.22,.8,.24,1)}
+.frame{position:absolute;top:0;width:390px;height:844px;border:1px solid var(--border);border-radius:28px;background:#02161F;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.frame.sel{border-color:var(--gold);box-shadow:0 24px 60px rgba(0,0,0,.45),0 0 0 1px rgba(231,185,88,.55)}
+.frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#031F2C}
+.lbl{position:absolute;top:0;cursor:pointer;color:var(--dim);font:600 13px/1 inherit;white-space:nowrap}
+.lbl b{color:var(--bone);margin-right:8px}
+.lbl.sel b{color:var(--gold)}
+.why{position:fixed;left:16px;bottom:16px;width:300px;border:1px solid var(--border);border-radius:16px;background:var(--ground);padding:16px 16px 14px;z-index:15;box-shadow:0 16px 40px rgba(0,0,0,.4)}
+.why .x{position:absolute;top:6px;right:10px;background:none;border:0;color:var(--dim);cursor:pointer;font-size:14px}
+.why .t{font-size:15px;margin:0;padding-right:14px}
+.why p{margin:8px 0 0;font-size:13px;color:var(--bone)}
+.why p.w{color:var(--dim);font-size:12px}
+.why .row{margin-top:12px;display:flex;gap:14px;flex-wrap:wrap}
+.why a{color:var(--gold);text-decoration:none;font-size:12px}
+.why.off{display:none}
+.zoom{position:fixed;right:16px;bottom:16px;display:flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;background:var(--ground);padding:4px;z-index:15}
+.zoom button{border:0;background:transparent;color:var(--dim);cursor:pointer;padding:6px 10px;border-radius:999px;font:600 13px/1 inherit;min-width:30px;min-height:30px}
+.zoom button:hover{color:var(--bone)}
+.zoom .pct{min-width:44px;text-align:center;color:var(--bone);font-size:12px;font-variant-numeric:tabular-nums}
+#catwrap{display:none;position:fixed;inset:52px 0 0 0;z-index:18;background:var(--screen)}
+#catwrap iframe{display:block;width:100%;height:100%;border:0;background:#031F2C}
+@media(max-width:760px){.why{width:calc(100vw - 32px)}.zoom{bottom:auto;top:62px;left:16px;right:auto}}
+</style>
+</head>
+<body>
+<header>
+  <img src="ref/wordmark.png" alt="myBoon">
+  <span class="brand">App</span>
+  <div class="sp"></div>
+  <nav class="tabs" role="tablist" aria-label="Screens">
+    <button class="tab" role="tab" aria-selected="true" data-s="feed">Feed</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="apps">Apps</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="wallet">Wallet</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="connect">Connect</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="landing">Web landing</button>
+    <button class="tab" role="tab" aria-selected="false" data-s="catalog">Catalog</button>
+  </nav>
+</header>
+
+<div id="canvas">
+  <div id="world"></div>
+</div>
+
+<aside class="why" id="why" aria-live="polite"><button class="x" id="whyx" title="Hide notes">×</button><div id="whyb"></div></aside>
+
+<div class="zoom">
+  <button id="zo" title="Zoom out">−</button>
+  <span class="pct" id="pct">100%</span>
+  <button id="zi" title="Zoom in">+</button>
+  <button id="zf" title="Fit selected screen">Fit</button>
+</div>
+
+<div id="catwrap"><iframe id="f-cat" data-src="language.html" title="Component catalog"></iframe></div>
+<div id="landwrap" style="display:none;position:fixed;inset:52px 0 0 0;z-index:18;background:#02161F"><iframe id="f-land" data-src="web-landing-page/index.html" title="Web landing"></iframe></div>
+
+<template id="frames">
+  <div class="lbl" data-s="feed" style="left:0"><b>Feed</b>running briefing</div>
+  <div class="frame" data-s="feed" style="left:0"><iframe src="feed.html?proto&amp;embed=1" title="Feed screen"></iframe></div>
+  <div class="lbl" data-s="apps" style="left:470px"><b>Apps</b>all venues</div>
+  <div class="frame" data-s="apps" style="left:470px"><iframe src="apps.html?proto&amp;embed=1" title="Apps screen"></iframe></div>
+  <div class="lbl" data-s="wallet" style="left:940px"><b>Wallet</b>holdings + move</div>
+  <div class="frame" data-s="wallet" style="left:940px"><iframe src="wallet.html?proto&amp;embed=1" title="Wallet screen"></iframe></div>
+  <div class="lbl" data-s="connect" style="left:1410px"><b>Connect</b>first run</div>
+  <div class="frame" data-s="connect" style="left:1410px"><iframe src="wallet-connect/index.html?embed=1" title="Connect screen"></iframe></div>
+</template>
+
+<script>
+var W=390,H=844,LBL=34;
+var FR=[{id:'feed',x:0,t:'Feed',p:'The running briefing. What is true in the last hours and where it is moving: lead story, developing story, markets now.',w:'Why: one glance should answer "what is going on right now". Taps lead to the story or the market behind it, never to a menu.',open:'feed.html?proto&embed=1'},
+{id:'apps',x:470,t:'Apps',p:'Every venue in one grid, grouped by what they do: Prediction, Perps, LP.',w:'Why: markets are read one app at a time; the grid keeps venues comparable and the tap path short.',open:'apps.html?proto&embed=1'},
+{id:'wallet',x:940,t:'Wallet',p:'Holdings and allocation, then the move flow: deposit, trade in pUSD, withdraw on Polygon.',w:'Why: Privy stays for auth and deposit. Orders settle in pUSD, so the local-currency figure is display only.',open:'wallet.html?proto&embed=1'},
+{id:'connect',x:1410,t:'Connect',p:'First run, before any holdings. Embedded wallet sign-in with Privy.',w:'Why: connect is a door, not its own product. Same keys as the wallet you land in.',open:'wallet-connect/index.html?embed=1'},
+{id:'catalog',t:'Component catalog',p:'Every component with its rules in one place: tokens, cards, buttons, the dark money card, One Tap rounds, the no-fake-data rule.',w:'Why: this is the file you tweak. The phone follows it.',open:'language.html'},
+{id:'landing',t:'Web landing',p:'The public web landing page: headline, live phone, waitlist.',w:'Why: the product promise the first ad click sees, built from the same screens as this prototype.',open:'web-landing-page/index.html'}];
+var world=document.getElementById('world'),canvas=document.getElementById('canvas'),why=document.getElementById('why'),whyb=document.getElementById('whyb');
+var catwrap=document.getElementById('catwrap'),cat=document.getElementById('f-cat'),pct=document.getElementById('pct');
+var cur='feed',tabs=[].slice.call(document.querySelectorAll('.tab')),v={x:0,y:0,z:1};
+[].slice.call(document.getElementById('frames').content.querySelectorAll('.lbl,.frame')).forEach(function(n){world.appendChild(n)});
+function apply(sm){world.classList.toggle('anim',!!sm);
+ world.style.transform='translate('+v.x+'px,'+v.y+'px) scale('+v.z+')';
+ canvas.style.backgroundPosition=(v.x%26)+'px '+(v.y%26)+'px';
+ pct.textContent=Math.round(v.z*100)+'%'}
+function fill(k){var s=null;FR.forEach(function(f){if(f.id===k)s=f});
+ whyb.innerHTML='<h2 class="t"></h2><p></p><p class="w"></p><div class="row"><a target="_blank" rel="noopener">Open full page ↗</a><a href="language.html" target="_blank" rel="noopener">Rules in catalog ↗</a></div>';
+ whyb.querySelector('.t').textContent=s.t;whyb.querySelector('p').textContent=s.p;whyb.querySelector('p.w').textContent=s.w;
+ whyb.querySelector('.row a').href=s.open}
+function select(k,sm){var s=null;FR.forEach(function(f){if(f.id===k)s=f});if(!s)return;
+ cur=k;fill(k);
+ tabs.forEach(function(b){b.setAttribute('aria-selected',String(b.dataset.s===k))});
+ [].slice.call(world.querySelectorAll('.frame,.lbl')).forEach(function(n){n.classList.toggle('sel',n.dataset.s===k)});
+ if(k==='catalog'||k==='landing'){
+  var wrap=document.getElementById(k==='catalog'?'catwrap':'landwrap'),fr=document.getElementById(k==='catalog'?'f-cat':'f-land');
+  catwrap.style.display=(k==='catalog'?'block':'none');document.getElementById('landwrap').style.display=(k==='landing'?'block':'none');
+  if(!fr.src)fr.src=fr.dataset.src;return}
+ catwrap.style.display='none';document.getElementById('landwrap').style.display='none';
+ if(history&&history.replaceState)history.replaceState(null,'','?s='+k);
+ var whyH=why.classList.contains('off')?0:(innerWidth>760?why.offsetHeight+24:0);
+ var vh=innerHeight-52-whyH,z=Math.min(1.15,Math.max(.35,(vh-LBL-40)/H));
+ v={z:z,x:(innerWidth-W*z)/2-s.x*z,y:52+Math.max(24,(innerHeight-52-H*z-LBL*0)/2)};apply(sm)}
+function zoomAt(cx,cy,f){var nz=Math.min(3,Math.max(.2,v.z*f));
+ if(cx==null){cx=innerWidth/2;cy=innerHeight/2}
+ v.x=cx-(cx-v.x)*(nz/v.z);v.y=cy-(cy-v.y)*(nz/v.z);v.z=nz;apply(false)}
+tabs.forEach(function(b){b.addEventListener('click',function(){select(b.dataset.s,true)})});
+[].slice.call(world.querySelectorAll('.lbl')).forEach(function(n){n.addEventListener('click',function(){select(n.dataset.s,true)})});
+addEventListener('keydown',function(e){if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;if(/INPUT|TEXTAREA/.test(e.target.tagName))return;
+ var n=tabs.map(function(b){return b.dataset.s});var i=Math.max(0,n.indexOf(cur));
+ select(n[(i+(e.key==='ArrowRight'?1:n.length-1))%n.length],true)});
+addEventListener('resize',function(){select(cur,false)});
+canvas.addEventListener('wheel',function(e){e.preventDefault();
+ if(e.ctrlKey||e.metaKey){var r=canvas.getBoundingClientRect();zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0016))}
+ else{applyAnim(false);v.x-=e.deltaX;v.y-=e.deltaY;apply(false)}},{passive:false});
+function applyAnim(){}
+var drag=null;
+canvas.addEventListener('pointerdown',function(e){if(e.target.closest('.lbl'))return;
+ drag={x:e.clientX,y:e.clientY,tx:v.x,ty:v.y};canvas.classList.add('drag');canvas.setPointerCapture(e.pointerId);world.classList.remove('anim')});
+canvas.addEventListener('pointermove',function(e){if(!drag)return;world.classList.remove('anim');
+ v.x=drag.tx+e.clientX-drag.x;v.y=drag.ty+e.clientY-drag.y;apply(false)});
+addEventListener('pointerup',function(){drag=null;canvas.classList.remove('drag')});
+document.getElementById('zi').onclick=function(){zoomAt(null,null,1.25)};
+document.getElementById('zo').onclick=function(){zoomAt(null,null,0.8)};
+document.getElementById('zf').onclick=function(){select(cur,true)};
+document.getElementById('whyx').onclick=function(){why.classList.add('off');select(cur,true)};
+[].slice.call(world.querySelectorAll('.frame')).forEach(function(n){
+ n.addEventListener('click',function(){if(cur!==n.dataset.s)select(n.dataset.s,true)})});
+addEventListener('message',function(e){var d=e.data;if(!d||typeof d!=='object')return;
+ if(d.t==='mb-nav'&&FR.some(function(f){return f.id===d.tab}))select(d.tab,true)});
+var q=new URLSearchParams(location.search).get('s');select(FR.some(function(f){return f.id===q})?q:'feed',false);
+</script>
+</body>
+</html>

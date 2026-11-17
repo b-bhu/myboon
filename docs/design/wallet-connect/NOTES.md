@@ -1,6 +1,6 @@
-# Wallet connection mock — November 7 direction
+# Wallet connection design — November 7 direction
 
-Canonical review entry is `../index.html` (Application layout → Connect). This folder is the implementation: `index.html` and `NOTES.md`. The flow below is unchanged. Open this `index.html` directly for a focused pass. Do not add another mock file for UX work in `docs/mockups/design-language/`.
+Canonical entry is `../../index.html` (Design front door → Screens → Connect). The full component catalog is `../language.html` (Application layout → Connect). This folder is the implementation: `index.html` and `NOTES.md`. The flow below is unchanged. Open this `index.html` directly for a focused pass. Do not add another one-off file for UX work in `design/`.
 
 This local review supersedes the previous create-new / already-have staging and Google design. The latest Reown-inspired direction replaces the email-choice row with an inline **Email** form on the first **Connect to MyBoon** sheet: email input → **Continue**, with **Connect external wallet** secondary below. There is no intermediate email screen. Provider selection belongs to the external adapter, not this sheet. No provider plugin is installed or required.
 
@@ -45,7 +45,7 @@ Export / recovery now shows three numbered steps, not a paragraph:
 - `DEMO_RESEND_SECONDS = 30` and `DEMO_SEND_MS = 700` are configurable illustrative demo timings, not factual Privy limits or email-delivery guarantees.
 - Initial send/resend shows sending feedback, then sent/resent feedback in a polite live region; the button is disabled during sending/cooldown with a visible seconds countdown. Repeated taps are guarded in the handler as well as disabled in UI.
 - Deadlines use absolute time. Back/close/state changes clear the interval; reentry retains the same email, code, and remaining deadline instead of restarting it. New email resets the code/session. Pagehide stops ticking; pageshow restores only one ticker. Once expired, the ticker stops.
-- No email is sent. Production must use authentication-service request state, server retry deadlines / rate limits, success/failure responses and recipient/session identity—not this client demo timer. Delivery failures need a service-backed error and retry state; this mock simulates success only.
+- No email is sent. Production must use authentication-service request state, server retry deadlines / rate limits, success/failure responses and recipient/session identity—not this client demo timer. Delivery failures need a service-backed error and retry state; this page simulates success only.
 - Native email/code form semantics and inline validation remain. The sheet body scrolls at short heights; dynamic viewport sizing and keyboard resize hint help preserve access. Actual mobile keyboard layout still requires visual/device review.
 
 ## Wallet sheet exclusions
@@ -78,7 +78,7 @@ Actions: **Continue with Privy** / **Not now**, plus Back.
 
 ### Claim verification / limitation
 
-Requested product wording “MyBoon never sees your private key” remains an intended requirement, not a verified implementation fact. It is **not asserted** in the mock.
+Requested product wording “MyBoon never sees your private key” remains an intended requirement, not a verified implementation fact. It is **not asserted** in the screen.
 
 Official sources read:
 - https://docs.privy.io/recipes/mobile-key-export — documents an app-hosted React export page in a mobile WebView; states key assembly occurs on a separate origin and neither app nor hosted page accesses the full key.

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🐴 MyBoon Design · Demos</title>
+<meta name="description" content="MyBoon product demos and recordings — watch a flow, then open the screen it belongs to.">
+<style>
+:root{
+  --wallet-core:#031F2C;--ground:#063343;--surface:#073B4C;--surface-2:#083D50;--lift:#0A4A60;
+  --border:#185A70;--bone:#F5FAFC;--dim:#9CB8C2;--faint:#6B95A1;
+  --primary:#118AB2;--viridian:#06D6A0;--gold:#FFD166;--vermillion:#EF476F;
+  --s8:8px;--s12:12px;--s16:16px;--s24:24px;--s32:32px;--s48:48px;
+  --r-card:8px;--r-btn:6px;--r-sheet:12px;--r-chip:4px;
+  --sans:Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,"DejaVu Sans Mono",monospace;
+  --max:1280px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--wallet-core);color:var(--bone);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+img{display:block;max-width:100%}
+a{color:inherit}
+::selection{background:var(--gold);color:var(--wallet-core)}
+:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.wrap{width:min(100% - 32px,var(--max));margin-inline:auto}
+.topbar{position:sticky;top:0;z-index:30;background:rgba(3,31,44,.96);border-bottom:1px solid var(--border);backdrop-filter:blur(8px)}
+.topbar .wrap{display:flex;align-items:center;gap:var(--s24);height:64px}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none;flex:none}
+.brand img{width:64px;height:auto}
+.brand-div{width:1px;height:20px;background:var(--border)}
+.brand-word{font-family:var(--mono);font-size:11px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim)}
+.topnav{display:flex;gap:4px;margin-left:auto}
+.topnav a{display:block;padding:8px 12px;border-radius:var(--r-btn);color:var(--dim);text-decoration:none;font-size:13px}
+.topnav a:hover,.topnav a[aria-current]{color:var(--bone);background:var(--ground)}
+.back{margin-left:auto;color:var(--gold);text-decoration:none;font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;border:1px solid var(--border);border-radius:var(--r-btn);padding:8px 11px;white-space:nowrap}
+.back:hover{border-color:var(--gold)}
+@media(max-width:820px){
+  .topbar .wrap{height:auto;flex-wrap:wrap;gap:0 16px;padding-top:9px}
+  .topbar .wrap>.brand{height:44px}
+  .topnav{order:3;width:100%;margin-top:2px;gap:0;overflow-x:auto;scrollbar-width:none}
+  .topnav::-webkit-scrollbar{display:none}
+  .topnav a{padding:7px 12px;font-size:12px;white-space:nowrap}
+  .back{margin-left:auto;font-size:10px;padding:7px 9px}
+}
+.hero{padding:clamp(48px,7vw,88px) 0 clamp(32px,4vw,48px);border-bottom:1px solid var(--border)}
+.eyebrow{display:flex;align-items:center;gap:8px;margin:0 0 18px;font-family:var(--mono);font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim)}
+.eyebrow i{width:5px;height:5px;background:var(--gold)}
+h1{margin:0;font-size:clamp(38px,5.4vw,68px);line-height:1.02;letter-spacing:-.045em;font-weight:600;text-wrap:balance}
+h1 span{color:var(--faint)}
+.hero p{max-width:620px;margin:22px 0 0;color:var(--dim);font-size:clamp(15px,1.5vw,17px)}
+.feature{display:grid;grid-template-columns:minmax(280px,390px) minmax(0,1fr);gap:clamp(32px,6vw,80px);align-items:center;padding:clamp(40px,6vw,72px) 0;border-bottom:1px solid var(--border)}
+.stage{background:var(--ground);border:1px solid var(--border);border-radius:var(--r-sheet);padding:clamp(16px,3vw,26px);display:flex;flex-direction:column;align-items:center;gap:12px;position:relative;overflow:hidden}
+.stage:before{content:"";position:absolute;inset:0;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:40px 40px;opacity:.14;pointer-events:none}
+.stage-bar{width:min(100%,320px);display:flex;align-items:center;justify-content:space-between;gap:12px;position:relative;z-index:1;font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.player{position:relative;width:min(100%,320px);background:#000;border:1px solid var(--border);border-radius:var(--r-sheet);overflow:hidden;z-index:1}
+.player video{display:block;width:100%;height:auto;aspect-ratio:390/844;object-fit:cover;background:#000;cursor:pointer}
+.play{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:10px 16px;background:none;border:1px solid var(--border);border-radius:999px;color:var(--dim);font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+.play svg{width:9px;height:9px;fill:currentColor;display:block}
+.play .ico-pause{display:none}
+.play.playing .ico-play{display:none}
+.play.playing .ico-pause{display:block}
+.play:hover,.play:focus-visible{border-color:var(--gold);color:var(--gold)}
+.stage-cap{position:relative;z-index:1;margin:0;width:min(100%,320px);font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--faint);text-align:center}
+.feature-copy .lbl,.lbl{font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.feature-copy .lbl{margin:0 0 12px}
+h2{margin:0;font-size:clamp(26px,3vw,36px);line-height:1.1;letter-spacing:-.03em;font-weight:600}
+.feature-copy h2{margin-bottom:12px}
+.feature-copy>p{margin:0;max-width:560px;color:var(--dim)}
+.meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px;margin:24px 0 0;padding:18px 0 0;border-top:1px solid var(--border)}
+.meta div{margin:0}
+.meta dt{font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+.meta dd{margin:3px 0 0;font-size:13px;color:var(--bone)}
+.links{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+.links a{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border:1px solid var(--border);border-radius:var(--r-btn);text-decoration:none;font-size:13px;color:var(--bone)}
+.links a:first-child{background:var(--gold);border-color:var(--gold);color:var(--wallet-core);font-weight:600}
+.links a:hover{border-color:var(--gold)}
+.section{padding:clamp(40px,6vw,72px) 0;border-bottom:1px solid var(--border)}
+.sec-head{display:flex;justify-content:space-between;gap:32px;align-items:flex-end;margin-bottom:24px}
+.sec-title{display:flex;align-items:baseline;gap:14px}
+.sec-num{font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--faint)}
+.sec-head p{max-width:420px;margin:0;text-align:right;font-size:13px;color:var(--faint)}
+@media(max-width:720px){.sec-head{display:block}.sec-head p{text-align:left;margin-top:10px}}
+.rows{border-top:1px solid var(--border)}
+.row{display:grid;grid-template-columns:38px minmax(0,1fr) auto 18px;gap:16px;align-items:center;padding:18px 4px;border-bottom:1px solid var(--border);text-decoration:none;transition:background .14s ease}
+.row:hover{background:var(--ground)}
+.idx{font-family:var(--mono);font-size:10px;letter-spacing:1px;color:var(--faint)}
+.row h3{margin:0;font-size:16px;line-height:1.25;font-weight:600}
+.row p{margin:3px 0 0;font-size:12px;color:var(--faint)}
+.tag{font-family:var(--mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);border:1px solid var(--border);border-radius:var(--r-chip);padding:5px 7px;white-space:nowrap}
+.tag.live{color:var(--viridian);border-color:rgba(6,214,160,.45)}
+.tag.video{color:var(--gold);border-color:rgba(255,209,102,.45)}
+.go{font-family:var(--mono);color:var(--faint);text-align:right}
+.row:hover .go{color:var(--gold)}
+@media(max-width:640px){
+  .feature{grid-template-columns:1fr;gap:28px}
+  .stage{order:1}
+  .row{grid-template-columns:28px minmax(0,1fr) 18px;gap:12px}
+  .row .tag{grid-column:2;justify-self:start;margin-top:2px}
+  .row .go{grid-row:1;grid-column:3}
+}
+.note-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:clamp(24px,5vw,64px);align-items:start;background:var(--ground);border:1px solid var(--border);border-radius:var(--r-sheet);padding:clamp(20px,3vw,32px)}
+.note-card h2{font-size:clamp(20px,2.4vw,26px)}
+.note-card p{margin:12px 0 0;color:var(--dim);font-size:13px}
+.note-card ul{margin:0;padding:0;list-style:none}
+.note-card li{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--dim)}
+.note-card li:last-child{border-bottom:0}
+.note-card li b{color:var(--bone);font-weight:600}
+.note-card li i{width:5px;height:5px;background:var(--gold);margin-top:8px;flex:none}
+@media(max-width:760px){.note-card{grid-template-columns:1fr}}
+footer{padding:36px 0 48px}
+.foot{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.foot-brand{display:flex;align-items:center;gap:10px}
+.foot-brand img{width:52px;height:auto}
+.foot-brand span{font-family:var(--mono);font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint)}
+.foot-nav{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase}
+.foot-nav a{color:var(--faint);text-decoration:none}
+.foot-nav a:hover{color:var(--gold)}
+.foot-line{width:100%;margin-top:20px;color:var(--faint);font-size:11px}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="MyBoon Design home">
+      <img src="ref/wordmark.png" alt="myBOON" width="420" height="218">
+      <span class="brand-div"></span>
+      <span class="brand-word">Design</span>
+    </a>
+    <nav class="topnav" aria-label="Design reference sections">
+      <a href="index.html#screens">Screens</a>
+      <a href="demos.html" aria-current="page">Demos</a>
+      <a href="language.html">Language</a>
+      <a href="index.html#explorations">Explorations</a>
+    </nav>
+    <a class="back" href="index.html">← Design index</a>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero" aria-labelledby="demos-title">
+      <p class="eyebrow"><i></i>Demos · watch, then open</p>
+      <h1 id="demos-title">See the flow move.<br><span>Then open the screen.</span></h1>
+      <p>Recordings of the product in use, kept beside the screens they belong to. One demo is recorded today; every other row opens a live screen so the flow can be inspected and re-done.</p>
+    </section>
+
+    <section class="feature" id="move" aria-labelledby="move-title">
+      <div class="stage">
+        <div class="stage-bar">
+          <span>Move flow</span>
+          <button class="play" type="button" aria-label="Play the Move flow recording" data-play="move-demo" data-player-name="the Move flow recording">
+            <svg class="ico-play" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5 13 8 3 13.5z"/></svg>
+            <svg class="ico-pause" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></svg>
+            <span class="play-label">Play</span>
+          </button>
+        </div>
+        <div class="player">
+          <video id="move-demo" playsinline preload="metadata" poster="assets/demos/move-flow.png" width="390" height="844" src="assets/demos/move-flow.mp4">
+            Your browser does not support video. <a href="assets/demos/move-flow.mp4">Download the recording</a>.
+          </video>
+        </div>
+        <p class="stage-cap">Wallet · USDC to SOL · sample balances</p>
+      </div>
+      <div class="feature-copy">
+        <p class="lbl">Demo 01 · Wallet</p>
+        <h2 id="move-title">Move, end to end.</h2>
+        <p>Pick a source and destination, set the amount, watch the route resolve, then swipe to confirm. The whole move at phone size, with example balances.</p>
+        <dl class="meta">
+          <div><dt>Flow</dt><dd>Move · USDC to SOL</dd></div>
+          <div><dt>Length</dt><dd>17 seconds</dd></div>
+          <div><dt>Viewport</dt><dd>390 × 844</dd></div>
+          <div><dt>Recorded</dt><dd>23 Oct 2026</dd></div>
+        </dl>
+        <div class="links">
+          <a href="wallet.html?proto&amp;embed=1" target="_blank" rel="noopener">Open the Wallet screen →</a>
+          <a href="DESIGN.md" target="_blank" rel="noopener">Read the interaction rules →</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="library" aria-labelledby="library-title">
+      <div class="sec-head">
+        <div class="sec-title"><span class="sec-num">02</span><h2 id="library-title">Library</h2></div>
+        <p>Recorded flows first, then the screens that are ready to record.</p>
+      </div>
+      <div class="rows">
+        <a class="row" href="assets/demos/move-flow.mp4">
+          <span class="idx">01</span>
+          <div><h3>Move, end to end</h3><p>Wallet · source, destination, amount, route, confirm</p></div>
+          <span class="tag video">Video · 17s</span><span class="go">↗</span>
+        </a>
+        <a class="row" href="feed.html?proto&amp;embed=1" target="_blank" rel="noopener">
+          <span class="idx">02</span>
+          <div><h3>Feed briefing</h3><p>Feed · today, developing story, entity follow</p></div>
+          <span class="tag live">Screen</span><span class="go">→</span>
+        </a>
+        <a class="row" href="apps.html?proto&amp;embed=1" target="_blank" rel="noopener">
+          <span class="idx">03</span>
+          <div><h3>Apps home</h3><p>Apps · recently used, categories, market row</p></div>
+          <span class="tag live">Screen</span><span class="go">→</span>
+        </a>
+        <a class="row" href="wallet.html?proto&amp;embed=1" target="_blank" rel="noopener">
+          <span class="idx">04</span>
+          <div><h3>Portfolio</h3><p>Wallet · balances, apps, chains, positions</p></div>
+          <span class="tag live">Screen</span><span class="go">→</span>
+        </a>
+        <a class="row" href="charts/index.html">
+          <span class="idx">05</span>
+          <div><h3>BoonChart explorer</h3><p>Charts · mobile charting, ranges, comparison</p></div>
+          <span class="tag live">Exploration</span><span class="go">→</span>
+        </a>
+        <a class="row" href="market-experience/index.html">
+          <span class="idx">06</span>
+          <div><h3>Market experience</h3><p>Markets · browse, detail, position context</p></div>
+          <span class="tag live">Exploration</span><span class="go">→</span>
+        </a>
+        <a class="row" href="wallet-connect/index.html">
+          <span class="idx">07</span>
+          <div><h3>Connect</h3><p>Wallet · connect, deposit, first-run states</p></div>
+          <span class="tag live">Exploration</span><span class="go">→</span>
+        </a>
+        <a class="row" href="web-landing-page/index.html">
+          <span class="idx">08</span>
+          <div><h3>Web landing</h3><p>Web · headline, live phone, waitlist</p></div>
+          <span class="tag live">Exploration</span><span class="go">→</span>
+        </a>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="add-title">
+      <div class="note-card">
+        <div>
+          <p class="lbl">The library grows</p>
+          <h2 id="add-title">A poster, a title, a hosted URL.</h2>
+          <p>Keep large video out of Git. A recording is a 780×1688 poster in <span class="mono">assets/demos/</span> plus a hosted video URL; the row above is the only place it needs to be listed.</p>
+        </div>
+        <ul>
+          <li><i></i><span><b>Record</b> at 390×844, then capture the poster at 2× — 780×1688.</span></li>
+          <li><i></i><span><b>Host</b> the file on Cloudflare Stream, Mux, or R2; link the playback URL.</span></li>
+          <li><i></i><span><b>List</b> the flow, one line of context, length, and the screen it belongs to.</span></li>
+          <li><i></i><span><b>Keep</b> the same row shape as the library grows — no new layout per demo.</span></li>
+        </ul>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div class="foot-brand">
+      <img src="ref/wordmark.png" alt="" width="420" height="218">
+      <div><b>MyBoon Design</b>Current design reference · 17 Nov 2026</div>
+    </div>
+    <nav class="foot-nav" aria-label="Design reference">
+      <a href="index.html">Index</a>
+      <a href="index.html#screens">Screens</a>
+      <a href="language.html">Component catalog</a>
+      <a href="app.html">App prototype</a>
+      <a href="DESIGN.md">DESIGN.md</a>
+    </nav>
+    <p class="foot-line">Current design reference · 17 Nov 2026 · recordings are design references, not live quotes.</p>
+  </div>
+</footer>
+
+<script>
+document.querySelectorAll('[data-play]').forEach(function (button) {
+  var video = document.getElementById(button.dataset.play);
+  if (!video) return;
+  var label = button.querySelector('.play-label');
+  var name = button.dataset.playerName || 'the recording';
+  function sync() {
+    var playing = !video.paused && !video.ended;
+    button.classList.toggle('playing', playing);
+    var text = video.ended ? 'Replay' : (playing ? 'Pause' : 'Play');
+    if (label) label.textContent = text;
+    button.setAttribute('aria-label', text + ' ' + name);
+  }
+  function toggle() {
+    if (video.paused || video.ended) {
+      if (video.ended) video.currentTime = 0;
+      var played = video.play();
+      if (played && played.catch) played.catch(sync);
+    } else {
+      video.pause();
+    }
+  }
+  button.addEventListener('click', toggle);
+  video.addEventListener('click', toggle);
+  ['play', 'pause', 'ended'].forEach(function (event) {
+    video.addEventListener(event, sync);
+  });
+  sync();
+});
+</script>
+
+</body>
+</html>
