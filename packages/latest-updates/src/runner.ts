@@ -8,6 +8,9 @@
  *   model write, bar holds -> `published` run row + latest_updates row (visibility from env) + its items
  *   timeout / bad JSON     -> `error` run row and nothing else; the 3rd failed attempt writes `hold`
  *
+ * Every error outcome logs one `latest_updates_entity_error` line with its code and reason (the same text as the run
+ * row), and the summary splits `error` into `error_timeout`, `error_bad_json` and `error_other`.
+ *
  * A published / hold / skip row is final for the pair: the candidate query leaves it out on every later tick, so
  * the model is not called again until a newer item arrives. Every entity commits on its own, so a kill loses at
  * most the entity in flight. The run stops starting entities once the budget is spent.
@@ -17,14 +20,19 @@ import { askEditor } from './editor.js';
 import { runWriteBar } from './checks.js';
 import type { Llm } from './clients.js';
 import type { Candidate, Store } from './store.js';
-import type { Bundle } from './types.js';
+import type { Bundle, ErrorCode } from './types.js';
 
 export type RunSummary = {
   candidates: number;
   published: number;
   hold: number;
   skip: number;
+  /** Error rows written this run; always error_timeout + error_bad_json + error_other. */
   error: number;
+  error_timeout: number;
+  error_bad_json: number;
+  /** Any other failed call (HTTP error, empty reply). */
+  error_other: number;
   retries_exhausted: number;
   already_decided: number;
   no_bundle: number;
@@ -42,9 +50,12 @@ export type RunDeps = {
   log?: (line: string) => void;
 };
 
-const emptySummary = (): RunSummary => ({ candidates: 0, published: 0, hold: 0, skip: 0, error: 0, retries_exhausted: 0, already_decided: 0, no_bundle: 0, failed: 0, budget_stopped: 0 });
+const emptySummary = (): RunSummary => ({ candidates: 0, published: 0, hold: 0, skip: 0, error: 0, error_timeout: 0, error_bad_json: 0, error_other: 0, retries_exhausted: 0, already_decided: 0, no_bundle: 0, failed: 0, budget_stopped: 0 });
 
-async function handle(deps: RunDeps, c: Candidate, now: Date, summary: RunSummary): Promise<void> {
+const errorBucket = (code: ErrorCode): 'error_timeout' | 'error_bad_json' | 'error_other' =>
+  code === 'timeout' ? 'error_timeout' : code === 'bad_json' ? 'error_bad_json' : 'error_other';
+
+async function handle(deps: RunDeps, c: Candidate, now: Date, summary: RunSummary, log: (line: string) => void): Promise<void> {
   const { store, llm, config } = deps;
   const bundle: Bundle | null = await store.loadBundle(c, { now, windowHours: config.windowHours });
   if (!bundle) {
@@ -67,14 +78,23 @@ async function handle(deps: RunDeps, c: Candidate, now: Date, summary: RunSummar
         };
   }
   const result = await store.record(write);
+  if (outcome.kind === 'error') {
+    // The reason is the editor's own short text (the model call never sees a secret; HTTP bodies are redacted).
+    log(JSON.stringify({
+      level: 'warn', event: 'latest_updates_entity_error', entity: c.slug, code: outcome.code, reason: outcome.message,
+      ...(result.outcome === 'written' ? { attempt: result.attempt, recorded: result.decision } : { recorded: 'already_decided' }),
+    }));
+  }
   if (result.outcome === 'already_decided') {
     summary.already_decided += 1;
     return;
   }
   if (result.decision === 'published') summary.published += 1;
   else if (result.decision === 'skip') summary.skip += 1;
-  else if (result.decision === 'error') summary.error += 1;
-  else {
+  else if (result.decision === 'error') {
+    summary.error += 1;
+    if (outcome.kind === 'error') summary[errorBucket(outcome.code)] += 1;
+  } else {
     summary.hold += 1;
     if (write.decision === 'error') summary.retries_exhausted += 1;
   }
@@ -98,7 +118,7 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
       if (!c) return;
       next += 1;
       try {
-        await handle(deps, c, now, summary);
+        await handle(deps, c, now, summary, log);
       } catch (e) {
         summary.failed += 1;
         // The message only (no connection strings): the row is retried on the next tick because nothing was written.
