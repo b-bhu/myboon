@@ -20,9 +20,9 @@ flowchart LR
 | **Window** is `entity_items.occurred_at` only: active entity, active item, not null, not in the future, within `LATEST_UPDATES_WINDOW_HOURS` (default 24). No override exists in the runner; only the length is tunable. Items that age out while the backlog drains are never published. | `store.ts` `CANDIDATES_SQL` |
 | **Key** of a decision is (entity, newest eligible item by `occurred_at`). | `store.ts` |
 | **Final per key.** A `published`, `hold` or `skip` run row is terminal; the entity is left out until a newer item arrives, so the model is not called again. The database enforces it (partial unique index on `latest_update_runs`). | `CANDIDATES_SQL`, `record()` |
-| **Errors retry.** A timeout, failed call or bad JSON writes an `error` run row and nothing else. The attempt number is the count of `error` rows for the key plus one; the third failed attempt writes a `hold` with reason `retries_exhausted`. A newer item starts at attempt 1. | `record()` |
+| **Errors retry.** A timeout, failed call or bad JSON writes an `error` run row and nothing else. The attempt number is the count of `error` rows for the key plus one; the third failed attempt writes a `hold` with reason `retries_exhausted`. A newer item starts at attempt 1. Each error logs one `latest_updates_entity_error` line (entity slug, `code`, reason, attempt, what was recorded), and the run summary splits `error` into `error_timeout`, `error_bad_json` and `error_other`. A bad reply is not repaired in-call; the next tick is the retry (#634). | `record()`, `runner.ts` |
 | **Cap.** `LATEST_UPDATES_MAX_PER_RUN` (default 25), oldest eligible first. | `CANDIDATES_SQL`, `runner.ts` |
-| **Budget.** `LATEST_UPDATES_RUN_BUDGET_MS` (default 20 min): no new entity starts after it. Per-entity model timeout `LATEST_UPDATES_TIMEOUT_MS` (default 30 s). Concurrency `LATEST_UPDATES_CONCURRENCY` (default 2, max 4). | `runner.ts` |
+| **Budget.** `LATEST_UPDATES_RUN_BUDGET_MS` (default 20 min): no new entity starts after it. Per-entity model timeout `LATEST_UPDATES_TIMEOUT_MS` (default 60 s, set from the first dark runs' write times, #634). Concurrency `LATEST_UPDATES_CONCURRENCY` (default 2, max 4). | `runner.ts` |
 | **One transaction per entity** (run row, and for a write the update and its items). A kill loses at most the entity in flight and never leaves half-written rows. A per-entity advisory lock stops two runs publishing the same entity at once. | `record()` |
 | **Visibility is set at insert** from `LATEST_UPDATES_VISIBILITY` (`dark` default, or `live`). A bad value stops the run; it never falls back to `live`. The worker has no UPDATE grant. | `config.ts`, `runner.ts` |
 | **Last update.** The entity's newest `latest_updates` row (dark or live) is "what we last published"; with none, the newest earlier item stands in. Items already linked to the last update are not "new" again. | `store.ts` `loadBundle` |
@@ -46,7 +46,7 @@ These are heuristics. The eval set is where they are tested.
 | `LATEST_UPDATES_DATABASE_URL` | required when on | The `latest_update_worker` login (insert-only on the three new tables, SELECT on the four input tables). Non-local hosts verify TLS against `certs/supabase-prod-ca-2021.crt` (or `LATEST_UPDATES_DATABASE_CA_FILE`). |
 | `OLLAMA_API_KEY` | required when on | Shared Ollama Cloud key. |
 | `LATEST_UPDATES_LLM_MODEL` | `glm-5.3-flash` | |
-| `LATEST_UPDATES_WINDOW_HOURS` / `_MAX_PER_RUN` / `_RUN_BUDGET_MS` / `_TIMEOUT_MS` / `_CONCURRENCY` / `_VISIBILITY` | 24 / 25 / 1200000 / 30000 / 2 / `dark` | See Rules. |
+| `LATEST_UPDATES_WINDOW_HOURS` / `_MAX_PER_RUN` / `_RUN_BUDGET_MS` / `_TIMEOUT_MS` / `_CONCURRENCY` / `_VISIBILITY` | 24 / 25 / 1200000 / 60000 / 2 / `dark` | See Rules. |
 
 ## Columns read
 

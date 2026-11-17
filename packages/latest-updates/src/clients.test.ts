@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createOllamaLlm } from './clients.js';
+import { DEFAULT_TIMEOUT_MS } from './config.js';
 
 const msgs = [{ role: 'user' as const, content: 'hi' }];
 const KEY = 'sk-test-secret-key';
@@ -41,5 +42,17 @@ describe('createOllamaLlm', () => {
     })) as unknown as typeof fetch;
     const err = await createOllamaLlm({ apiKey: KEY, model: 'm', timeoutMs: 20, fetchImpl })(msgs).catch((e: Error) => e);
     expect((err as Error).name).toBe('TimeoutError');
+  });
+
+  it('defaults the per-call timeout to DEFAULT_TIMEOUT_MS (60 s, from the #634 dark runs)', async () => {
+    expect(DEFAULT_TIMEOUT_MS).toBe(60_000);
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      const fetchImpl = (async () => new Response(JSON.stringify({ choices: [{ message: { content: 'x' } }] }))) as unknown as typeof fetch;
+      await createOllamaLlm({ apiKey: KEY, model: 'm', fetchImpl })(msgs);
+      expect(spy).toHaveBeenCalledWith(60_000);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

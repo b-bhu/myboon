@@ -4,9 +4,9 @@ import { runGatedStage } from '@myboon/shared/v4-runtime';
 import { ENABLED_FLAG, loadRunConfig, parseVisibility, requireEnv } from './config.js';
 
 describe('run config', () => {
-  it('defaults: 24 h window, cap 25, 20 min budget, 30 s timeout, dark, glm-5.3-flash', () => {
+  it('defaults: 24 h window, cap 25, 20 min budget, 60 s timeout, dark, glm-5.3-flash', () => {
     expect(loadRunConfig({})).toEqual({
-      windowHours: 24, maxPerRun: 25, runBudgetMs: 1_200_000, timeoutMs: 30_000, concurrency: 2, visibility: 'dark', model: 'glm-5.3-flash',
+      windowHours: 24, maxPerRun: 25, runBudgetMs: 1_200_000, timeoutMs: 60_000, concurrency: 2, visibility: 'dark', model: 'glm-5.3-flash',
     });
   });
 

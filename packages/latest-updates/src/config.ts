@@ -14,7 +14,12 @@ export const ENABLED_FLAG = 'LATEST_UPDATES_ENABLED';
 export const DEFAULT_WINDOW_HOURS = 24;
 export const DEFAULT_MAX_PER_RUN = 25;
 export const DEFAULT_RUN_BUDGET_MS = 20 * 60 * 1000;
-export const DEFAULT_TIMEOUT_MS = 30_000;
+/**
+ * Per-entity model timeout. 60 s from the first dark runs (#634, Nov 17): at 30 s, 18 of 92 timed calls timed out,
+ * and an uncensored replay of the 32-entity eval set had p95 39.7 s and max 82.0 s. Worst case at 60 s, 25 candidates
+ * on 2 workers still fit well inside the 20 min run budget and the 30 min cron.
+ */
+export const DEFAULT_TIMEOUT_MS = 60_000;
 export const DEFAULT_CONCURRENCY = 2;
 export const MAX_CONCURRENCY = 4;
 export const DEFAULT_MODEL = 'glm-5.3-flash';

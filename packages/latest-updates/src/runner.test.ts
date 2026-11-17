@@ -90,6 +90,49 @@ describe('runOnce decisions', () => {
     expect(writes[1]!.reason).toMatch(/^bad_json:/);
   });
 
+  it('splits the error count by reason and logs one line per error with its code and reason', async () => {
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((slug, i) => cand(slug, `2026-11-14T0${i + 1}:00:00Z`)) as [Candidate, Candidate, Candidate, Candidate];
+    const { store } = fakeStore([a, b, c, d]);
+    const llm = async (m: Array<{ role: string; content: string }>) => {
+      const body = m[1]!.content;
+      if (body.includes('slug: a') || body.includes('slug: b')) throw Object.assign(new Error('slow'), { name: 'TimeoutError' });
+      if (body.includes('slug: c')) return '{"decision":"write","reason":"r","title":"t"}';
+      throw new Error('LLM HTTP 502: bad gateway');
+    };
+    const lines: string[] = [];
+    const s = await runOnce({ store, llm, config: cfg({ concurrency: 1 }), log: (l) => lines.push(l) });
+    expect(s).toMatchObject({ error: 4, error_timeout: 2, error_bad_json: 1, error_other: 1 });
+    const logged = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(logged.map((l) => [l.event, l.entity, l.code, l.attempt, l.recorded])).toEqual([
+      ['latest_updates_entity_error', 'a', 'timeout', 1, 'error'],
+      ['latest_updates_entity_error', 'b', 'timeout', 1, 'error'],
+      ['latest_updates_entity_error', 'c', 'bad_json', 1, 'error'],
+      ['latest_updates_entity_error', 'd', 'llm_error', 1, 'error'],
+    ]);
+    expect(logged[0]!.reason).toBe('model timed out');
+    expect(logged[2]!.reason).toBe('write draft is missing one of the three parts');
+    expect(logged[3]!.reason).toBe('LLM HTTP 502: bad gateway');
+  });
+
+  it('decisions log nothing, and a clean run reports zero in every error bucket', async () => {
+    const lines: string[] = [];
+    const { store } = fakeStore([cand('a', '2026-11-14T01:00:00Z')]);
+    const s = await runOnce({ store, llm: async () => '{"decision":"hold","reason":"thin"}', config: cfg(), log: (l) => lines.push(l) });
+    expect(s).toMatchObject({ hold: 1, error: 0, error_timeout: 0, error_bad_json: 0, error_other: 0 });
+    expect(lines).toEqual([]);
+  });
+
+  it('a third failure still logs its reason, but counts as retries_exhausted, not in an error bucket', async () => {
+    const lines: string[] = [];
+    const { store } = fakeStore([cand('a', '2026-11-14T01:00:00Z')], {
+      async record(w) { return { outcome: 'written', decision: w.decision === 'error' ? 'hold' : w.decision, attempt: 3 }; },
+    });
+    const llm = async () => { throw Object.assign(new Error('slow'), { name: 'TimeoutError' }); };
+    const s = await runOnce({ store, llm, config: cfg(), log: (l) => lines.push(l) });
+    expect(s).toMatchObject({ hold: 1, retries_exhausted: 1, error: 0, error_timeout: 0 });
+    expect(JSON.parse(lines[0]!)).toMatchObject({ event: 'latest_updates_entity_error', code: 'timeout', attempt: 3, recorded: 'hold' });
+  });
+
   it('counts a third failed attempt (the store turns it into a hold) as retries_exhausted', async () => {
     const { store } = fakeStore([cand('a', '2026-11-14T01:00:00Z')], {
       async record(w) { return { outcome: 'written', decision: w.decision === 'error' ? 'hold' : w.decision, attempt: 3 }; },

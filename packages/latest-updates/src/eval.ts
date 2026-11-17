@@ -3,7 +3,7 @@
  * agreement, hold-recall, untraced claims, period mismatches and timeouts.
  *
  *   tsx src/eval.ts                            use eval/snapshot.json and eval/labels.csv
- *   tsx src/eval.ts --snapshot a.json --labels b.csv --attempts 3 --timeout-ms 30000 --model glm-5.3-flash --json out.json
+ *   tsx src/eval.ts --snapshot a.json --labels b.csv --attempts 3 --timeout-ms 60000 --model glm-5.3-flash --json out.json
  *   tsx src/eval.ts --print-freeze-sql --hours 72 --basis created_at --until 2026-11-14T01:00:00Z [--slugs a,b]
  *
  * Exit codes: 0 scored PASS, 0 NOT SCORED (blank labels or no model key: said clearly, never fails CI),

@@ -2,6 +2,8 @@
  * Minimal Ollama Cloud chat client (same call as @myboon/entity-manager and @myboon/analyst; copied so this
  * package depends on neither). Model: GLM glm-5.3-flash, temperature 0. The key is never logged.
  */
+import { DEFAULT_TIMEOUT_MS } from './config.js';
+
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 export type Llm = (messages: ChatMessage[]) => Promise<string>;
 
@@ -12,7 +14,7 @@ const rec = (v: unknown): Record<string, unknown> => (v && typeof v === 'object'
 export function createOllamaLlm(o: { apiKey: string; model: string; url?: string; timeoutMs?: number; fetchImpl?: typeof fetch }): Llm {
   const url = o.url ?? 'https://ollama.com/v1/chat/completions';
   const fetchImpl = o.fetchImpl ?? fetch;
-  const timeoutMs = o.timeoutMs ?? 30_000;
+  const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (messages) => {
     const res = await fetchImpl(url, {
       method: 'POST',
