@@ -1,18 +1,14 @@
-import type { FeedItem } from '@/features/feed/feed.types';
-import { resolveApiBaseUrl, fetchWithTimeout } from '@/lib/api';
-
-interface PublishedNarrativeListItem {
-  updateKey: string;
-  title: string;
-  summary: string;
-  publishedAt: string;
-  imageUrl?: string | null;
-  imageKind?: 'content' | 'source_avatar' | null;
-  imageAttribution?: string | null;
-  sourceName?: string | null;
-}
+import type { LatestUpdate } from '@myboon/shared/latest-updates';
+import type { FeedItem, FeedUpdateSource } from '@/features/feed/feed.types';
+import { fetchLatestUpdates } from './latest-updates.api';
+import {
+  LATEST_UPDATES_MOCK,
+  LATEST_UPDATE_SAMPLES,
+  sortLatestUpdatesNewestFirst,
+} from './latest-updates';
 
 const MAX_SOURCE_NAME_LENGTH = 120;
+const MAX_LATEST_UPDATES = 30;
 
 export function reportSourceName(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -24,7 +20,6 @@ export function reportSourceName(value: unknown): string | null {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
-
 
 export function toRelativeTime(iso: string): string {
   const createdAt = new Date(iso).getTime();
@@ -46,76 +41,72 @@ export function toShortDate(iso: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function mapNarrativeToFeedItem(item: PublishedNarrativeListItem, index: number, offset: number): FeedItem {
+/** One latest update as a Today slide or an All updates row. The full text stays on the row. */
+export function latestUpdateToFeedItem(update: LatestUpdate, index: number): FeedItem {
+  const imageUrl = update.imageUrl ?? null;
   return {
-    id: item.updateKey,
-    category: 'feed',
-    createdAt: item.publishedAt,
-    headline: item.title,
-    description: item.summary,
-    isTop: offset + index === 0,
+    id: update.id,
+    category: update.entityName,
+    createdAt: update.publishedAt,
+    headline: update.headline,
+    description: update.whatHappened,
+    isTop: index === 0,
     actions: [],
-    imageUrl: httpUrlOrNull(item.imageUrl),
-    imageKind: item.imageKind === 'content' || item.imageKind === 'source_avatar' ? item.imageKind : null,
-    imageAttribution: typeof item.imageAttribution === 'string' && item.imageAttribution.trim()
-      ? item.imageAttribution.trim()
-      : null,
-    sourceName: reportSourceName(item.sourceName),
+    imageUrl,
+    imageKind: imageUrl ? 'content' : null,
+    imageAttribution: null,
+    sourceName: reportSourceName(update.sources[0]?.title),
+    howWeGotHere: update.howWeGotHere,
+    whatToWatch: update.whatToWatch,
+    sources: update.sources.map((source) => ({
+      itemId: source.itemId,
+      title: source.title,
+      link: source.link,
+    })),
   };
 }
 
-export async function fetchFeedItems(limit = 20, offset = 0, options?: { signal?: AbortSignal }): Promise<FeedItem[]> {
-  const clamped = clamp(limit, 1, 50);
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/narratives?limit=${clamped}&offset=${offset}`, { signal: options?.signal });
-
-  if (!response.ok) {
-    throw new Error(`Feed request failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (!Array.isArray(payload)) {
-    throw new Error('Invalid feed response');
-  }
-
-  return payload
-    .filter((row): row is PublishedNarrativeListItem => typeof row === 'object' && row !== null && 'updateKey' in row)
-    .map((item, index) => mapNarrativeToFeedItem(item, index, offset));
-}
-
-export interface NarrativeDetail {
-  updateKey: string;
+/** Fields the update sheet reads. No second request: the list row already has the text. */
+export function feedItemDetail(item: FeedItem): {
+  id: string;
   title: string;
   summary: string;
-  content: string;
-  publishedAt: string;
+  createdAt: string;
   imageUrl: string | null;
-  imageKind: 'content' | 'source_avatar' | null;
+  imageKind: FeedItem['imageKind'];
   imageAttribution: string | null;
+  howWeGotHere: string;
+  whatToWatch: string;
+  sources: FeedUpdateSource[];
+} {
+  return {
+    id: item.id,
+    title: item.headline,
+    summary: item.description,
+    createdAt: item.createdAt,
+    imageUrl: item.imageUrl ?? null,
+    imageKind: item.imageKind ?? null,
+    imageAttribution: item.imageAttribution ?? null,
+    howWeGotHere: item.howWeGotHere ?? '',
+    whatToWatch: item.whatToWatch ?? '',
+    sources: item.sources ?? [],
+  };
 }
 
-function httpUrlOrNull(value: unknown): string | null {
-  if (typeof value !== 'string' || !value.trim()) return null;
-  try {
-    const parsed = new URL(value.trim());
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchNarrativeDetail(id: string, options?: { signal?: AbortSignal }): Promise<NarrativeDetail> {
-  const baseUrl = resolveApiBaseUrl();
-  const response = await fetchWithTimeout(`${baseUrl}/narratives/${encodeURIComponent(id)}`, { signal: options?.signal });
-
-  if (!response.ok) {
-    throw new Error(`Narrative detail request failed (${response.status})`);
-  }
-
-  const payload = (await response.json()) as unknown;
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('Invalid narrative detail response');
-  }
-
-  return payload as NarrativeDetail;
+/**
+ * Today and All updates. The list route has no offset, so a later page
+ * asks for a wider limit and slices. An empty live list can show the
+ * sample rows when the mock flag is on. Real rows always win.
+ */
+export async function fetchFeedItems(limit = 20, offset = 0, options?: { signal?: AbortSignal }): Promise<FeedItem[]> {
+  const page = clamp(Math.floor(limit), 1, MAX_LATEST_UPDATES);
+  const start = Math.max(0, Math.floor(Number.isFinite(offset) ? offset : 0));
+  if (start >= MAX_LATEST_UPDATES) return [];
+  const updates = sortLatestUpdatesNewestFirst(
+    await fetchLatestUpdates({ signal: options?.signal, limit: clamp(start + page, 1, MAX_LATEST_UPDATES) }),
+  );
+  const rows = updates.length === 0 && LATEST_UPDATES_MOCK
+    ? sortLatestUpdatesNewestFirst(LATEST_UPDATE_SAMPLES)
+    : updates;
+  return rows.slice(start, start + page).map((update, index) => latestUpdateToFeedItem(update, start + index));
 }

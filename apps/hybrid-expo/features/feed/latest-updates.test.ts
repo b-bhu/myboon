@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { parseLatestUpdatesPayload } from './latest-updates.api';
+import { parseLatestUpdatesPayload, readLatestUpdateImageUrl } from './latest-updates.api';
 import {
   isLatestUpdatesMockEnabled,
   latestUpdateTime,
   LATEST_UPDATE_SAMPLES,
+  SAMPLE_UPDATE_IMAGE_URL,
   presentLatestUpdates,
   sortLatestUpdatesNewestFirst,
   type LatestUpdatesPresentation,
@@ -69,7 +70,9 @@ test('an empty list hides, a failure stays unavailable, and the mock fills only 
   assert.equal(sample.status, 'ready');
   assert.equal(sample.sample, true);
   assert.equal(sample.updates[0]?.id, 'sample-bitcoin');
+  assert.equal(sample.updates[0]?.imageUrl, SAMPLE_UPDATE_IMAGE_URL);
   assert.equal(sample.updates[1]?.id, 'sample-federal-reserve');
+  assert.equal(sample.updates[1]?.imageUrl, null);
   assert.notEqual(LATEST_UPDATE_SAMPLES[0]?.id, 'sample-bitcoin');
 
   const live = presentLatestUpdates([update('live', '2026-11-14T12:00:00.000Z', 'Live headline')], null, true);
@@ -98,9 +101,38 @@ test('the payload parser keeps a valid update, drops a bad source link, and reje
   });
   assert.equal(parsed.length, 1);
   assert.deepEqual(parsed[0]?.sources.map((source) => source.link), ['https://example.com/desk']);
+  assert.equal(parsed[0]?.imageUrl, null);
+  assert.equal(readLatestUpdateImageUrl('http://example.com/a.png'), null);
+  assert.equal(readLatestUpdateImageUrl('javascript:alert(1)'), null);
+  assert.equal(readLatestUpdateImageUrl(`https://example.com/${'a'.repeat(2048)}`), null);
+  assert.equal(readLatestUpdateImageUrl(12), null);
   assert.throws(() => parseLatestUpdatesPayload({ updates: [{ id: 'nope' }] }), /Invalid latest updates response/);
   assert.throws(() => parseLatestUpdatesPayload(null), /Invalid latest updates response/);
   assert.deepEqual(parseLatestUpdatesPayload({ updates: [] }), []);
+});
+
+test('a row imageUrl survives parsing', () => {
+  const parsed = parseLatestUpdatesPayload({
+    updates: [{
+      ...update('pictured', '2026-11-14T16:00:00.000Z', 'Pictured'),
+      imageUrl: '  https://assets.coingecko.com/coins/images/1/large/bitcoin.png  ',
+    }],
+  });
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.imageUrl, 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png');
+  assert.equal(parsed[0]?.headline, 'Pictured');
+});
+
+test('a null imageUrl stays null after parsing', () => {
+  const parsed = parseLatestUpdatesPayload({
+    updates: [{
+      ...update('plain', '2026-11-14T16:00:00.000Z', 'Plain'),
+      imageUrl: null,
+    }],
+  });
+  assert.equal(parsed.length, 1);
+  assert.equal(parsed[0]?.imageUrl, null);
+  assert.equal(parsed[0]?.headline, 'Plain');
 });
 
 test('the hook hides an empty list, shows retry after a failure, and refetches newest first', async () => {
@@ -173,11 +205,35 @@ test('the segment reads the shared subpath and sits under the stories mosaic', (
   assert.ok(mosaic < segment && segment < calendar);
   assert.match(home, /fetchStories/);
   assert.match(home, /fetchFeedItems/);
+  assert.match(home, /feedItemDetail/);
 
-  const narratives = readFileSync(path.join(here, 'feed.api.ts'), 'utf8');
-  assert.match(narratives, /\/narratives/);
+  const feedApi = readFileSync(path.join(here, 'feed.api.ts'), 'utf8');
+  assert.doesNotMatch(feedApi, /\/narratives/);
+  assert.match(feedApi, /fetchLatestUpdates/);
   const stories = readFileSync(path.join(here, 'stories.api.ts'), 'utf8');
   assert.match(stories, /\/stories/);
+});
+
+test('no Expo app source outside tests still names the legacy publisher route', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const root = path.resolve(here, '../..');
+  const skipDirs = new Set(['node_modules', '.expo', 'dist', 'web-build', 'coverage']);
+  const offenders: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skipDirs.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!/\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)) continue;
+      if (/\.test\.(?:ts|tsx|js|jsx|mjs)$/.test(entry.name)) continue;
+      if (readFileSync(full, 'utf8').includes('/narratives')) offenders.push(path.relative(root, full));
+    }
+  };
+  walk(root);
+  assert.deepEqual(offenders, []);
 });
 
 test('presentation type stays empty when there is nothing to show', () => {

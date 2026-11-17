@@ -5,6 +5,7 @@ import { FeedHeader } from './components/FeedHeader';
 import { FeedList } from './components/FeedList';
 import { NarrativeSheet, type NarrativeSheetItem } from './components/NarrativeSheet';
 import { FeedSectionState } from './components/feed-section-state';
+import { feedItemDetail } from './feed.api';
 import { FEED_COLORS as color } from './feed.constants';
 import type { FeedItem } from './feed.types';
 import { useReportPages } from './use-report-pages';
@@ -17,8 +18,7 @@ export default function FeedScreen() {
   const [, setClock] = useState(0);
   useFocusedAppStateInterval(() => pages.refresh(true), 5 * 60_000);
   useFocusedAppStateInterval(() => setClock((value) => value + 1), 60_000);
-  const openReport = (item: FeedItem) => setSheetItem({ id: item.id, title: item.headline, summary: item.description,
-    createdAt: item.createdAt, imageUrl: item.imageUrl, imageKind: item.imageKind, imageAttribution: item.imageAttribution });
+  const openReport = (item: FeedItem) => setSheetItem(feedItemDetail(item));
   return <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
     <FeedHeader />
     <FeedList items={pages.items} onCardPress={openReport} refreshing={pages.loading && pages.items.length > 0}

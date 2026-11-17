@@ -47,6 +47,7 @@ function loadSegment() {
   }> } = {};
   const mocks: Record<string, unknown> = {
     react: React,
+    'expo-image': { Image: host('Image') },
     'react-native': {
       Linking: { openURL: (url: string) => { opened.push(url); return Promise.resolve(); } },
       Pressable: host('Pressable'),
@@ -194,8 +195,12 @@ test('populated latest updates show the headline, three sections and sources, ne
   assert.ok(labels.includes(latestUpdateTime(newer.publishedAt, now)));
 
   const headline = renderer.root.findAllByType('Text' as never).find((node) => node.props.children === 'Bitcoin holds above $100,000');
-  assert.equal(headline?.props.style.fontSize, FEED_TOKENS.type.section);
+  assert.equal(headline?.props.style.fontSize, FEED_TOKENS.type.cardTitle);
+  assert.equal(headline?.props.style.lineHeight, 23);
   assert.equal(headline?.props.style.fontWeight, '700');
+  const body = renderer.root.findAllByType('Text' as never).find((node) => node.props.children === 'Bitcoin holds above $100,000 happened');
+  assert.equal(body?.props.style.fontSize, FEED_TOKENS.type.body);
+  assert.equal(body?.props.style.color, FEED_TOKENS.colors.textDim);
   const sectionLabel = renderer.root.findAllByType('Text' as never).find((node) => node.props.children === 'What happened');
   assert.equal(sectionLabel?.props.style.fontSize, FEED_TOKENS.type.label);
   assert.equal(sectionLabel?.props.style.color, FEED_TOKENS.colors.textFaint);
@@ -203,6 +208,28 @@ test('populated latest updates show the headline, three sections and sources, ne
   const source = renderer.root.findByProps({ accessibilityLabel: 'Price recap (sample)' });
   await act(async () => { source.props.onPress(); });
   assert.deepEqual(opened, ['https://example.com/bitcoin-price']);
+  await act(async () => renderer.unmount());
+});
+
+test('a card with an image shows it, and a failed or null image uses the text layout', async () => {
+  const withImage = { ...newer, imageUrl: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png' };
+  const withoutImage = { ...older, imageUrl: null as string | null };
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(LatestUpdateSegment, {
+      presentation: presentLatestUpdates([withoutImage, withImage], null, false),
+      onRetry: () => {},
+      now,
+    }));
+  });
+  const images = renderer.root.findAllByType('Image' as never);
+  assert.equal(images.length, 1);
+  assert.equal(images[0]?.props.source, withImage.imageUrl);
+  assert.ok(textNodes(renderer).includes('Fed minutes leave a cut on the table'));
+  await act(async () => { images[0]?.props.onError(); });
+  assert.equal(renderer.root.findAllByType('Image' as never).length, 0);
+  assert.ok(textNodes(renderer).includes('Bitcoin holds above $100,000'));
+  assert.ok(textNodes(renderer).includes('What happened'));
   await act(async () => renderer.unmount());
 });
 

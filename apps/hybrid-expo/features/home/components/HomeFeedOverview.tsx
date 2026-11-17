@@ -7,7 +7,7 @@ import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/compone
 import { TodayCarousel } from '@/features/feed/components/StoryCarousel';
 import { TopicMosaic } from '@/features/feed/components/TopicMosaic';
 import { FeedSectionState } from '@/features/feed/components/feed-section-state';
-import { fetchFeedItems } from '@/features/feed/feed.api';
+import { feedItemDetail, fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
 import { todayLabel, todaySlides } from '@/features/feed/feed-home';
@@ -54,10 +54,7 @@ export function HomeFeedOverview({ active, onScroll }: {
     try { await Promise.all([stories.load(), reports.load(), latest.load()]); }
     finally { setRefreshing(false); }
   }, [stories.load, reports.load, latest.load]);
-  const openReport = (item: FeedItem) => setReport({
-    id: item.id, title: item.headline, summary: item.description, createdAt: item.createdAt,
-    imageUrl: item.imageUrl, imageKind: item.imageKind, imageAttribution: item.imageAttribution,
-  });
+  const openReport = (item: FeedItem) => setReport(feedItemDetail(item));
   const slides = todaySlides(reports.data ?? []);
   const bands = feedBandHeights(windowHeight, columnHeight);
   const now = new Date();

@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Image } from 'expo-image';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { sectionFailureTitle } from '../feed-mosaic';
@@ -19,6 +21,8 @@ const SECTIONS: readonly { key: 'whatHappened' | 'howWeGotHere' | 'whatToWatch';
  * Latest-update segment. An empty list renders nothing, which is the
  * agreed state while nothing is live. A failed request stays in this
  * block so the rest of the Feed keeps working.
+ * Cards follow the signed-off latest card: story fill, 18 title,
+ * 15 dim body, mono labels, and a full-bleed image when one exists.
  */
 export function LatestUpdateSegment({
   presentation,
@@ -53,15 +57,29 @@ export function LatestUpdateSegment({
 }
 
 function LatestUpdateCard({ update, now }: { update: LatestUpdate; now: Date }) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
   const time = latestUpdateTime(update.publishedAt, now);
+  const imageUrl = update.imageUrl && failedImage !== update.imageUrl ? update.imageUrl : null;
   return (
-    <FeedBox tone="card" accessibilityLabel={`${update.entityName}. ${update.headline}. ${time}`}>
-      <View style={styles.card}>
-        <Text style={styles.metaRow}>
-          <Text style={styles.entity}>{update.entityName}</Text>
-          <Text style={styles.time}> · </Text>
+    <FeedBox
+      tone="card"
+      accessibilityLabel={`${update.entityName}. ${update.headline}. ${time}`}
+      style={imageUrl ? styles.cardBleed : undefined}
+    >
+      {imageUrl ? (
+        <Image
+          source={imageUrl}
+          onError={() => setFailedImage(imageUrl)}
+          style={styles.image}
+          contentFit="cover"
+          accessibilityLabel={update.headline}
+        />
+      ) : null}
+      <View style={imageUrl ? styles.copy : styles.card}>
+        <View style={styles.metaRow}>
+          <Text style={styles.entity} numberOfLines={1}>{update.entityName}</Text>
           <Text style={styles.time}>{time}</Text>
-        </Text>
+        </View>
         <Text style={styles.headline}>{update.headline}</Text>
         {SECTIONS.map((section) => (
           <View key={section.key} style={styles.section}>
@@ -129,16 +147,29 @@ function LatestUpdateUnavailable({ title, text, onRetry }: {
 
 const styles = StyleSheet.create({
   segment: {
-    gap: FEED_TOKENS.space.sm,
+    gap: FEED_TOKENS.space.md,
   },
   card: {
     gap: FEED_TOKENS.space.md,
   },
+  cardBleed: {
+    padding: 0,
+    overflow: 'hidden',
+  },
+  image: {
+    width: '100%',
+    height: 178,
+    backgroundColor: FEED_TOKENS.colors.card,
+  },
+  copy: {
+    padding: FEED_TOKENS.space.md,
+    gap: FEED_TOKENS.space.md,
+  },
   metaRow: {
-    color: FEED_TOKENS.colors.textDim,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: FEED_TOKENS.space.md,
   },
   heading: {
     flexDirection: 'row',
@@ -147,13 +178,13 @@ const styles = StyleSheet.create({
     gap: FEED_TOKENS.space.sm,
   },
   kicker: {
-    color: FEED_TOKENS.colors.textDim,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
+    color: FEED_TOKENS.colors.text,
+    fontSize: FEED_TOKENS.type.section,
+    lineHeight: 24,
+    fontWeight: '700',
   },
   entity: {
+    flex: 1,
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
     fontSize: FEED_TOKENS.type.label,
@@ -164,13 +195,13 @@ const styles = StyleSheet.create({
     color: FEED_TOKENS.colors.textFaint,
     fontFamily: monoFontFamily(),
     fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 0,
-    textTransform: 'none',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   headline: {
     color: FEED_TOKENS.colors.text,
-    fontSize: FEED_TOKENS.type.section,
-    lineHeight: 26,
+    fontSize: FEED_TOKENS.type.cardTitle,
+    lineHeight: 23,
     fontWeight: '700',
   },
   section: {
@@ -184,13 +215,16 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   body: {
-    color: FEED_TOKENS.colors.text,
+    color: FEED_TOKENS.colors.textDim,
     fontSize: FEED_TOKENS.type.body,
     lineHeight: 22,
   },
   sources: {
     gap: FEED_TOKENS.space.xs,
+    borderTopWidth: 1,
+    borderTopColor: FEED_TOKENS.colors.border,
     marginTop: FEED_TOKENS.space.xs,
+    paddingTop: FEED_TOKENS.space.sm,
   },
   sourceLink: {
     minHeight: 44,
@@ -220,7 +254,7 @@ const styles = StyleSheet.create({
   },
   skeletonHeadline: {
     width: '78%',
-    height: 20,
+    height: 18,
   },
   skeletonBody: {
     width: '92%',

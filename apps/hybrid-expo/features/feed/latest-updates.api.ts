@@ -1,6 +1,21 @@
 import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-updates';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 
+/** Same bound as the API: https only, at most 2048 characters. Anything else is no image. */
+export const LATEST_UPDATE_IMAGE_MAX_LENGTH = 2048;
+
+export function readLatestUpdateImageUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > LATEST_UPDATE_IMAGE_MAX_LENGTH) return null;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 const DEFAULT_LIMIT = 12;
 const MAX_LIMIT = 30;
 
@@ -74,6 +89,7 @@ function parseLatestUpdate(value: unknown): LatestUpdate | null {
       return parsed ? [parsed] : [];
     }),
     publishedAt: value.publishedAt,
+    imageUrl: readLatestUpdateImageUrl(value.imageUrl),
   };
 }
 

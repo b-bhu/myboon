@@ -1,60 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Linking, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
-import { fetchNarrativeDetail } from '@/features/feed/feed.api';
-import type { NarrativeDetail } from '@/features/feed/feed.api';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
 import { newsSheetHeight, shouldDismissSheet, updateAge } from '@/features/feed/feed-updates';
+import type { FeedUpdateSource } from '@/features/feed/feed.types';
 import { useReducedMotion } from '../use-reduced-motion';
-
-function normalizeArticleText(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\\n/g, '\n').trim();
-}
-
-function stripInlineMarkdown(text: string): string {
-  return text
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .trim();
-}
-
-function ArticleBody({ content }: { content: string }) {
-  const blocks = normalizeArticleText(content).split(/\n\s*\n+/).filter(Boolean);
-
-  return (
-    <View style={styles.articleBody}>
-      {blocks.map((block, blockIndex) => {
-        const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
-        const firstLine = lines[0] ?? '';
-        const heading = firstLine.match(/^#{1,3}\s+(.+)$/);
-        const bullets = lines
-          .map((line) => line.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/)?.[1])
-          .filter((line): line is string => Boolean(line));
-
-        if (heading && lines.length === 1) {
-          return <Text key={blockIndex} style={styles.articleHeading}>{stripInlineMarkdown(heading[1])}</Text>;
-        }
-
-        if (bullets.length === lines.length) {
-          return (
-            <View key={blockIndex} style={styles.bulletList}>
-              {bullets.map((line, lineIndex) => (
-                <View key={lineIndex} style={styles.bulletRow}>
-                  <Text style={styles.bulletMarker}>•</Text>
-                  <Text style={[styles.articleText, styles.bulletText]}>{stripInlineMarkdown(line)}</Text>
-                </View>
-              ))}
-            </View>
-          );
-        }
-
-        return <Text key={blockIndex} style={styles.articleText}>{stripInlineMarkdown(lines.join('\n'))}</Text>;
-      })}
-    </View>
-  );
-}
 
 export interface NarrativeSheetItem {
   id: string;
@@ -64,6 +15,9 @@ export interface NarrativeSheetItem {
   imageUrl?: string | null;
   imageKind?: 'content' | 'source_avatar' | null;
   imageAttribution?: string | null;
+  howWeGotHere?: string;
+  whatToWatch?: string;
+  sources?: readonly FeedUpdateSource[];
 }
 
 interface NarrativeSheetProps {
@@ -71,22 +25,26 @@ interface NarrativeSheetProps {
   onClose: () => void;
 }
 
+const BODY: readonly { key: 'summary' | 'howWeGotHere' | 'whatToWatch'; label: string }[] = [
+  { key: 'summary', label: 'What happened' },
+  { key: 'howWeGotHere', label: 'How we got here' },
+  { key: 'whatToWatch', label: 'What to watch' },
+];
+
 export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const reducedMotion = useReducedMotion();
-  const [retry, setRetry] = useState(0);
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const { height: screenHeight } = useWindowDimensions();
   const sheetHeight = newsSheetHeight(screenHeight);
   const translateY = useRef(new Animated.Value(1000)).current;
   const dragY = useRef(new Animated.Value(0)).current;
-  const [detail, setDetail] = useState<NarrativeDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const itemId = item?.id;
 
-  // Always-current close callback for the pan-release handler.
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
+  useEffect(() => {
+    setFailedImage(null);
+  }, [item?.id]);
 
   useEffect(() => {
     dragY.setValue(0);
@@ -121,40 +79,12 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
     });
   }, [dragY, sheetHeight, reducedMotion]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    if (!itemId) {
-      setDetail(null);
-      setError(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(false);
-    setDetail(null);
-    fetchNarrativeDetail(itemId, { signal: controller.signal })
-      .then((nextDetail) => {
-        if (!cancelled) setDetail(nextDetail);
-      })
-      .catch(() => {
-        if (!cancelled) setError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [itemId, retry]);
-
-  const title = detail?.title ?? item?.title ?? '';
-  const summary = detail?.summary ?? item?.summary ?? '';
-  const publishedAt = detail?.publishedAt ?? item?.createdAt ?? '';
-  const imageUrl = detail?.imageUrl ?? item?.imageUrl ?? null;
-  const imageKind = detail?.imageKind ?? item?.imageKind ?? null;
+  const title = item?.title ?? '';
+  const publishedAt = item?.createdAt ?? '';
+  const imageUrl = item?.imageUrl ?? null;
+  const showImage = Boolean(imageUrl)
+    && item?.imageKind !== 'source_avatar'
+    && failedImage !== imageUrl;
   const age = updateAge(publishedAt, new Date());
   const meta = age ? `${age} · LATEST` : 'LATEST';
 
@@ -177,33 +107,42 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
           <Text style={styles.meta}>{meta}</Text>
           <Text style={styles.title}>{title}</Text>
-          {imageUrl && imageKind === 'content' && failedImage !== imageUrl ? (
+          {showImage && imageUrl ? (
             <Image
               source={imageUrl}
               onError={() => setFailedImage(imageUrl)}
               style={styles.heroImage}
               contentFit="cover"
               transition={reducedMotion ? 0 : 180}
-              accessibilityLabel={detail?.imageAttribution ?? item?.imageAttribution ?? title}
+              accessibilityLabel={item?.imageAttribution ?? title}
             />
           ) : null}
-          <Text style={styles.lead}>{summary}</Text>
-
-          {loading ? <Text style={styles.loadingText}>Loading the full Feed item…</Text> : null}
-          {error ? (
-            <View style={styles.stateCard}>
-              <Text style={styles.stateTitle}>Full Feed item unavailable</Text>
-              <Text style={styles.stateText}>The shorter update is still available above.</Text>
-              <Pressable accessibilityRole="button" onPress={() => setRetry((value) => value + 1)} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: FEED_TOKENS.colors.accent }}>Try again</Text></Pressable>
+          {BODY.map((section) => {
+            const text = item?.[section.key]?.trim();
+            if (!text) return null;
+            return (
+              <View key={section.key} style={styles.section}>
+                <Text style={styles.sectionLabel}>{section.label}</Text>
+                <Text style={styles.lead}>{text}</Text>
+              </View>
+            );
+          })}
+          {item?.sources?.length ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>Sources</Text>
+              {item.sources.map((source) => (
+                <Pressable
+                  key={source.itemId}
+                  accessibilityRole="link"
+                  accessibilityLabel={source.title}
+                  onPress={() => { void Linking.openURL(source.link); }}
+                  style={styles.sourceLink}
+                >
+                  <Text style={styles.sourceTitle}>{source.title}</Text>
+                </Pressable>
+              ))}
             </View>
           ) : null}
-          {detail?.content ? (
-            <>
-              <Text style={styles.sectionLabel}>THE FULL PICTURE</Text>
-              <ArticleBody content={detail.content} />
-            </>
-          ) : null}
-
           <TakeActionApps onBeforeNavigate={onClose} />
         </ScrollView>
       </Animated.View>
@@ -270,11 +209,14 @@ const styles = StyleSheet.create({
     backgroundColor: FEED_TOKENS.colors.card,
     borderCurve: 'continuous',
   },
+  section: {
+    marginTop: 24,
+    gap: 8,
+  },
   lead: {
-    color: FEED_TOKENS.colors.text,
+    color: FEED_TOKENS.colors.textDim,
     fontSize: 15,
     lineHeight: 22,
-    marginTop: 12,
   },
   sectionLabel: {
     color: FEED_TOKENS.colors.textFaint,
@@ -283,63 +225,15 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: '700',
     letterSpacing: 1,
-    marginTop: 24,
-    marginBottom: 12,
+    textTransform: 'uppercase',
   },
-  articleBody: {
-    gap: 12,
+  sourceLink: {
+    minHeight: 44,
+    justifyContent: 'center',
   },
-  articleHeading: {
-    color: FEED_TOKENS.colors.text,
-    fontSize: 18,
-    lineHeight: 23,
-    fontWeight: '700',
-  },
-  articleText: {
-    color: FEED_TOKENS.colors.textDim,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  bulletList: {
-    gap: 8,
-  },
-  bulletRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-  },
-  bulletMarker: {
+  sourceTitle: {
     color: FEED_TOKENS.colors.accent,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  bulletText: {
-    flex: 1,
-  },
-  stateCard: {
-    borderRadius: FEED_TOKENS.radius.card,
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    backgroundColor: FEED_TOKENS.colors.card,
-    padding: 16,
-    gap: 8,
-    marginTop: 24,
-  },
-  stateTitle: {
-    color: FEED_TOKENS.colors.text,
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-  },
-  stateText: {
-    color: FEED_TOKENS.colors.textDim,
     fontSize: 12,
-    lineHeight: 18,
-  },
-  loadingText: {
-    color: FEED_TOKENS.colors.textDim,
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 16,
+    lineHeight: 16,
   },
 });

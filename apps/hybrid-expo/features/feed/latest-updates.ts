@@ -1,6 +1,9 @@
 import type { LatestUpdate, LatestUpdateSource } from '@myboon/shared/latest-updates';
 import { isFeedMocksEnabled } from './feed-mocks';
 
+/** Sample card image. A public https URL, the same hosts the live rows use. */
+export const SAMPLE_UPDATE_IMAGE_URL = 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png';
+
 /**
  * Mock switch for the Feed latest-update segment (issue #636).
  * Same rules as EXPO_PUBLIC_FEED_MOCKS: only "1", "true" and "on" turn it on.
@@ -53,6 +56,7 @@ export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
     whatHappened: 'The latest minutes say most officials still expect another cut this year if inflation keeps easing.',
     howWeGotHere: 'The Fed has already cut twice this year and has been waiting on slower services inflation before moving again.',
     whatToWatch: 'The December meeting, and whether the next CPI print stays under 3 percent.',
+    imageUrl: null,
     sources: [
       sampleSource(
         'sample-fed-minutes',
@@ -72,6 +76,7 @@ export const LATEST_UPDATE_SAMPLES: readonly LatestUpdate[] = [
     whatHappened: 'US spot bitcoin ETFs took in about $640 million on Thursday, the third straight day of net inflows.',
     howWeGotHere: 'Flows had turned negative in late October, then flipped back after the price found support near $96,000.',
     whatToWatch: 'Whether inflows hold through Friday and the price stays above $100,000.',
+    imageUrl: SAMPLE_UPDATE_IMAGE_URL,
     sources: [
       sampleSource(
         'sample-btc-flows',
@@ -96,7 +101,7 @@ function publishedAtMs(iso: string): number {
 }
 
 /** Newest publishedAt first. A tie falls back to id, matching the Feed's stable order. */
-export function sortLatestUpdatesNewestFirst(updates: readonly LatestUpdate[]): LatestUpdate[] {
+export function sortLatestUpdatesNewestFirst<T extends LatestUpdate>(updates: readonly T[]): T[] {
   return [...updates].sort((a, b) => (
     publishedAtMs(b.publishedAt) - publishedAtMs(a.publishedAt) || b.id.localeCompare(a.id)
   ));

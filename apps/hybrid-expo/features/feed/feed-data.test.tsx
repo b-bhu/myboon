@@ -38,43 +38,62 @@ test('module polls queue changes; errors retain readable data; late cancelled re
   await act(async () => renderer.unmount());
 });
 
-test('report polling keeps older pages, deduplicates offset overlap, and retries the same failed cursor', async () => {
+test('report polling keeps the wider latest-updates page, deduplicates overlap, and retries a failed tail', async () => {
   const original = globalThis.fetch;
-  let newest = 45;
-  let failOlder = false;
-  const offsets: number[] = [];
+  let total = 30;
+  let failWider = false;
+  const limits: number[] = [];
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
-    const offset = Number(url.searchParams.get('offset'));
-    offsets.push(offset);
-    if (offset > 0 && failOlder) return new Response('{}', { status: 503 });
-    const rows = Array.from({ length: newest }, (_, index) => newest - index).slice(offset, offset + 20)
-      .map((id) => ({ updateKey: String(id), title: `Report ${id}`, summary: 'Summary', publishedAt: new Date(Date.UTC(2026, 9, 6, 0, id)).toISOString() }));
-    return Response.json(rows);
+    assert.match(url.pathname, /\/latest-updates$/);
+    assert.equal(url.searchParams.get('offset'), null);
+    const limit = Number(url.searchParams.get('limit'));
+    limits.push(limit);
+    if (limit > 20 && failWider) return new Response('nope', { status: 503 });
+    const count = Math.min(total, limit);
+    const updates = Array.from({ length: count }, (_, index) => {
+      const id = total - index;
+      return {
+        id: String(id),
+        entitySlug: `entity-${id}`,
+        entityName: `Entity ${id}`,
+        entityType: 'asset',
+        headline: `Report ${id}`,
+        whatHappened: 'Summary',
+        howWeGotHere: 'Background',
+        whatToWatch: 'Next',
+        publishedAt: new Date(Date.UTC(2026, 9, 6) + id * 1000).toISOString(),
+        sources: [],
+      };
+    });
+    return Response.json({ updates });
   };
   let pages!: ReturnType<typeof useReportPages>;
   function Harness() { pages = useReportPages(); return null; }
   let renderer!: ReactTestRenderer;
   try {
     await act(async () => { renderer = create(createElement(Harness)); });
+    assert.equal(pages.items.length, 20);
+    assert.equal(pages.items[0]?.id, '30');
     await act(async () => { await pages.loadMore(); });
-    assert.equal(pages.items.length, 40);
-    newest = 47;
+    assert.equal(pages.items.length, 30);
+    total = 32;
     await act(async () => { await pages.refresh(true); });
-    assert.equal(pages.items[0]?.id, '45');
-    assert.equal(pages.pending?.[0]?.id, '47');
+    assert.equal(pages.items[0]?.id, '30');
+    assert.equal(pages.pending?.[0]?.id, '32');
     await act(async () => pages.apply());
-    assert.equal(pages.items.length, 42);
-    failOlder = true;
+    assert.equal(pages.items.length, 32);
+    assert.equal(pages.items[0]?.id, '32');
+    failWider = true;
     await act(async () => { await pages.loadMore(); });
     assert.ok(pages.olderError);
-    assert.equal(pages.items.length, 42);
-    failOlder = false;
-    await act(async () => { await pages.loadMore(); await pages.loadMore(); });
+    assert.equal(pages.items.length, 32);
+    failWider = false;
+    await act(async () => { await pages.loadMore(); });
     assert.equal(pages.olderError, null);
-    assert.equal(pages.items.length, 47);
-    assert.equal(new Set(pages.items.map((item) => item.id)).size, 47);
-    assert.deepEqual(offsets, [0, 20, 0, 20, 20, 40]);
+    assert.equal(pages.items.length, 32);
+    assert.equal(new Set(pages.items.map((item) => item.id)).size, 32);
+    assert.deepEqual(limits, [20, 30, 20, 30, 30]);
   } finally { if (renderer) await act(async () => renderer.unmount()); globalThis.fetch = original; }
 });
 
