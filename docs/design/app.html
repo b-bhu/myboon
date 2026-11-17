@@ -54,7 +54,6 @@ header img{height:20px;display:block}
     <button class="tab" role="tab" aria-selected="false" data-s="apps">Apps</button>
     <button class="tab" role="tab" aria-selected="false" data-s="wallet">Wallet</button>
     <button class="tab" role="tab" aria-selected="false" data-s="connect">Connect</button>
-    <button class="tab" role="tab" aria-selected="false" data-s="landing">Web landing</button>
     <button class="tab" role="tab" aria-selected="false" data-s="catalog">Catalog</button>
   </nav>
 </header>
@@ -73,7 +72,6 @@ header img{height:20px;display:block}
 </div>
 
 <div id="catwrap"><iframe id="f-cat" data-src="language.html" title="Component catalog"></iframe></div>
-<div id="landwrap" style="display:none;position:fixed;inset:52px 0 0 0;z-index:18;background:#02161F"><iframe id="f-land" data-src="web-landing-page/index.html" title="Web landing" style="display:block;width:100%;height:100%;border:0"></iframe></div>
 
 <template id="frames">
   <div class="lbl" data-s="feed" style="left:0"><b>Feed</b>running briefing</div>
@@ -92,8 +90,7 @@ var FR=[{id:'feed',x:0,t:'Feed',p:'The running briefing. What is true in the las
 {id:'apps',x:470,t:'Apps',p:'Every venue in one grid, grouped by what they do: Prediction, Perps, LP.',w:'Why: markets are read one app at a time; the grid keeps venues comparable and the tap path short.',open:'apps.html?proto&embed=1'},
 {id:'wallet',x:940,t:'Wallet',p:'Holdings and allocation, then the move flow: deposit, trade in pUSD, withdraw on Polygon.',w:'Why: Privy stays for auth and deposit. Orders settle in pUSD, so the local-currency figure is display only.',open:'wallet.html?proto&embed=1'},
 {id:'connect',x:1410,t:'Connect',p:'First run, before any holdings. Embedded wallet sign-in with Privy.',w:'Why: connect is a door, not its own product. Same keys as the wallet you land in.',open:'wallet-connect/index.html?embed=1'},
-{id:'catalog',t:'Component catalog',p:'Every component with its rules in one place: tokens, cards, buttons, the dark money card, One Tap rounds, the no-fake-data rule.',w:'Why: this is the file you tweak. The phone follows it.',open:'language.html'},
-{id:'landing',t:'Web landing',p:'The public web landing page: headline, live phone, waitlist.',w:'Why: the product promise the first ad click sees, built from the same screens as this prototype.',open:'web-landing-page/index.html'}];
+{id:'catalog',t:'Component catalog',p:'Every component with its rules in one place: tokens, cards, buttons, the dark money card, One Tap rounds, the no-fake-data rule.',w:'Why: this is the file you tweak. The phone follows it.',open:'language.html'}];
 var world=document.getElementById('world'),canvas=document.getElementById('canvas'),why=document.getElementById('why'),whyb=document.getElementById('whyb');
 var catwrap=document.getElementById('catwrap'),cat=document.getElementById('f-cat'),pct=document.getElementById('pct');
 var cur='feed',tabs=[].slice.call(document.querySelectorAll('.tab')),v={x:0,y:0,z:1};
@@ -110,11 +107,8 @@ function select(k,sm){var s=null;FR.forEach(function(f){if(f.id===k)s=f});if(!s)
  cur=k;fill(k);
  tabs.forEach(function(b){b.setAttribute('aria-selected',String(b.dataset.s===k))});
  [].slice.call(world.querySelectorAll('.frame,.lbl')).forEach(function(n){n.classList.toggle('sel',n.dataset.s===k)});
- if(k==='catalog'||k==='landing'){
-  var wrap=document.getElementById(k==='catalog'?'catwrap':'landwrap'),fr=document.getElementById(k==='catalog'?'f-cat':'f-land');
-  catwrap.style.display=(k==='catalog'?'block':'none');document.getElementById('landwrap').style.display=(k==='landing'?'block':'none');
-  if(!fr.src)fr.src=fr.dataset.src;return}
- catwrap.style.display='none';document.getElementById('landwrap').style.display='none';
+ if(k==='catalog'){catwrap.style.display='block';if(!cat.src)cat.src=cat.dataset.src;return}
+ catwrap.style.display='none';
  if(history&&history.replaceState)history.replaceState(null,'','?s='+k);
  var whyH=why.classList.contains('off')?0:(innerWidth>760?why.offsetHeight+24:0);
  var vh=innerHeight-52-whyH,z=Math.min(1.15,Math.max(.35,(vh-LBL-40)/H));
