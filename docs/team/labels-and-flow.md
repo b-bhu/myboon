@@ -18,6 +18,6 @@ Apply a DB migration only after Bibhu explicitly says yes on the issue; a merged
 
 For frontend work, land shared API types in `packages/shared` in their own small PR before frontend work starts. Link that PR as a dependency in the issue.
 
-Frontend (mobile) tasks must end with an EAS checklist covering whether a new EAS build and version bump are needed, what to test on a real Seeker phone, and whether a dApp Store update is needed.
+Issues don't carry a build or release checklist. Bibhu handles app builds, version bumps, device testing and dApp Store updates by hand at release.
 
 When a spec gets `spec-approved`, and when a `needs-bucket` PR merges, the acting bot posts a one-line comment starting with `Decision:` on the spec PR, issue or PR so Ledger can log it to Notion.
