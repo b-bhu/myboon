@@ -27,7 +27,7 @@ export function shouldDismissSheet(dy: number, vy: number, sheetHeight: number):
   return dy > 24 && vy > 0.8;
 }
 
-// Same local week/month abbreviations as todayLabel in feed-home.ts.
+// Local week/month abbreviations for the All-updates day rows.
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

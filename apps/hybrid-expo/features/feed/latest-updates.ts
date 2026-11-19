@@ -5,7 +5,7 @@ import { isFeedMocksEnabled } from './feed-mocks';
 export const SAMPLE_UPDATE_IMAGE_URL = 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png';
 
 /**
- * Mock switch for the Feed latest-update segment (issue #636).
+ * Mock switch for the latest-updates feed rows (issue #636).
  * Same rules as EXPO_PUBLIC_FEED_MOCKS: only "1", "true" and "on" turn it on.
  * The literal env read is what Expo inlines. Default is off, so an empty
  * live route stays hidden.
@@ -17,23 +17,6 @@ export const LATEST_UPDATES_MOCK = isFeedMocksEnabled(process.env.EXPO_PUBLIC_LA
 export function isLatestUpdatesMockEnabled(value: string | undefined): boolean {
   return isFeedMocksEnabled(value);
 }
-
-/** How long the home Feed waits before the loading skeleton opens the layout. */
-export const LATEST_UPDATE_LOADING_GRACE_MS = 400;
-
-export interface LatestUpdatesPresentation {
-  status: 'loading' | 'empty' | 'unavailable' | 'ready';
-  updates: LatestUpdate[];
-  message: string | null;
-  sample: boolean;
-}
-
-export const EMPTY_LATEST_UPDATES: LatestUpdatesPresentation = {
-  status: 'empty',
-  updates: [],
-  message: null,
-  sample: false,
-};
 
 const sampleSource = (
   itemId: string,
@@ -105,52 +88,4 @@ export function sortLatestUpdatesNewestFirst<T extends LatestUpdate>(updates: re
   return [...updates].sort((a, b) => (
     publishedAtMs(b.publishedAt) - publishedAtMs(a.publishedAt) || b.id.localeCompare(a.id)
   ));
-}
-
-/**
- * Same buckets as toRelativeTime in feed.api.ts ("5m ago", "2h ago", "3d ago"),
- * with an explicit clock so the segment and its tests share one instant.
- */
-export function latestUpdateTime(iso: string, now: Date): string {
-  const publishedAt = Date.parse(iso);
-  if (!Number.isFinite(publishedAt)) return 'now';
-  const diffMs = Math.max(0, now.getTime() - publishedAt);
-  const minute = 60_000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diffMs < hour) return `${Math.max(1, Math.floor(diffMs / minute))}m ago`;
-  if (diffMs < day) return `${Math.floor(diffMs / hour)}h ago`;
-  return `${Math.floor(diffMs / day)}d ago`;
-}
-
-/**
- * Map a section payload to what the segment renders.
- * Null data is still loading. A failure with no rows is unavailable.
- * An empty list hides, unless the mock flag is on, in which case the
- * sample rows stand in so the populated layout can be reviewed.
- * Real rows always win over the sample.
- */
-export function presentLatestUpdates(
-  data: readonly LatestUpdate[] | null,
-  error: string | null,
-  mocksEnabled: boolean,
-): LatestUpdatesPresentation {
-  if (data === null) {
-    if (error) return { status: 'unavailable', updates: [], message: error, sample: false };
-    return { status: 'loading', updates: [], message: null, sample: false };
-  }
-  const updates = sortLatestUpdatesNewestFirst(data);
-  if (updates.length === 0) {
-    if (error) return { status: 'unavailable', updates: [], message: error, sample: false };
-    if (mocksEnabled) {
-      return {
-        status: 'ready',
-        updates: sortLatestUpdatesNewestFirst(LATEST_UPDATE_SAMPLES),
-        message: null,
-        sample: true,
-      };
-    }
-    return { status: 'empty', updates: [], message: null, sample: false };
-  }
-  return { status: 'ready', updates, message: error, sample: false };
 }

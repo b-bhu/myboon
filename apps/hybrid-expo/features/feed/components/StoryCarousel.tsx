@@ -4,8 +4,8 @@ import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } fr
 import type { NativeScrollEvent, NativeSyntheticEvent, ViewStyle } from 'react-native';
 import { FEED_COLORS } from '@/features/feed/feed.constants';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
-import { reportSourceName, toRelativeTime, toShortDate } from '@/features/feed/feed.api';
-import { carouselIndex, slideTag } from '@/features/feed/feed-home';
+import { toRelativeTime, toShortDate } from '@/features/feed/feed.api';
+import { carouselIndex, slideTag, todaySlideLayout } from '@/features/feed/feed-home';
 import type { FeedItem, StorySummary } from '@/features/feed/feed.types';
 import { FeedBox } from './ui/FeedBox';
 import { useContentImageFailed } from './FeedCard';
@@ -150,55 +150,82 @@ export function StoryCarouselSkeleton() {
   );
 }
 
+// Latest-updates hero geometry (mock .hx-track/.hx-slide): the track bleeds
+// past the home column's right padding, each slide leaves 24px for the next
+// card's peek with an 8px gap, and the last slide is full width.
+const TODAY_EDGE = FEED_TOKENS.space.lg;
+const TODAY_SLIDE_BITE = FEED_TOKENS.space.xl;
+const TODAY_GAP = FEED_TOKENS.space.sm;
+
 interface TodayCarouselProps {
   items: FeedItem[];
   onPress: (item: FeedItem) => void;
-  /** Short row that fits the home's 25% band. */
-  compact?: boolean;
+  /** The footer's "All updates" action, owned by the screen. */
+  onAllUpdates: () => void;
 }
 
 /**
- * "Today" paged carousel (feed-mock.html .slide/.bars): one full-width boxed
- * card per view, gold progress bars below. No auto-advance — safe for
- * reduced motion; the active bar follows manual swipes only.
+ * Latest-updates hero (docs/design/feed.html #s-home .hx-top, issue #681):
+ * a snap carousel of fixed 280px cards plus a footer with gold page bars
+ * and the "All updates" action. No auto-advance; the active bar follows
+ * manual swipes only.
  */
-export function TodayCarousel({ items, onPress, compact = false }: TodayCarouselProps) {
-  const [slideWidth, setSlideWidth] = useState(0);
+export function TodayCarousel({ items, onPress, onAllUpdates }: TodayCarouselProps) {
+  const [heroWidth, setHeroWidth] = useState(0);
   const [active, setActive] = useState(0);
   if (!items.length) return null;
   const current = Math.min(active, items.length - 1);
+  // Slide = column width minus the 24px peek; the track itself bleeds the
+  // column's 16px right padding, so its content is heroWidth + 16 wide.
+  const slideWidth = Math.max(0, heroWidth - TODAY_SLIDE_BITE);
+  const stride = slideWidth + TODAY_GAP;
   const track = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    if (slideWidth > 0) setActive(carouselIndex(event.nativeEvent.contentOffset.x, slideWidth, items.length));
+    if (stride > 0) setActive(carouselIndex(event.nativeEvent.contentOffset.x, stride, items.length));
   };
   return (
     <View
-      style={compact ? styles.todayCompact : undefined}
+      style={styles.todayHero}
       onLayout={(event) => {
         const width = event.nativeEvent.layout.width;
-        if (width > 0) setSlideWidth(width);
+        if (width > 0) setHeroWidth(width);
       }}
     >
-      {slideWidth > 0 ? (
+      {heroWidth > 0 ? (
         <>
           <ScrollView
             horizontal
-            pagingEnabled
             showsHorizontalScrollIndicator={false}
+            decelerationRate="fast"
+            snapToInterval={stride}
             scrollEventThrottle={16}
             onScroll={track}
             onMomentumScrollEnd={track}
-            style={compact ? styles.todayCompactTrack : undefined}
+            style={styles.todayTrack}
+            contentContainerStyle={styles.todayTrackContent}
           >
-            {items.map((item) => (
-              <View key={item.id} style={{ width: slideWidth, flex: compact ? 1 : undefined }}>
-                <TodaySlide item={item} onPress={onPress} compact={compact} />
+            {items.map((item, index) => (
+              <View
+                key={item.id}
+                style={{ width: index === items.length - 1 ? slideWidth + TODAY_SLIDE_BITE : slideWidth }}
+              >
+                <TodaySlide item={item} onPress={onPress} />
               </View>
             ))}
           </ScrollView>
-          <View style={styles.todayBars} accessibilityLabel={`Update ${current + 1} of ${items.length}`}>
-            {items.map((item, index) => (
-              <View key={item.id} style={[styles.todayBar, index === current && styles.todayBarActive]} />
-            ))}
+          <View style={styles.todayFoot}>
+            <View style={styles.todayBars} accessibilityLabel={`Update ${current + 1} of ${items.length}`}>
+              {items.map((item, index) => (
+                <View key={item.id} style={[styles.todayBar, index === current && styles.todayBarActive]} />
+              ))}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="All updates"
+              onPress={onAllUpdates}
+              style={styles.todayFootLink}
+            >
+              <Text style={styles.todayFootLinkLabel}>All updates →</Text>
+            </Pressable>
           </View>
         </>
       ) : null}
@@ -206,49 +233,57 @@ export function TodayCarousel({ items, onPress, compact = false }: TodayCarousel
   );
 }
 
-function TodaySlide({ item, onPress, compact = false }: { item: FeedItem; onPress: (item: FeedItem) => void; compact?: boolean }) {
+function TodaySlide({ item, onPress }: { item: FeedItem; onPress: (item: FeedItem) => void }) {
   const { hasContentImage, onImageError } = useContentImageFailed(item);
+  const layout = todaySlideLayout(item, !hasContentImage);
   const tag = slideTag(item);
   const time = toRelativeTime(item.createdAt);
-  const source = reportSourceName(item.sourceName);
-  const tagChip = tag ? (
-    <View
-      style={[styles.todaySlideTagChrome, hasContentImage ? styles.todaySlideTag : styles.todaySlideTagInline]}
-      accessibilityElementsHidden
-    >
-      <Text style={styles.todaySlideTagText}>{tag}</Text>
-    </View>
-  ) : null;
   return (
     <FeedBox
       tone="ground"
       onPress={() => onPress(item)}
-      accessibilityLabel={`${item.headline}, ${tag}, ${time}`}
-      style={[styles.todaySlide, compact && styles.todaySlideCompact]}
+      accessibilityLabel={item.headline}
+      style={styles.todaySlide}
     >
-      {hasContentImage && item.imageUrl ? (
-        <View style={[styles.todaySlideImageWrap, compact && styles.todaySlideImageWrapCompact]}>
-          <Image
-            source={item.imageUrl}
-            onError={onImageError}
-            style={[styles.todaySlideImage, compact && styles.todaySlideImageCompact]}
-            contentFit="cover"
-            transition={180}
-            accessibilityLabel={item.imageAttribution ? `${item.headline}, ${item.imageAttribution}` : item.headline}
-          />
-          {compact ? null : tagChip}
-        </View>
+      {layout.variant === 'image' && item.imageUrl ? (
+        <Image
+          source={item.imageUrl}
+          onError={onImageError}
+          style={styles.todaySlideImage}
+          contentFit="cover"
+          transition={180}
+          accessibilityLabel={item.imageAttribution ? `${item.headline}, ${item.imageAttribution}` : item.headline}
+        />
       ) : null}
-      <View style={[styles.todaySlideCopy, compact && styles.todaySlideCopyCompact]}>
-        {!hasContentImage && !compact && tagChip}
+      <View style={styles.todaySlideCopy}>
         <View style={styles.todaySlideMeta}>
-          <Text style={styles.monoLabel} numberOfLines={1}>{compact && tag ? `${tag} · ${time}` : time}</Text>
-          {source && !compact ? <Text style={[styles.monoLabel, styles.todaySlideMetaSource]} numberOfLines={1}>{source}</Text> : null}
+          <Text style={styles.monoLabel} numberOfLines={1}>{tag}</Text>
+          <Text style={styles.monoLabel} numberOfLines={1}>{time}</Text>
         </View>
-        <Text style={[styles.todaySlideHeadline, compact && styles.todaySlideHeadlineCompact]} numberOfLines={compact ? 4 : 3}>{item.headline}</Text>
-        {compact ? null : <Text style={styles.todaySlideBody} numberOfLines={2}>{item.description}</Text>}
+        <Text style={styles.todaySlideHeadline} numberOfLines={layout.headlineLines}>{item.headline}</Text>
+        <Text style={styles.todaySlideBody} numberOfLines={layout.summaryLines}>{item.description}</Text>
       </View>
     </FeedBox>
+  );
+}
+
+/**
+ * Loading state for the hero slot (docs design: a placeholder the size of
+ * one card) until the first rows land.
+ */
+export function TodayCarouselSkeleton() {
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = Math.max(0, windowWidth - 2 * TODAY_EDGE - TODAY_SLIDE_BITE);
+  return (
+    <View
+      style={[styles.todaySlide, styles.skeletonHero, { width: cardWidth }]}
+      accessibilityLabel="Loading latest updates"
+    >
+      <View style={[styles.skeletonLine, styles.skeletonTagLine]} />
+      <View style={[styles.skeletonLine, styles.skeletonTitle]} />
+      <View style={[styles.skeletonLine, styles.skeletonBody]} />
+      <View style={[styles.skeletonLine, styles.skeletonBodyShort]} />
+    </View>
   );
 }
 
@@ -496,70 +531,34 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  // Today slide (mock .slide): boxed card, image bleed, 12 padding copy block.
-  todayCompact: { flex: 1, minHeight: 0 },
-  todayCompactTrack: { flex: 1 },
+  // Latest-updates hero (mock .hx-*): 280px cards, image bleed on top, the
+  // track bleeds past the column's right padding, footer under the track.
+  todayHero: { gap: FEED_TOKENS.space.sm },
+  todayTrack: { marginRight: -TODAY_EDGE },
+  todayTrackContent: { gap: TODAY_GAP, paddingRight: TODAY_EDGE },
   todaySlide: {
-    width: '100%',
+    height: 280,
     padding: 0,
     overflow: 'hidden',
   },
-  todaySlideCompact: { flex: 1, flexDirection: 'row', minHeight: 0 },
-  todaySlideImageWrapCompact: { width: 96, height: '100%' },
-  todaySlideImageCompact: { width: 96, height: '100%' },
-  todaySlideCopyCompact: { flex: 1, justifyContent: 'center' },
-  todaySlideHeadlineCompact: { fontSize: 18, lineHeight: 23 },
-  todaySlideImageWrap: {
-    height: 178,
-    backgroundColor: FEED_TOKENS.colors.card,
-  },
   todaySlideImage: {
     width: '100%',
-    height: 178,
+    height: 132,
+    borderBottomWidth: 1,
+    borderBottomColor: FEED_TOKENS.colors.border,
     backgroundColor: FEED_TOKENS.colors.card,
   },
-  // Tag chip (mock .slide .tag): chrome carries the visuals; over the image
-  // the chip is absolute (left/top 12), inline it stays in normal flow.
-  todaySlideTag: {
-    position: 'absolute',
-    left: FEED_TOKENS.space.md,
-    top: FEED_TOKENS.space.md,
-  },
-  todaySlideTagChrome: {
-    alignSelf: 'flex-start',
-    backgroundColor: FEED_TOKENS.colors.screen,
-    borderWidth: 1,
-    borderColor: FEED_TOKENS.colors.border,
-    borderRadius: FEED_TOKENS.radius.chip,
-    paddingVertical: FEED_TOKENS.space.xs,
-    paddingHorizontal: FEED_TOKENS.space.sm,
-  },
-  todaySlideTagInline: {
-    position: 'relative',
-    marginBottom: FEED_TOKENS.space.sm,
-  },
-  todaySlideTagText: {
-    color: FEED_TOKENS.colors.textDim,
-    fontFamily: monoFontFamily(),
-    fontSize: FEED_TOKENS.type.label,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
   todaySlideCopy: {
+    flex: 1,
+    minHeight: 0,
     padding: FEED_TOKENS.space.md,
     gap: FEED_TOKENS.space.sm,
-    flexShrink: 1,
-    minWidth: 0,
   },
   todaySlideMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: FEED_TOKENS.space.sm,
-  },
-  todaySlideMetaSource: {
-    flexShrink: 1,
-    textAlign: 'right',
+    gap: FEED_TOKENS.space.md,
   },
   todaySlideHeadline: {
     color: FEED_TOKENS.colors.text,
@@ -573,23 +572,44 @@ const styles = StyleSheet.create({
     fontSize: FEED_TOKENS.type.body,
     lineHeight: 21,
   },
+  // Footer under the track (mock .hx-foot): bars fill the row, link the right.
+  todayFoot: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: FEED_TOKENS.space.lg,
+  },
+  todayFootLink: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
+  todayFootLinkLabel: {
+    color: FEED_TOKENS.colors.accent,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
   // Progress bars (mock .bars): one flex bar per slide, active one gold.
   todayBars: {
+    flex: 1,
     flexDirection: 'row',
     gap: FEED_TOKENS.space.xs,
-    marginTop: FEED_TOKENS.space.sm,
   },
   todayBar: {
     flex: 1,
     height: 3,
     borderRadius: 0,
-    backgroundColor: FEED_TOKENS.colors.textFaint,
-    opacity: 0.5,
+    backgroundColor: FEED_TOKENS.colors.border,
   },
   todayBarActive: {
     backgroundColor: FEED_TOKENS.colors.accent,
-    opacity: 1,
   },
+  // Hero loading skeleton: card chrome with placeholder lines.
+  skeletonHero: {
+    backgroundColor: FEED_COLORS.card,
+    padding: FEED_TOKENS.space.md,
+    gap: FEED_TOKENS.space.sm,
+    opacity: 0.72,
+  },
+  skeletonTagLine: { width: '22%', height: 10 },
   // Developing story card (mock .card.story): 84 image left, hairline footer.
   developingImage: {
     width: 84,
