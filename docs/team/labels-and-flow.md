@@ -1,29 +1,22 @@
 # Labels and work flow
 
-Use the repository's [canonical label list](../../.github/labels.md):
+Use the repository's [canonical label list](../../.github/labels.md).
 
-- `spec`: spec PR awaiting Bucket review; `spec-approved`: Bucket approved it.
-- `ready:backend`, `ready:frontend`, `ready:system`: approved task ready for its owner.
-- `in-progress`: an agent has claimed the task.
-- `blocked`: work is stuck on a dependency or decision.
-- `needs-bucket`: work touches money, wallets, the database or migrations and needs Bucket review.
+- `new`: a raw idea or bug. Nobody works on it.
+- `grooming`: Bibhu and the CTO shape it until it fits the [agent-ready template](../../.github/ISSUE_TEMPLATE/agent-ready.md). The CPO answers product questions.
+- `agent-ready`: any developer agent picks the top issue. Nobody routes it by name. The issue's Where section says the area.
+- Pull request: one issue, one PR with `Closes #n`. After CI is green, the CTO reviews with comments only. DB Guy also reviews any migration. The UX Engineer reviews a PR that changes the UI. Bibhu merges.
+- `blocked`: the agent hit its retry cap, or the issue is wrong. It goes back to grooming.
 
-A `ready:*` label is the go-ahead to build anything outside money, wallet or DB work; those tasks still need `needs-bucket`. A `ready:*` label does not bypass the computer's safety approval cards: if a task hits one, the bot adds `blocked` and asks Bucket in its own direct chat.
+`needs-bucket` stays for work that touches money, wallets, the database or migrations. Keep it through review. Bibhu alone merges.
 
-## Claiming an issue
+Do not route work to Frontend Dev, Backend Dev, or a `ready:*` label. Older `agent:*` labels stay retired.
 
-1. Take only an unclaimed issue with your matching `ready:*` label.
-2. Before work, replace that `ready:*` label with `in-progress` and comment that you claimed it.
-3. Never take an issue already marked `in-progress` or otherwise claimed in its comments.
-4. If blocked, mark it `blocked`, explain the dependency in a comment, and remove `in-progress` so another agent can see it is unclaimed.
+`agent-ready` does not bypass the computer's safety approval cards: if a task hits one, the bot adds `blocked` and asks Bibhu in its own direct chat.
 
-When the change touches money, wallets or DB/migrations, also add `needs-bucket`. Keep it through review for Bucket's approval. Bucket alone merges.
+Apply a DB migration only after Bibhu explicitly says yes on the issue; a merged PR alone is not approval.
 
-Apply a DB migration only after Bucket explicitly says yes on the issue; a merged PR alone is not approval.
-
-For frontend work, land shared API types in `packages/shared` in their own small PR before frontend work starts. Link that PR as a dependency in the frontend issue.
-
-Older `agent:*` labels are being retired; use the labels above for new work.
+For frontend work, land shared API types in `packages/shared` in their own small PR before frontend work starts. Link that PR as a dependency in the issue.
 
 Frontend (mobile) tasks must end with an EAS checklist covering whether a new EAS build and version bump are needed, what to test on a real Seeker phone, and whether a dApp Store update is needed.
 
