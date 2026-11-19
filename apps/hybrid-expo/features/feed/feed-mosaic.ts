@@ -173,20 +173,6 @@ export function topicMarket(slug: string, _name?: string): TopicMarketLink | nul
   return MARKET_BY_SLUG[slug.trim().toLowerCase()] ?? null;
 }
 
-/** Today and mosaic heights. 25% and 40% of the phone, shrunk together if the column cannot hold a calendar card. */
-export function feedBandHeights(windowHeight: number, columnHeight: number): { today: number; mosaic: number } {
-  const today = Math.max(0, Math.round(windowHeight * 0.25));
-  const mosaic = Math.max(0, Math.round(windowHeight * 0.4));
-  const minCalendar = 96;
-  const gaps = 16;
-  if (!(columnHeight > 0)) return { today, mosaic };
-  const available = columnHeight - gaps;
-  if (today + mosaic + minCalendar <= available) return { today, mosaic };
-  const room = Math.max(0, available - minCalendar);
-  const scale = today + mosaic > 0 ? room / (today + mosaic) : 1;
-  return { today: Math.round(today * scale), mosaic: Math.round(mosaic * scale) };
-}
-
 export function percentChange(closes: readonly number[]): number | null {
   const first = closes[0];
   const last = closes[closes.length - 1];

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  feedBandHeights,
   formatSignedPercent,
   isOfflineMessage,
   mosaicPages,
@@ -86,14 +85,6 @@ test('topicMarket matches exact slugs and ignores words in the name', () => {
   assert.equal(topicMarket('pound-note', 'Pound of flesh'), null);
   assert.equal(topicMarket('iran-nuclear', 'Iran nuclear talks'), null);
   assert.equal(topicMarket('weather', 'Weekend weather'), null);
-});
-
-test('feed bands keep the 25/40 split when the column can hold them', () => {
-  assert.deepEqual(feedBandHeights(844, 700), { today: 211, mosaic: 338 });
-  const tight = feedBandHeights(844, 500);
-  assert.ok(tight.today < 211);
-  assert.ok(tight.mosaic < 338);
-  assert.ok(tight.today + tight.mosaic <= 500 - 16 - 96);
 });
 
 test('offline copy and percents', () => {

@@ -1,8 +1,9 @@
 import type { FeedItem, StorySummary } from './feed.types';
 
 /**
- * Pure helpers for the Feed home "Today" and "Developing story" sections
- * (issue #495, markup per docs/mockups/design-language/feed-mock.html).
+ * Pure helpers for the Feed home hero carousel and "Developing story"
+ * sections (issue #495). The hero card follows docs/design/feed.html
+ * screen #s-home, section .hx-top, locked for issue #681.
  */
 
 /** The five newest reports for the Today carousel, newest first, capped at 5. */
@@ -28,6 +29,26 @@ export function carouselIndex(offsetX: number, slideWidth: number, count: number
   return Math.max(0, Math.min(count - 1, index));
 }
 
+export interface TodaySlideLayout {
+  /** 'image' renders the full-bleed picture; 'text' uses the longer clamps. */
+  variant: 'image' | 'text';
+  headlineLines: number;
+  summaryLines: number;
+}
+
+/**
+ * Mock .hx-slide (issue #681): a card with a usable picture clamps headline
+ * and summary to two lines. A card without one — no picture in the data, or
+ * one that failed to load — drops the image box entirely and gives the text
+ * three and six lines. Mock commit 4eefae12 dropped the Read footer.
+ */
+export function todaySlideLayout(source: Pick<FeedItem, 'imageUrl' | 'imageKind'>, imageFailed = false): TodaySlideLayout {
+  const hasImage = source.imageKind === 'content' && Boolean(source.imageUrl) && !imageFailed;
+  return hasImage
+    ? { variant: 'image', headlineLines: 2, summaryLines: 2 }
+    : { variant: 'text', headlineLines: 3, summaryLines: 6 };
+}
+
 /** The most recently updated story with a usable timestamp, or null when none qualify. */
 export function developingStory(stories: StorySummary[], _now?: Date): StorySummary | null {
   let best: StorySummary | null = null;
@@ -41,12 +62,4 @@ export function developingStory(stories: StorySummary[], _now?: Date): StorySumm
     }
   }
   return best;
-}
-
-/** Header line under "Today", e.g. "Mon 26 Oct · 5 updates" / "1 update". */
-export function todayLabel(now: Date, count: number): string {
-  const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const updates = count === 1 ? '1 update' : `${count} updates`;
-  return `${weekdays[now.getDay()]} ${now.getDate()} ${months[now.getMonth()]} · ${updates}`;
 }

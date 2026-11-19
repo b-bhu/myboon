@@ -42,7 +42,7 @@ export function storyCountLabel(count: number): string {
   return count === 1 ? '1 update' : `${count} updates`;
 }
 
-// Same local month abbreviations as todayLabel in feed-home.ts.
+// Local month abbreviations for the story day rows.
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Local calendar-day distance in whole days (negative when the date is ahead of now). */

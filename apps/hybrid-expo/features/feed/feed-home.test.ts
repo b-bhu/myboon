@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { carouselIndex, developingStory, slideTag, todayLabel, todaySlides } from './feed-home';
+import { carouselIndex, developingStory, slideTag, todaySlideLayout, todaySlides } from './feed-home';
 import type { FeedItem, StorySummary } from './feed.types';
 
 const row = (id: number, minutesAgo: number): FeedItem => ({
@@ -66,6 +66,19 @@ test('carouselIndex falls back to zero for unusable widths or counts', () => {
 
 const now = new Date('2026-10-30T12:00:00Z');
 
+const pictured = { ...row(1, 0), imageUrl: 'https://example.com/picture.png', imageKind: 'content' as const };
+
+test('todaySlideLayout picks the image card when a picture is set', () => {
+  assert.deepEqual(todaySlideLayout(pictured), { variant: 'image', headlineLines: 2, summaryLines: 2 });
+});
+test('todaySlideLayout picks the text-only card without a picture', () => {
+  assert.deepEqual(todaySlideLayout({ ...pictured, imageUrl: null }), { variant: 'text', headlineLines: 3, summaryLines: 6 });
+  assert.deepEqual(todaySlideLayout({ ...pictured, imageKind: null }), { variant: 'text', headlineLines: 3, summaryLines: 6 });
+});
+test('todaySlideLayout falls back to text-only when the picture failed', () => {
+  assert.deepEqual(todaySlideLayout(pictured, true), { variant: 'text', headlineLines: 3, summaryLines: 6 });
+});
+
 test('developingStory picks the most recently updated active story', () => {
   const stories = [story('older', 72), story('newer', 3)];
   assert.equal(developingStory(stories, now)?.storySlug, 'newer');
@@ -80,12 +93,4 @@ test('developingStory ignores invalid dates and lists without stories', () => {
   assert.equal(developingStory([broken], now), null);
   assert.equal(developingStory([broken, story('good', 5)], now)?.storySlug, 'good');
   assert.equal(developingStory([], now), null);
-});
-
-test('todayLabel matches the mock date line with correct update counts', () => {
-  const monday = new Date(2026, 9, 26, 12, 0);
-  assert.equal(todayLabel(monday, 5), 'Mon 26 Oct · 5 updates');
-  assert.equal(todayLabel(monday, 1), 'Mon 26 Oct · 1 update');
-  assert.equal(todayLabel(monday, 0), 'Mon 26 Oct · 0 updates');
-  assert.equal(todayLabel(new Date(2026, 9, 6, 9, 0), 2), 'Tue 6 Oct · 2 updates');
 });
