@@ -251,33 +251,47 @@ h1.top{font-size:28px;margin-bottom:4px}
 .sx .card{padding:12px}
 
 /* ===== Stories redesign (Kimi topic mosaic + topic detail) · scoped under .sx / .hx ===== */
-/* Home: 25% today · 40% stories · calendar. Percentages are of the phone height (container query units). */
-#s-home .phone{height:844px;container-type:size}
+/* Home: latest updates hero · developing stories · calendar. Sections take their content height; the body scrolls. */
+#s-home .phone{height:844px}
 #s-home .re{display:flex;flex-direction:column;height:100%;min-height:0}
-#s-home .re .body{flex:1;min-height:0;padding:4px 16px 12px;gap:16px;overflow:hidden}
+#s-home .re .body{flex:1;min-height:0;padding:4px 16px 16px;gap:16px;overflow-y:auto;scrollbar-width:none}
+#s-home .re .body::-webkit-scrollbar{display:none}
 #s-home .re .nav{position:relative!important;bottom:auto!important;left:auto;right:auto;flex:0 0 auto;height:calc(74px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
-.hx-top{height:25cqh;flex:0 0 auto;display:flex;flex-direction:column;gap:8px;min-height:0}
-.hx-top .today{margin-bottom:0;flex:0 0 auto}
-.hx-top .today h1{font-size:28px;line-height:32px}
-.hx-slide{flex:1;min-height:0;display:flex}
-.hx-slide .img{flex:0 0 96px;width:96px;height:auto}
-.hx-slide .img img{border-right:1px solid #185A70}
-.hx-slide .tx{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:12px}
-.hx-slide .meta{margin:0}
-.hx-slide h3{font-size:18px;line-height:23px;margin:0;letter-spacing:-.2px}
-.hx-top .bars{margin-top:0;flex:0 0 auto}
-.hx-stories{height:40cqh;flex:0 0 auto;display:flex;flex-direction:column;min-height:0}
+.hx-top{flex:0 0 auto;display:flex;flex-direction:column;gap:8px}
+.hx-track{display:flex;gap:8px;margin-right:-16px;padding-right:16px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain}
+.hx-track::-webkit-scrollbar{display:none}
+.hx-slide{flex:0 0 calc(100% - 24px);scroll-snap-align:start;display:flex;flex-direction:column;height:280px;cursor:pointer}
+.hx-slide:last-child{flex-basis:100%}
+.hx-slide .img{flex:0 0 132px;height:132px;border-bottom:1px solid #185A70}
+.hx-slide .tx{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px;padding:12px}
+.hx-slide .meta{margin:0;display:flex;justify-content:space-between;gap:12px}
+.hx-slide h3{font-size:20px;line-height:25px;margin:0;letter-spacing:-.2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hx-slide p{font-size:15px;line-height:21px;color:#9CB8C2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hx-slide.text-only .tx{padding:16px 12px 12px}
+.hx-slide.text-only h3{font-size:22px;line-height:28px;-webkit-line-clamp:4}
+.hx-slide.text-only p{-webkit-line-clamp:4}
+.hx-slide .kicker{margin-top:auto;display:flex;justify-content:space-between;gap:12px;border-top:1px solid #185A70;padding-top:8px}
+.hx-foot{display:flex;align-items:center;gap:16px}
+.hx-foot .bars{flex:1;margin-top:0}
+.hx-foot .lnk{white-space:nowrap;cursor:pointer;min-height:24px;display:flex;align-items:center}
+.hx-stories{flex:0 0 auto;display:flex;flex-direction:column}
+.hx-stories .sx-pager{flex:0 0 264px;height:264px}
 .hx-head{flex:0 0 24px;display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .hx-head h2{font-size:20px;line-height:24px;font-weight:700;letter-spacing:-.2px}
 .hx-dots{display:flex;gap:4px;align-items:center}
 .hx-dots i{display:block;width:8px;height:3px;background:#185A70;transition:width .15s,background-color .15s}
 .hx-dots i.on{width:16px;background:#FFD166}
-.hx-cal{flex:1;min-height:0;display:flex}
-.hx-cal .card{flex:1;height:auto;min-height:0;display:flex;flex-direction:column;justify-content:space-between;padding:12px;gap:4px}
-.hx-cal .r1,.hx-cal .r2,.hx-cal .r3{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.hx-cal{flex:0 0 auto;display:flex}
+.hx-cal .card{flex:1;display:flex;flex-direction:column;padding:12px;gap:8px;cursor:pointer}
+.hx-cal .r1,.hx-cal .r2{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .hx-cal .r2{align-items:flex-end}
 .hx-cal h4{font-size:18px;line-height:23px;font-weight:700}
+.hx-cal .r2 .lab{display:block;margin-top:4px;color:#9CB8C2}
 .hx-cal .cdn{font:700 28px/32px ui-monospace,Menlo,monospace;letter-spacing:-.3px;white-space:nowrap}
+.sx .tile-move{display:block;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:14px;font-weight:600;letter-spacing:.4px;white-space:nowrap;margin-top:auto}
+.sx .tile-move.up{color:#06D6A0}.sx .tile-move.down{color:#EF476F}
+.sx .tile-move i{font-style:normal;color:#9CB8C2;font-weight:500;margin-right:4px}
+.sx .topic.slim .tile-move i{display:none}
 /* Pager: horizontal, snap, next page peeks in from the right */
 .sx-pager{flex:1;min-height:0;display:flex;gap:8px;margin:0 -16px 0 0;padding:0 16px 0 0;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;touch-action:pan-x pan-y;cursor:grab}
 .sx-pager::-webkit-scrollbar{display:none}
@@ -317,21 +331,23 @@ body.proto #s-story.shown .sx-detail{animation:sxIn 280ms cubic-bezier(.22,.8,.2
   <div class="ib"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F5FAFC" stroke-width="1.6" stroke-linecap="square"><path d="M6 9a6 6 0 1 1 12 0v5l2 3H4l2-3z"/><path d="M10 20h4"/></svg></div>
   <div class="av">b</div></div></div>
  <div class="body">
-  <section class="hx-top">
-   <div class="today"><div><h1>Today</h1><span class="lab">Fri 13 Nov · 5 updates</span></div><span class="lnk" data-go="allupdates">All updates →</span></div>
-   <div class="slide hx-slide" data-go="todaysheet"><div class="img"><img src="ref/feed-editorial-macro-lead.png" alt="Editorial lead image"></div>
-    <div class="tx"><div class="meta"><span class="lab">Macro · 2h ago</span></div>
-    <h3>Rate-cut bets jump after a softer inflation print</h3></div></div>
-   <div class="bars"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+  <section class="hx-top" aria-label="Latest updates">
+   <div class="hx-track" id="hxTrack" role="group" aria-label="Latest updates. Swipe for more.">
+    <article class="slide hx-slide" data-go="todaysheet" aria-label="Rate-cut bets jump after a softer inflation print"><div class="img"><img src="ref/feed-editorial-macro-lead.png" alt=""></div><div class="tx"><div class="meta"><span class="lab">Macro</span><span class="lab">2h ago</span></div><h3>Rate-cut bets jump after a softer inflation print</h3><p>Traders now price two cuts by March. Bitcoin rose as yields fell and the dollar slipped.</p></div></article>
+    <article class="slide hx-slide" data-go="todaysheet" aria-label="Oil swings as US–Iran talks stall"><div class="img"><img src="ref/feed-editorial-us-iran.png" alt=""></div><div class="tx"><div class="meta"><span class="lab">Geopolitics</span><span class="lab">5h ago</span></div><h3>Oil swings as US–Iran talks stall</h3><p>Prediction markets on a deal slipped to 31% as both sides dug in over sanctions relief.</p></div></article>
+    <article class="slide hx-slide text-only" data-go="todaysheet" aria-label="Solana fees hit a 3-month low"><div class="tx"><div class="meta"><span class="lab">Crypto</span><span class="lab">7h ago</span></div><h3>Solana fees hit a 3-month low</h3><p>Activity cooled after the memecoin rush faded. Median fees dropped back to pre-rush levels while stablecoin transfers held steady.</p><div class="kicker"><span class="lab">MyBoon</span><span class="lnk">Read →</span></div></div></article>
+    <article class="slide hx-slide text-only" data-go="todaysheet" aria-label="Meta guides capex higher for 2027"><div class="tx"><div class="meta"><span class="lab">Stocks</span><span class="lab">9h ago</span></div><h3>Meta guides capex higher for 2027</h3><p>Spending on AI data centres keeps climbing. Tokenized META trades around the clock on two venues.</p><div class="kicker"><span class="lab">MyBoon</span><span class="lnk">Read →</span></div></div></article>
+    <article class="slide hx-slide" data-go="todaysheet" aria-label="Dollar slides into CPI week"><div class="img"><img src="ref/feed-editorial-macro-lead.png" alt=""></div><div class="tx"><div class="meta"><span class="lab">Macro</span><span class="lab">Yesterday</span></div><h3>Dollar slides into CPI week</h3><p>DXY sits at a six-week low ahead of the print, with traders leaning toward a softer reading.</p></div></article>
+   </div>
+   <div class="hx-foot"><div class="bars" id="hxBars"><i class="on"></i><i></i><i></i><i></i><i></i></div><span class="lnk" data-go="allupdates">All updates →</span></div>
   </section>
   <section class="sx hx-stories" aria-label="Developing stories">
-   <div class="hx-head"><h2>Developing story</h2><div class="hx-dots" id="sxDots" role="img" aria-label="Page 1 of 3"><i class="on"></i><i></i><i></i></div></div>
+   <div class="hx-head"><h2>Developing stories</h2><div class="hx-dots" id="sxDots" role="img" aria-label="Page 1 of 3"><i class="on"></i><i></i><i></i></div></div>
    <div class="sx-pager" id="sxPager" role="group" aria-label="Developing topics. Swipe left for more. Tile size shows 24 hour update activity."></div>
   </section>
   <section class="hx-cal">
-   <div class="card sl" data-go="calendar"><div class="r1"><span class="lab">Calendar · next big event</span><span class="lnk">Calendar →</span></div>
-    <div class="r2"><h4>FOMC rate decision</h4><span class="cdn">26D 15H</span></div>
-    <div class="r3"><span class="lab" style="color:#9CB8C2">Thu 10 Dec · 00:30 IST</span><span class="lab">Est 4.25%</span></div></div>
+   <div class="card sl" data-go="calendar" aria-label="Next big event: FOMC rate decision, in 26 days 15 hours. Open calendar."><div class="r1"><span class="lab">Next big event</span><span class="lnk">Calendar →</span></div>
+    <div class="r2"><div><h4>FOMC rate decision</h4><span class="lab">Thu 10 Dec · 00:30 IST · Est 4.25%</span></div><span class="cdn">26D 15H</span></div></div>
   </section>
  </div>
  <div class="nav"><div class="on">▣<span>FEED</span></div><div>▦<span>APPS</span></div><div>▭<span>WALLET</span></div></div>
@@ -749,13 +765,19 @@ function sparkSvg(seed,dir){
   const c=dir==='up'?'#06D6A0':'#EF476F',l=pts[n-1];
   return `<svg class="lead-spark" viewBox="0 0 122 28" preserveAspectRatio="none" fill="none" aria-hidden="true"><path d="M${pts.map(p=>p[0].toFixed(1)+' '+p[1].toFixed(1)).join('L')}" stroke="${c}" stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter" vector-effect="non-scaling-stroke"/><rect x="${(l[0]-3).toFixed(1)}" y="${(l[1]-3).toFixed(1)}" width="6" height="6" fill="${c}"/></svg>`;
 }
+/* ---- home: latest updates carousel ---- */
+(function(){const tr=$('hxTrack'),bars=$('hxBars');if(!tr||!bars)return;
+  const sync=()=>{const sl=[...tr.children];let i=0,bd=1e9;sl.forEach((c,j)=>{const d=Math.abs(c.offsetLeft-tr.offsetLeft-tr.scrollLeft);if(d<bd){bd=d;i=j}});if(tr.scrollLeft>=tr.scrollWidth-tr.clientWidth-4)i=sl.length-1;bars.querySelectorAll('i').forEach((b,j)=>b.classList.toggle('on',j===i));};
+  tr.addEventListener('scroll',sync,{passive:true});
+})();
 const pager=$('sxPager'),dots=$('sxDots');
 pager.innerHTML=PAGES.map((pg,pi)=>`<div class="sx-page" role="group" aria-label="Page ${pi+1} of ${PAGES.length}">`+pg.map(([id,kind,mk],ti)=>{
   const d=data[id],dir=d.asset.dir,big=kind==='large'||kind==='tall',arrow=(mk?mk[2]:dir);
-  const short=d.updated.replace(' ago','');
-  const meta=kind==='slim'?short:d.updates;
+  const meta=big?`<span class="tile-meta">${d.updates}</span>`:'';
+  const sym=d.asset.symbol.split(' ')[0];
+  const move=big?'':`<span class="tile-move ${dir}"><i>${sym}</i>${signed(d.asset.moves[0],dir).replace(/(\.\d)\d%/,'$1%')}</span>`;
   const market=mk?`<span class="lead-market" aria-hidden="true">${sparkSvg(pi*13+ti+3,mk[2])}<span class="lead-market-label">${mk[0]} <b class="${mk[2]}">${mk[1]}</b></span></span>`:'';
-  return `<button class="topic ${kind||''}" type="button" data-go="story" data-topic="${id}" aria-pressed="${id===currentTopic}" aria-label="${d.name}, ${d.updates}${mk?', '+mk[0]+' '+mk[1]:''}, ${arrow==='up'?'rising':'falling'}"><span class="topic-name">${d.name}</span>${market}<span class="tile-meta">${meta}</span><span class="direction ${arrow}">${directionIcon(arrow)}</span></button>`;
+  return `<button class="topic ${kind||''}" type="button" data-go="story" data-topic="${id}" aria-pressed="${id===currentTopic}" aria-label="${d.name}, ${d.updates}, ${mk?mk[0]+' '+mk[1]:sym+' '+signed(d.asset.moves[0],dir)}, ${arrow==='up'?'rising':'falling'}"><span class="topic-name">${d.name}</span>${market}${move}${meta}<span class="direction ${arrow}">${directionIcon(arrow)}</span></button>`;
 }).join('')+'</div>').join('');
 function pageIndex(){
   const pages=pager.querySelectorAll('.sx-page');if(pager.scrollLeft>=pager.scrollWidth-pager.clientWidth-4)return pages.length-1;
