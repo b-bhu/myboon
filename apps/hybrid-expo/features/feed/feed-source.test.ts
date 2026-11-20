@@ -101,3 +101,29 @@ test('tiles and the details price section no longer use topicMarket; only the tr
   assert.match(screen, /StoryMarketsSection/);
   assert.match(screen, /story\.markets\.length > 0/);
 });
+
+test('the details price section gates candles and the chart on a live price', () => {
+  const root = new URL('.', import.meta.url).pathname;
+  const source = readFileSync(join(root, 'components/StoryMarketsSection.tsx'), 'utf8');
+  // A market with no live price never requests candles and never renders the
+  // chart: only "Price unavailable" shows.
+  assert.match(source, /if \(!hasPrice\) \{/);
+  assert.match(source, /const chartable = hasPrice && load\.candles !== null && series\.length >= 2;/);
+  assert.match(source, /const unavailable = !hasPrice \|\| load\.failed \|\| \(!load\.loading && !chartable\);/);
+  // The header price is the only current price on the screen.
+  assert.match(source, /currentPrice: false/);
+  assert.match(source, /initialVisibleCandles: 24/);
+  assert.match(source, /minimumVisibleCandles: 24/);
+});
+
+test('tiles keep the pager re-snap effect and a visible inactive page dot', () => {
+  const root = new URL('.', import.meta.url).pathname;
+  const source = readFileSync(join(root, 'components/TopicMosaic.tsx'), 'utf8');
+  // Restored from main: the strip re-snaps when the page count or width changes.
+  assert.match(source, /pageOffset\(pageRef\.current, width, pages\.length\)/);
+  // The inactive dot is dim but visible: textDim reads >= 3:1 on the Feed
+  // background; the old border token did not.
+  assert.match(source, /dot: \{ width: 8, height: 3, backgroundColor: FEED_TOKENS\.colors\.textDim \}/);
+  // Slim tiles keep the move visible on one grid cell.
+  assert.match(source, /moveLabelSlim: \{ letterSpacing: 0, marginHorizontal: -4 \}/);
+});

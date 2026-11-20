@@ -34,9 +34,16 @@ export function StoryMarketsSection({
     () => pickDetailMarket(markets, param) ?? markets[0],
   );
   const [load, setLoad] = useState<CandleLoad>({ candles: null, failed: false, loading: true });
+  const hasPrice = market.price !== null;
 
   // One request per selected market; switching tabs aborts the previous load.
+  // A market with no live price never requests candles — its price and move
+  // are hidden and "Price unavailable" stands in for the chart.
   useEffect(() => {
+    if (!hasPrice) {
+      setLoad({ candles: null, failed: false, loading: false });
+      return undefined;
+    }
     const controller = new AbortController();
     setLoad({ candles: null, failed: false, loading: true });
     void (async () => {
@@ -49,15 +56,19 @@ export function StoryMarketsSection({
       }
     })();
     return () => controller.abort();
-  }, [market.symbol]);
+  }, [hasPrice, market.symbol]);
 
   const change = market.change24hPct;
   const series = load.candles ?? [];
-  const chartable = load.candles !== null && series.length >= 2;
-  const unavailable = market.price === null || load.failed || (!load.loading && !chartable);
+  // The chart and the "Price unavailable" text never coexist: the chart only
+  // renders for a market with a live price and at least two candles.
+  const chartable = hasPrice && load.candles !== null && series.length >= 2;
+  const unavailable = !hasPrice || load.failed || (!load.loading && !chartable);
   const chart = {
     mode: 'line' as const,
-    layers: { volume: false },
+    layers: { volume: false, currentPrice: false },
+    initialVisibleCandles: 24,
+    minimumVisibleCandles: 24,
     formatPrice: formatMarketPrice,
     formatTime: formatLocalClockTime,
     accessibilityLabel: `${market.displayName}, last 24 hours`,
@@ -93,7 +104,7 @@ export function StoryMarketsSection({
             ) : null}
           </View>
         ) : null}
-        {market.price !== null && load.loading ? (
+        {hasPrice && load.loading ? (
           <MarketChart seriesKey={`${market.symbol}:1h`} candles={[]} status={{ kind: 'loading' }} {...chart} />
         ) : null}
         {chartable ? (

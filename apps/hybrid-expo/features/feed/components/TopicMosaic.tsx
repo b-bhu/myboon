@@ -56,6 +56,14 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
   pageRef.current = current;
 
   useEffect(() => { countSv.value = pages.length; }, [countSv, pages.length]);
+  // Unchanged from main: when the page count or the width changes (a refresh
+  // adding stories, a rotation or resize), the strip must re-snap to the
+  // current page's offset instead of staying at a stale one.
+  useEffect(() => {
+    const next = pageOffset(pageRef.current, width, pages.length);
+    resting.value = next;
+    x.value = next;
+  }, [pages.length, resting, width, x]);
   // Without reduce motion every priced market gets its 4 seconds; with it,
   // the tiles stay parked on each story's rank-1 market.
   useEffect(() => {
@@ -221,6 +229,9 @@ function TopicTile({
   const age = storyAge(story.updatedAt, now).replace(' ago', '');
   const move = shown && shown.change24hPct !== null ? formatTileMove(shown.change24hPct) : null;
   const arrow = move && move.tone !== 'dim' ? move.tone : null;
+  // Slim tiles already show the direction through the move's sign, and their
+  // corner space is claimed by the title (360×640 check).
+  const showArrow = arrow !== null && kind !== 'slim';
 
   // The market slot (label, sparkline, move, arrow) crossfades on rotation;
   // title, count and size never move.
@@ -274,9 +285,14 @@ function TopicTile({
           accessibilityRole="button"
           accessibilityLabel={`${story.name}, ${count}${quote ? `, ${quote}` : ''}`}
           onAccessibilityTap={onPress}
-          style={[styles.tile, lead && styles.tileLead, pressedStyle]}
+          style={[styles.tile, lead && styles.tileLead, kind === 'slim' && styles.tileSlim, pressedStyle]}
         >
-          <Text style={[styles.name, lead && styles.nameLead, kind === 'slim' && styles.nameSlim]} numberOfLines={lead ? 3 : 2}>
+          <Text
+            style={[styles.name, lead && styles.nameLead, kind === 'slim' && styles.nameSlim]}
+            numberOfLines={kind === 'slim' ? 1 : lead ? 3 : 2}
+            // Word-boundary wrapping only; a title that cannot fit ends in an ellipsis.
+            textBreakStrategy="simple"
+          >
             {story.name}
           </Text>
           {showExcerpt && lead ? <Text style={styles.excerpt} numberOfLines={4}>{story.latestDevelopment}</Text> : null}
@@ -290,14 +306,27 @@ function TopicTile({
           ) : null}
           {!lead && shown ? (
             <Animated.View style={[styles.moveRow, slotStyle]}>
-              <Text style={styles.moveLabel} numberOfLines={1}>
-                {kind === 'wide' ? `${shown.displaySymbol} ` : ''}
-                <Text style={[styles.moveText, tileMoveColour(move)]}>{move?.text}</Text>
-              </Text>
+              {kind === 'wide' ? (
+                <Text style={styles.moveLabel} numberOfLines={1}>
+                  {shown.displaySymbol} <Text style={[styles.moveText, tileMoveColour(move)]}>{move?.text}</Text>
+                </Text>
+              ) : (
+                // Slim: one un-nested text in the move's own colour, with room
+                // beyond the padding and shrink-to-fit, so the move is never
+                // cut off on one grid cell (360×640 check).
+                <Text
+                  style={[styles.moveLabel, styles.moveLabelSlim, tileMoveColour(move)]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.85}
+                >
+                  {move?.text}
+                </Text>
+              )}
             </Animated.View>
           ) : null}
           {lead || !shown ? <Text style={styles.meta} numberOfLines={1}>{kind === 'slim' ? age : count}</Text> : null}
-          {arrow ? (
+          {showArrow ? (
             <Animated.Text style={[styles.direction, slotStyle, { color: tileMoveColour(move)?.color }]}>
               {arrow === 'up' ? '↑' : '↓'}
             </Animated.Text>
@@ -369,9 +398,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   tileLead: { backgroundColor: FEED_TOKENS.colors.ground },
+  // Slim tiles get 2px less padding on each side so the move always fits at 360.
+  tileSlim: { padding: 6 },
   name: { color: FEED_TOKENS.colors.text, fontSize: FEED_TOKENS.type.secondary, lineHeight: 18, fontWeight: '600', paddingRight: 14 },
   nameLead: { fontSize: FEED_TOKENS.type.cardTitle, lineHeight: 22, fontWeight: '700' },
-  nameSlim: { fontSize: FEED_TOKENS.type.caption, lineHeight: 16, paddingRight: 12 },
+  nameSlim: { fontSize: FEED_TOKENS.type.caption, lineHeight: 16, paddingRight: 0 },
   excerpt: { color: FEED_TOKENS.colors.textDim, fontSize: FEED_TOKENS.type.secondary, lineHeight: 18, marginTop: 8 },
   market: { marginTop: 'auto', marginBottom: 8, gap: 4 },
   marketLabel: {
@@ -389,6 +420,9 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.4,
   },
+  // No letter spacing on the slim move, and a little room beyond the slim
+  // tile's padding, so the widest one-decimal move ("-10.7%") still fits.
+  moveLabelSlim: { letterSpacing: 0, marginHorizontal: -4 },
   moveText: { fontWeight: '600' },
   meta: {
     color: FEED_TOKENS.colors.textDim,
@@ -400,6 +434,9 @@ const styles = StyleSheet.create({
   },
   direction: { position: 'absolute', top: 6, right: 8, fontSize: FEED_TOKENS.type.secondary, fontWeight: '700' },
   dots: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dot: { width: 8, height: 3, backgroundColor: FEED_TOKENS.colors.border },
+  // #185A70 (border) reads at ~1:1 on the real home background; textDim is
+  // dim but visible: 8.1:1 against the walletCore background token and 3.5:1
+  // against the measured home overlay (#125E74).
+  dot: { width: 8, height: 3, backgroundColor: FEED_TOKENS.colors.textDim },
   dotOn: { width: 16, backgroundColor: FEED_TOKENS.colors.accent },
 });
