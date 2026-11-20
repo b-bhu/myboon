@@ -13,10 +13,13 @@ import { isStageEnabled, type ProcessEnvLike } from '@myboon/shared/v4-runtime';
 
 export type ClaimScope = 'entity' | 'no_entity';
 export type RunConfig = { scope: ClaimScope | undefined; limit: number };
+export type MarketsRunConfig = { enabled: boolean; limit: number };
 
 export const ENTITY_ONLY_FLAG = 'ENTITY_MANAGER_CLAIM_ENTITY_ONLY';
 export const ENTITY_ONLY_DEFAULT_BATCH = 60;
 export const RETRY_DEFAULT_BATCH = 2000;
+export const MARKETS_FLAG = 'ENTITY_MANAGER_MARKETS_ENABLED';
+export const MARKETS_DEFAULT_LIMIT = 10;
 
 export function mainRunConfig(env: ProcessEnvLike = process.env): RunConfig {
   if (!isStageEnabled(ENTITY_ONLY_FLAG, env)) return { scope: undefined, limit: Number(env.ENTITY_MANAGER_MAX_PER_RUN ?? 20) };
@@ -25,4 +28,16 @@ export function mainRunConfig(env: ProcessEnvLike = process.env): RunConfig {
 
 export function retryRunConfig(env: ProcessEnvLike = process.env): RunConfig {
   return { scope: 'no_entity', limit: Number(env.ENTITY_MANAGER_RETRY_MAX_PER_RUN ?? RETRY_DEFAULT_BATCH) };
+}
+
+/**
+ * #690 the markets pass, pure like mainRunConfig. Off unless ENTITY_MANAGER_MARKETS_ENABLED is
+ * exactly 'true' (default off: the prod flag stays off until the guided backfill is done); the
+ * batch is ENTITY_MANAGER_MARKETS_MAX_PER_RUN (default 10).
+ */
+export function marketsConfig(env: ProcessEnvLike = process.env): MarketsRunConfig {
+  return {
+    enabled: isStageEnabled(MARKETS_FLAG, env),
+    limit: Number(env.ENTITY_MANAGER_MARKETS_MAX_PER_RUN ?? MARKETS_DEFAULT_LIMIT),
+  };
 }

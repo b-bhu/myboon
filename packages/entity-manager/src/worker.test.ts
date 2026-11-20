@@ -3,6 +3,8 @@ import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
 import type { Llm } from './clients.js';
+import { retryRunConfig } from './config.js';
+import { runEntityManager } from './entry.js';
 import { claimQuery, lagWarning, MISSING_SCOPED_CLAIM_MSG, NO_ENTITY_PARK_REASON, oldestReadyEntityAgeMinutes, runOnce, type WorkerDeps } from './worker.js';
 
 type Call = { sql: string; params: unknown[] };
@@ -32,6 +34,7 @@ function fakePool(available: number, staleParks = false) {
       if (sql.includes("set em_status = 'parked'")) return { rows: [], rowCount: staleParks ? 1 : 0 };
       return { rows: [], rowCount: 1 };
     },
+    end: async () => {},
   };
   return { pool: pool as unknown as pg.Pool, calls };
 }
@@ -154,5 +157,110 @@ describe('#621 lag signal', () => {
     const db = (age: string | null) => ({ async query() { return { rows: [{ age }] }; } }) as never;
     expect(await oldestReadyEntityAgeMinutes(db('125.4'))).toBe(125);
     expect(await oldestReadyEntityAgeMinutes(db(null))).toBeNull();
+  });
+});
+
+describe('#690 markets pass wiring', () => {
+  /** console capture for the run lines. */
+  function captureStdout() {
+    const lines: string[] = [];
+    const orig = console.log;
+    const origErr = console.error;
+    console.log = (l: unknown) => lines.push(String(l));
+    console.error = (l: unknown) => lines.push(`ERR ${String(l)}`);
+    return {
+      lines,
+      restore: () => {
+        console.log = orig;
+        console.error = origErr;
+      },
+    };
+  }
+  it('flag off (default): the markets pass is never called and the run output is unchanged', async () => {
+    const { pool, calls } = fakePool(0);
+    let marketsCalls = 0;
+    const runOnceSummary = { claimed: 1, story: 1, parked: 0, duplicate: 0, deferred_no_entity: 0, parked_stale_no_entity: 0, failed: 0, retry: 0, lost: 0 };
+    const c = captureStdout();
+    try {
+      await runEntityManager({ scope: undefined, limit: 3 }, 'em_run', '', {
+        pool,
+        llm: async () => '',
+        runOnceImpl: async () => runOnceSummary,
+        runMarketsPassImpl: async () => {
+          marketsCalls++;
+          return { checked: 0, linked: 0, none: 0, retry: 0 };
+        },
+      });
+    } finally {
+      c.restore();
+    }
+    expect(marketsCalls).toBe(0);
+    expect(calls.filter((x) => x.sql.includes('entity_markets') || x.sql.includes('markets_checked_at'))).toEqual([]);
+    const json = JSON.parse(c.lines[0]!) as Record<string, unknown>;
+    expect(Object.keys(json)).toEqual([
+      'event', 'scope', 'limit', 'claimed', 'story', 'parked', 'duplicate', 'deferred_no_entity',
+      'parked_stale_no_entity', 'failed', 'retry', 'lost', 'oldest_ready_entity_age_min',
+    ]);
+    expect(json).toMatchObject({ event: 'em_run', scope: 'all', limit: 3, claimed: 1, oldest_ready_entity_age_min: null });
+  });
+
+  it('flag on: the main run calls the markets pass once, after runOnce, with the batch and the same llm', async () => {
+    const { pool } = fakePool(0);
+    const seen: unknown[] = [];
+    const c = captureStdout();
+    try {
+      await runEntityManager({ scope: undefined, limit: 1 }, 'em_run', '', {
+        pool,
+        llm: async () => '',
+        runOnceImpl: async () => ({ claimed: 0, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 0, parked_stale_no_entity: 0, failed: 0, retry: 0, lost: 0 }),
+        runMarketsPassImpl: async (d: unknown) => {
+          seen.push(d);
+          return { checked: 1, linked: 0, none: 1, retry: 0 };
+        },
+        markets: { enabled: true, limit: 7 },
+      });
+    } finally {
+      c.restore();
+    }
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ pool, limit: 7 });
+    expect((seen[0] as { llm?: unknown }).llm).toBeTypeOf('function');
+  });
+
+  it('the retry entrypoint (workerSuffix :retry) never runs the markets pass, even with the flag on', async () => {
+    const { pool } = fakePool(0);
+    let marketsCalls = 0;
+    await runEntityManager(retryRunConfig(), 'em_retry_run', ':retry', {
+      pool,
+      llm: async () => '',
+      runOnceImpl: async () => ({ claimed: 1, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 1, parked_stale_no_entity: 0, failed: 0, retry: 0, lost: 0 }),
+      runMarketsPassImpl: async () => {
+        marketsCalls++;
+        return { checked: 0, linked: 0, none: 0, retry: 0 };
+      },
+      markets: { enabled: true, limit: 5 },
+    });
+    expect(marketsCalls).toBe(0);
+  });
+
+  it('a throwing markets pass is logged once and the run still succeeds with the same summary line', async () => {
+    const { pool } = fakePool(0);
+    const c = captureStdout();
+    try {
+      await runEntityManager({ scope: undefined, limit: 2 }, 'em_run', '', {
+        pool,
+        llm: async () => '',
+        runOnceImpl: async () => ({ claimed: 0, story: 0, parked: 0, duplicate: 0, deferred_no_entity: 0, parked_stale_no_entity: 0, failed: 0, retry: 0, lost: 0 }),
+        runMarketsPassImpl: async () => {
+          throw new Error('hyperliquid down');
+        },
+        markets: { enabled: true, limit: 5 },
+      });
+    } finally {
+      c.restore();
+    }
+    expect(c.lines).toHaveLength(2);
+    expect(JSON.parse(c.lines[0]!)).toMatchObject({ event: 'em_run', claimed: 0 });
+    expect(c.lines[1]).toBe('ERR entity-manager: markets pass failed: hyperliquid down');
   });
 });
