@@ -14,6 +14,11 @@
  *    defaults ('true' / 'atlas') when the shell is silent, and follow the
  *    shell when it sets them — checked by clearing the require cache and
  *    re-requiring the file.
+ *  - #702: myboon-calendar-releases is registered in the MAIN apps list (also
+ *    present with the V4 gate off), with its cwd and entry file on disk,
+ *    cron_restart '0 21 * * *' and autorestart false, and it declares
+ *    CALENDAR_RELEASES_ENABLED (default 'false' when the shell is silent,
+ *    follows the shell when it sets it).
  *
  * Run:  pnpm exec tsx scripts/check-ecosystem.ts
  *
@@ -28,6 +33,10 @@ type EcosystemApp = {
   name: string;
   script?: string;
   cwd?: string;
+  /** #702 daily cron restart (e.g. '0 21 * * *'). */
+  cron_restart?: string;
+  /** #702 the calendar releases app runs once per day, then exits. */
+  autorestart?: boolean;
   env?: Record<string, string | undefined>;
 };
 
@@ -42,6 +51,10 @@ const V4_NAMES = [
 const ANALYST_NAME = 'myboon-analyst';
 const ENTITY_MANAGER_NAME = 'myboon-entity-manager';
 const LATEST_UPDATES_NAME = 'myboon-latest-updates';
+// #702 the calendar releases app lives in the main apps list, not the gated
+// V4 list, and the gate flag must be persisted in the tracked env.
+const CALENDAR_RELEASES_NAME = 'myboon-calendar-releases';
+const CALENDAR_RELEASES_FLAG_KEY = 'CALENDAR_RELEASES_ENABLED';
 const API_NAME = 'myboon-api';
 // #695 the two flags this guard must keep persisted in the tracked env.
 const MARKETS_FLAG_KEY = 'ENTITY_MANAGER_MARKETS_ENABLED';
@@ -162,8 +175,39 @@ function main(): void {
     return appsOf(require('../ecosystem.config.cjs') as { apps?: EcosystemApp[] });
   };
 
+  // #702 the calendar releases app belongs to the main list, not the gated
+  // V4 list: with MYBOON_V4_RUNTIME_ENABLED deleted it must still be there.
+  // (The checks above forced the gate on, so this separate reload is the proof.)
+  delete process.env.MYBOON_V4_RUNTIME_ENABLED;
+  const ungatedApps = reloadEcosystem();
+  process.env.MYBOON_V4_RUNTIME_ENABLED = '1';
+  const calendarReleasesApp = ungatedApps.find((candidate) => candidate.name === CALENDAR_RELEASES_NAME);
+  if (!calendarReleasesApp) {
+    failures.push(`${CALENDAR_RELEASES_NAME}: missing from the main apps list (registered only under MYBOON_V4_RUNTIME_ENABLED=1)`);
+  } else {
+    const calendarCwd = calendarReleasesApp.cwd ?? '';
+    if (!fs.existsSync(calendarCwd)) {
+      failures.push(`${CALENDAR_RELEASES_NAME}: cwd does not exist: ${calendarCwd}`);
+    } else {
+      const calendarScript = path.join(calendarCwd, calendarReleasesApp.script ?? '');
+      if (!fs.existsSync(calendarScript)) {
+        failures.push(`${CALENDAR_RELEASES_NAME}: script does not exist: ${calendarScript}`);
+      }
+    }
+    if (calendarReleasesApp.cron_restart !== '0 21 * * *') {
+      failures.push(`${CALENDAR_RELEASES_NAME}: cron_restart must be '0 21 * * *'`);
+    }
+    if (calendarReleasesApp.autorestart !== false) {
+      failures.push(`${CALENDAR_RELEASES_NAME}: must run once per day (autorestart: false)`);
+    }
+    if (calendarReleasesApp.env?.[CALENDAR_RELEASES_FLAG_KEY] === undefined) {
+      failures.push(`${CALENDAR_RELEASES_NAME} env: missing ${CALENDAR_RELEASES_FLAG_KEY}`);
+    }
+  }
+
   delete process.env[MARKETS_FLAG_KEY];
   delete process.env[STORIES_SOURCE_KEY];
+  delete process.env[CALENDAR_RELEASES_FLAG_KEY];
   const defaultApps = reloadEcosystem();
   if (envOf(defaultApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'true') {
     failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must default to 'true' when the shell does not set it`);
@@ -171,9 +215,13 @@ function main(): void {
   if (envOf(defaultApps, API_NAME)[STORIES_SOURCE_KEY] !== 'atlas') {
     failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must default to 'atlas' when the shell does not set it`);
   }
+  if (envOf(defaultApps, CALENDAR_RELEASES_NAME)[CALENDAR_RELEASES_FLAG_KEY] !== 'false') {
+    failures.push(`${CALENDAR_RELEASES_NAME} env: ${CALENDAR_RELEASES_FLAG_KEY} must default to 'false' when the shell does not set it`);
+  }
 
   process.env[MARKETS_FLAG_KEY] = 'false';
   process.env[STORIES_SOURCE_KEY] = 'legacy';
+  process.env[CALENDAR_RELEASES_FLAG_KEY] = 'true';
   const overrideApps = reloadEcosystem();
   if (envOf(overrideApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'false') {
     failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must follow the shell override`);
@@ -181,10 +229,14 @@ function main(): void {
   if (envOf(overrideApps, API_NAME)[STORIES_SOURCE_KEY] !== 'legacy') {
     failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must follow the shell override`);
   }
+  if (envOf(overrideApps, CALENDAR_RELEASES_NAME)[CALENDAR_RELEASES_FLAG_KEY] !== 'true') {
+    failures.push(`${CALENDAR_RELEASES_NAME} env: ${CALENDAR_RELEASES_FLAG_KEY} must follow the shell override`);
+  }
 
   // Leave the process clean: both keys unset, file re-required on a clear cache.
   delete process.env[MARKETS_FLAG_KEY];
   delete process.env[STORIES_SOURCE_KEY];
+  delete process.env[CALENDAR_RELEASES_FLAG_KEY];
   reloadEcosystem();
 
   if (failures.length > 0) {
