@@ -252,6 +252,10 @@ const V4_APPS = [
       // #621 default off = claim in the same way as before (atlas.em_claim, batch 20). On: claim only handoffs
       // with an entity, batch 60 (ENTITY_MANAGER_ENTITY_ONLY_MAX_PER_RUN). Needs the em_claim_scoped migration.
       ENTITY_MANAGER_CLAIM_ENTITY_ONLY: process.env.ENTITY_MANAGER_CLAIM_ENTITY_ONLY ?? 'false',
+      // #695 persist the #690 markets pass across restarts from this tracked
+      // file. Default on; the shell can still switch it off:
+      // `ENTITY_MANAGER_MARKETS_ENABLED=false pm2 restart ecosystem.config.cjs --only myboon-entity-manager --update-env`
+      ENTITY_MANAGER_MARKETS_ENABLED: process.env.ENTITY_MANAGER_MARKETS_ENABLED ?? 'true',
     },
   },
   {
@@ -357,6 +361,10 @@ module.exports = {
       env: {
         PORT: '3000',
         ENTITY_V4_READ_SOURCE: 'managed',
+        // #695 persist the /stories source across restarts from this tracked
+        // file ('atlas' when the shell does not set it); any other value maps
+        // back to legacy in create-app.
+        STORIES_SOURCE: process.env.STORIES_SOURCE ?? 'atlas',
       },
     },
     {

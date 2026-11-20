@@ -9,6 +9,11 @@
  *    packages/analyst/src/config.ts reads optionally, plus ANALYST_ENABLED;
  *  - the myboon-entity-manager env block declares ENTITY_MANAGER_ENABLED (#593).
  *  - the myboon-latest-updates env block declares LATEST_UPDATES_ENABLED (#634).
+ *  - #695: ENTITY_MANAGER_MARKETS_ENABLED (myboon-entity-manager) and
+ *    STORIES_SOURCE (myboon-api) are persisted in the tracked env, keep their
+ *    defaults ('true' / 'atlas') when the shell is silent, and follow the
+ *    shell when it sets them — checked by clearing the require cache and
+ *    re-requiring the file.
  *
  * Run:  pnpm exec tsx scripts/check-ecosystem.ts
  *
@@ -37,6 +42,10 @@ const V4_NAMES = [
 const ANALYST_NAME = 'myboon-analyst';
 const ENTITY_MANAGER_NAME = 'myboon-entity-manager';
 const LATEST_UPDATES_NAME = 'myboon-latest-updates';
+const API_NAME = 'myboon-api';
+// #695 the two flags this guard must keep persisted in the tracked env.
+const MARKETS_FLAG_KEY = 'ENTITY_MANAGER_MARKETS_ENABLED';
+const STORIES_SOURCE_KEY = 'STORIES_SOURCE';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
 const ANALYST_CONFIG_PATH = path.join(here(), '..', 'packages', 'analyst', 'src', 'config.ts');
@@ -112,6 +121,11 @@ function main(): void {
     if (entityManagerEnv['ENTITY_MANAGER_ENABLED'] === undefined) {
       failures.push(`${ENTITY_MANAGER_NAME} env: missing ENTITY_MANAGER_ENABLED`);
     }
+    // #695: the markets pass must survive a tracked-file restart, so the key is
+    // declared here with a process.env fallback (see the persistence checks below).
+    if (entityManagerEnv[MARKETS_FLAG_KEY] === undefined) {
+      failures.push(`${ENTITY_MANAGER_NAME} env: missing ${MARKETS_FLAG_KEY}`);
+    }
   }
 
   // #634 latest updates: the gate flag must be declared in the tracked env
@@ -123,6 +137,55 @@ function main(): void {
       failures.push(`${LATEST_UPDATES_NAME} env: missing LATEST_UPDATES_ENABLED`);
     }
   }
+
+  // #695: /stories keeps its atlas source across a tracked-file restart only if
+  // the key is declared in the api env block (secrets stay out of this file).
+  const apiApp = apps.find((candidate) => candidate.name === API_NAME);
+  if (apiApp) {
+    const apiEnv = apiApp.env ?? {};
+    if (apiEnv[STORIES_SOURCE_KEY] === undefined) {
+      failures.push(`${API_NAME} env: missing ${STORIES_SOURCE_KEY}`);
+    }
+  }
+
+  // #695 persistence values: clear the require cache and re-require the file
+  // twice — once with both keys unset in the shell (the blocks must keep their
+  // safe defaults) and once with each key overridden (the blocks must follow
+  // the override so `pm2 restart --update-env` can still switch them).
+  // Failure lines name keys only; no environment values are printed.
+  const appsOf = (reloaded: { apps?: EcosystemApp[] }): EcosystemApp[] =>
+    Array.isArray(reloaded?.apps) ? reloaded.apps : [];
+  const envOf = (apps: EcosystemApp[], name: string): Record<string, string | undefined> =>
+    apps.find((candidate) => candidate.name === name)?.env ?? {};
+  const reloadEcosystem = (): EcosystemApp[] => {
+    delete require.cache[require.resolve('../ecosystem.config.cjs')];
+    return appsOf(require('../ecosystem.config.cjs') as { apps?: EcosystemApp[] });
+  };
+
+  delete process.env[MARKETS_FLAG_KEY];
+  delete process.env[STORIES_SOURCE_KEY];
+  const defaultApps = reloadEcosystem();
+  if (envOf(defaultApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'true') {
+    failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must default to 'true' when the shell does not set it`);
+  }
+  if (envOf(defaultApps, API_NAME)[STORIES_SOURCE_KEY] !== 'atlas') {
+    failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must default to 'atlas' when the shell does not set it`);
+  }
+
+  process.env[MARKETS_FLAG_KEY] = 'false';
+  process.env[STORIES_SOURCE_KEY] = 'legacy';
+  const overrideApps = reloadEcosystem();
+  if (envOf(overrideApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'false') {
+    failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must follow the shell override`);
+  }
+  if (envOf(overrideApps, API_NAME)[STORIES_SOURCE_KEY] !== 'legacy') {
+    failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must follow the shell override`);
+  }
+
+  // Leave the process clean: both keys unset, file re-required on a clear cache.
+  delete process.env[MARKETS_FLAG_KEY];
+  delete process.env[STORIES_SOURCE_KEY];
+  reloadEcosystem();
 
   if (failures.length > 0) {
     for (const failure of failures) console.error(`ecosystem check failed: ${failure}`);
