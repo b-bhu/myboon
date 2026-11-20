@@ -21,6 +21,7 @@ const story = (slug: string, hoursAgo: number): StorySummary => ({
   imageUrl: null,
   imageKind: null,
   imageAttribution: null,
+  markets: [],
 });
 
 test('todaySlides sorts newest first with the API id tiebreak and caps at five', () => {

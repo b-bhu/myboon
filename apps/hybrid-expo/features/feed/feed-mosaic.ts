@@ -1,18 +1,19 @@
-import type { PhoenixCandleInterval } from '@/features/perps/phoenix.api';
+import type { StoryMarket } from '@myboon/shared/stories';
+import type { StorySummary } from './feed.types';
 
 /**
- * Topic mosaic layout and the topic-to-market table for issue #615.
- * The first story, the newest one the API returns, gets the large tile.
- * A pinned action appears only for an exact story slug in the market table.
- * Unknown topics get no action and no chart.
+ * Developing-stories layout and market helpers (issue #684).
+ * Stories are ranked by activity, so the busiest story on every page of 10
+ * gets the large tile and the two quietest get slim slots. The pinned trade
+ * action still comes from the exact-slug market table below; the tiles and
+ * the details price section read each story's `markets` instead.
  */
 
 export const MOSAIC_PAGE_SIZE = 10;
 export const MOSAIC_COLUMNS = 6;
 export const MOSAIC_ROWS = 4;
 
-export type MosaicTileKind = 'large' | 'tall' | 'regular' | 'slim';
-export type ChartRangeKey = '1D' | '1W' | '1M' | '1Y';
+export type MosaicTileKind = 'large' | 'tall' | 'wide' | 'slim';
 
 export interface MosaicPlacement {
   index: number;
@@ -36,20 +37,6 @@ export interface TopicMarketLink {
   note: string;
 }
 
-export interface ChartRangeRequest {
-  key: ChartRangeKey;
-  interval: PhoenixCandleInterval;
-  count: number;
-}
-
-/** 1D/1W/1M/1Y as candle windows Phoenix already serves. A range with fewer than two closes is hidden. */
-export const CHART_RANGES: readonly ChartRangeRequest[] = [
-  { key: '1D', interval: '1h', count: 24 },
-  { key: '1W', interval: '4h', count: 42 },
-  { key: '1M', interval: '1d', count: 30 },
-  { key: '1Y', interval: '1d', count: 365 },
-];
-
 /** Exact story slugs only. A word inside a headline must not pick a market. */
 const MARKET_BY_SLUG: Readonly<Record<string, TopicMarketLink>> = {
   bitcoin: {
@@ -67,119 +54,129 @@ const MARKET_BY_SLUG: Readonly<Record<string, TopicMarketLink>> = {
 };
 
 interface TileSpec {
+  kind: MosaicTileKind;
+  col: number;
+  row: number;
   colSpan: number;
   rowSpan: number;
-  kind: MosaicTileKind;
-}
-
-/** Rows whose widths sum to 6 and whose heights sum to 4, so counts 1–10 fill the grid. */
-const FULL_LAYOUTS: Readonly<Record<number, readonly (readonly TileSpec[])[]>> = {
-  1: [[{ colSpan: 6, rowSpan: 4, kind: 'large' }]],
-  2: [[
-    { colSpan: 3, rowSpan: 4, kind: 'large' },
-    { colSpan: 3, rowSpan: 4, kind: 'tall' },
-  ]],
-  3: [
-    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
-    [{ colSpan: 6, rowSpan: 2, kind: 'regular' }],
-  ],
-  4: [
-    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
-    [{ colSpan: 3, rowSpan: 2, kind: 'regular' }, { colSpan: 3, rowSpan: 2, kind: 'regular' }],
-  ],
-  5: [
-    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
-    [{ colSpan: 2, rowSpan: 2, kind: 'regular' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }],
-  ],
-  6: [
-    [{ colSpan: 3, rowSpan: 2, kind: 'large' }, { colSpan: 3, rowSpan: 2, kind: 'tall' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-  ],
-  7: [
-    [{ colSpan: 3, rowSpan: 1, kind: 'large' }, { colSpan: 3, rowSpan: 1, kind: 'tall' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 6, rowSpan: 1, kind: 'regular' }],
-  ],
-  8: [
-    [{ colSpan: 3, rowSpan: 1, kind: 'large' }, { colSpan: 3, rowSpan: 1, kind: 'tall' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-  ],
-  9: [
-    [{ colSpan: 2, rowSpan: 2, kind: 'large' }, { colSpan: 2, rowSpan: 2, kind: 'tall' }, { colSpan: 2, rowSpan: 2, kind: 'regular' }],
-    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
-  ],
-  10: [
-    [{ colSpan: 2, rowSpan: 1, kind: 'large' }, { colSpan: 2, rowSpan: 1, kind: 'tall' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }, { colSpan: 2, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-    [{ colSpan: 3, rowSpan: 1, kind: 'regular' }, { colSpan: 3, rowSpan: 1, kind: 'regular' }],
-  ],
-};
-
-function placementsFromRows(rows: readonly (readonly TileSpec[])[]): MosaicPlacement[] {
-  const placed: MosaicPlacement[] = [];
-  let index = 0;
-  let rowCursor = 0;
-  for (const line of rows) {
-    let col = 0;
-    const rowSpan = line[0]?.rowSpan ?? 1;
-    for (const tile of line) {
-      placed.push({ index, kind: tile.kind, col, row: rowCursor, colSpan: tile.colSpan, rowSpan: tile.rowSpan });
-      col += tile.colSpan;
-      index += 1;
-    }
-    rowCursor += rowSpan;
-  }
-  return placed;
 }
 
 /**
- * Pack `count` tiles into the 6×4 mosaic.
- * `stretch: false` keeps a 1- or 2-tile continuation page at lead size instead of filling the band.
+ * The mock's fixed slots on the 6×4 grid, in rank order within a page.
+ * A short last page fills only the slots it has and is never re-laid out.
  */
-export function placeMosaicTiles(count: number, options?: { stretch?: boolean }): MosaicPlacement[] {
-  if (count <= 0) return [];
-  if (options?.stretch === false && count <= 2) {
-    if (count === 1) return [{ index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 }];
-    return [
-      { index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
-      { index: 1, kind: 'tall', col: 3, row: 0, colSpan: 3, rowSpan: 2 },
-    ];
-  }
-  const rows = FULL_LAYOUTS[count];
-  return rows ? placementsFromRows(rows) : [];
-}
-
-export function mosaicPages<T>(items: readonly T[]): MosaicPage<T>[] {
-  if (items.length === 0) return [];
-  const pageCount = Math.ceil(items.length / MOSAIC_PAGE_SIZE);
-  const pages: MosaicPage<T>[] = [];
-  for (let index = 0; index < pageCount; index += 1) {
-    const slice = items.slice(index * MOSAIC_PAGE_SIZE, (index + 1) * MOSAIC_PAGE_SIZE);
-    // A single leftover stays lead-sized. Two tiles use the full 2-tile layout.
-    const loneLeftover = pageCount > 1 && index > 0 && slice.length === 1;
-    pages.push({ items: slice, placements: placeMosaicTiles(slice.length, { stretch: !loneLeftover }) });
-  }
-  return pages;
-}
+const PAGE_SLOTS: readonly TileSpec[] = [
+  { kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
+  { kind: 'tall', col: 3, row: 0, colSpan: 2, rowSpan: 2 },
+  { kind: 'wide', col: 0, row: 2, colSpan: 2, rowSpan: 1 },
+  { kind: 'wide', col: 2, row: 2, colSpan: 2, rowSpan: 1 },
+  { kind: 'wide', col: 4, row: 2, colSpan: 2, rowSpan: 1 },
+  { kind: 'wide', col: 0, row: 3, colSpan: 2, rowSpan: 1 },
+  { kind: 'wide', col: 2, row: 3, colSpan: 2, rowSpan: 1 },
+  { kind: 'wide', col: 4, row: 3, colSpan: 2, rowSpan: 1 },
+  { kind: 'slim', col: 5, row: 0, colSpan: 1, rowSpan: 1 },
+  { kind: 'slim', col: 5, row: 1, colSpan: 1, rowSpan: 1 },
+];
 
 /** Pinned market for an exact story slug. The display name is ignored on purpose. */
 export function topicMarket(slug: string, _name?: string): TopicMarketLink | null {
   return MARKET_BY_SLUG[slug.trim().toLowerCase()] ?? null;
 }
 
-export function percentChange(closes: readonly number[]): number | null {
-  const first = closes[0];
-  const last = closes[closes.length - 1];
-  if (closes.length < 2 || first === undefined || last === undefined || !Number.isFinite(first) || !Number.isFinite(last) || first === 0) {
-    return null;
+/**
+ * Busiest first: the API's 7-day `eventCount` descending, then the newest
+ * `updatedAt` for ties, then `storySlug` ascending for a full tie.
+ */
+export function rankStories(stories: readonly StorySummary[]): StorySummary[] {
+  return stories.slice().sort(compareStoryActivity);
+}
+
+function compareStoryActivity(a: StorySummary, b: StorySummary): number {
+  if (a.eventCount !== b.eventCount) return b.eventCount - a.eventCount;
+  const aMs = Date.parse(a.updatedAt);
+  const bMs = Date.parse(b.updatedAt);
+  const aValid = Number.isFinite(aMs);
+  const bValid = Number.isFinite(bMs);
+  if (aValid !== bValid) return aValid ? -1 : 1;
+  if (aValid && aMs !== bMs) return bMs - aMs;
+  return a.storySlug.localeCompare(b.storySlug);
+}
+
+/**
+ * Splits the ranked list into pages of 10; page k holds ranks 10k+1 to
+ * 10k+10 and slot n on a page holds that page's n-th busiest story.
+ */
+export function mosaicPages<T extends StorySummary>(items: readonly T[]): MosaicPage<T>[] {
+  const ranked = rankStories(items) as T[];
+  const pages: MosaicPage<T>[] = [];
+  for (let first = 0; first < ranked.length; first += MOSAIC_PAGE_SIZE) {
+    const slice = ranked.slice(first, first + MOSAIC_PAGE_SIZE);
+    const placements = PAGE_SLOTS.slice(0, slice.length).map((slot, index) => ({
+      index,
+      kind: slot.kind,
+      col: slot.col,
+      row: slot.row,
+      colSpan: slot.colSpan,
+      rowSpan: slot.rowSpan,
+    }));
+    pages.push({ items: slice, placements });
   }
-  return ((last - first) / Math.abs(first)) * 100;
+  return pages;
+}
+
+/** Markets with both a price and a 24h move, in rank order. */
+export function pricedMarkets(story: Pick<StorySummary, 'markets'>): StoryMarket[] {
+  return story.markets
+    .filter((market) => market.price !== null && market.change24hPct !== null)
+    .sort((a, b) => a.rank - b.rank);
+}
+
+/**
+ * The market a tile shows on this rotation tick: the priced markets cycle
+ * head to tail, reduce motion parks on rank 1, and no priced market shows
+ * nothing.
+ */
+export function shownMarket(
+  story: Pick<StorySummary, 'markets'>,
+  tick: number,
+  reduced: boolean,
+): StoryMarket | null {
+  const priced = pricedMarkets(story);
+  if (priced.length === 0) return null;
+  if (reduced || priced.length === 1) return priced[0] ?? null;
+  const index = ((tick % priced.length) + priced.length) % priced.length;
+  return priced[index] ?? null;
+}
+
+export interface TileMove {
+  text: string;
+  tone: 'up' | 'down' | 'dim';
+}
+
+/**
+ * One-decimal tile move: `+2.8%` in the up colour, `-0.6%` in the down
+ * colour, and `0.0%` dim with no sign when the move rounds to a tenth of
+ * nothing.
+ */
+export function formatTileMove(move: number): TileMove {
+  if (!Number.isFinite(move) || Math.round(Math.abs(move) * 10) === 0) {
+    return { text: '0.0%', tone: 'dim' };
+  }
+  const text = `${Math.abs(move).toFixed(1)}%`;
+  return move > 0 ? { text: `+${text}`, tone: 'up' } : { text: `-${text}`, tone: 'down' };
+}
+
+/** The details tab to open: the `market` param's symbol when linked, else rank 1. */
+export function pickDetailMarket(
+  markets: readonly StoryMarket[],
+  marketParam: string | null | undefined,
+): StoryMarket | null {
+  if (markets.length === 0) return null;
+  if (marketParam) {
+    const wanted = markets.find((market) => market.symbol === marketParam);
+    if (wanted) return wanted;
+  }
+  return markets.find((market) => market.rank === 1) ?? markets[0] ?? null;
 }
 
 export function formatMarketPrice(value: number): string {

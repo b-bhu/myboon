@@ -4,30 +4,30 @@ import { Gesture, GestureDetector, type GestureType } from 'react-native-gesture
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Path } from 'react-native-svg';
 import { useRouter } from 'expo-router';
-import { fetchPhoenixCandles, fetchPhoenixMarkets } from '@/features/perps/phoenix.api';
+import { fetchStoryMarketCandles } from '../stories.api';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { storyAge, storyCountLabel, storyHref } from '../feed-stories';
 import {
-  formatSignedPercent,
+  formatTileMove,
   mosaicPages,
-  percentChange,
-  topicMarket,
+  shownMarket,
   type MosaicTileKind,
+  type TileMove,
 } from '../feed-mosaic';
 import { useReducedMotion } from '../use-reduced-motion';
+import type { StoryMarket } from '@myboon/shared/stories';
 import type { StorySummary } from '../feed.types';
 
 const PEEK = 28;
 const GAP = 8;
+/** One shared interval drives every tile's market rotation. */
+const ROTATE_MS = 4000;
+/** Crossfade of the market slot when the tile switches market. */
+const SLOT_FADE_MS = 250;
 
 interface TopicMosaicProps {
   stories: StorySummary[];
   now: Date;
-}
-
-interface TileQuote {
-  change: number | null;
-  closes: number[];
 }
 
 export function TopicMosaic({ stories, now }: TopicMosaicProps) {
@@ -36,19 +36,13 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
   const pages = mosaicPages(stories);
   const [width, setWidth] = useState(0);
   const [page, setPage] = useState(0);
-  const [quotes, setQuotes] = useState<Record<string, TileQuote>>({});
+  const [tick, setTick] = useState(0);
+  const [sparks, setSparks] = useState<Record<string, number[]>>({});
   const x = useSharedValue(0);
   const resting = useSharedValue(0);
   const widthSv = useSharedValue(0);
   const countSv = useSharedValue(pages.length);
-  const reducedSv = useSharedValue(reduced ? 1 : 0);
   const current = Math.min(page, Math.max(0, pages.length - 1));
-  const leadKey = pages.flatMap((group) => group.placements.flatMap((placement) => {
-    if (placement.kind !== 'large' && placement.kind !== 'tall') return [];
-    const story = group.items[placement.index];
-    const link = story ? topicMarket(story.storySlug, story.name) : null;
-    return link && story ? [`${story.storySlug}:${link.symbol}`] : [];
-  })).join('|');
 
   const goTo = (next: number) => {
     const clamped = Math.max(0, Math.min(pages.length - 1, next));
@@ -62,47 +56,50 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
   pageRef.current = current;
 
   useEffect(() => { countSv.value = pages.length; }, [countSv, pages.length]);
-  useEffect(() => { reducedSv.value = reduced ? 1 : 0; }, [reduced, reducedSv]);
+  // Without reduce motion every priced market gets its 4 seconds; with it,
+  // the tiles stay parked on each story's rank-1 market.
   useEffect(() => {
-    const next = pageOffset(pageRef.current, width, pages.length);
-    resting.value = next;
-    x.value = next;
-  }, [pages.length, resting, width, x]);
+    if (reduced) return undefined;
+    const timer = setInterval(() => setTick((value) => value + 1), ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [reduced]);
+
+  // Sparkline candles for each market a large or tall tile is currently showing.
+  const sparkTargets = new Set<string>();
+  for (const group of pages) {
+    for (const placement of group.placements) {
+      if (placement.kind !== 'large' && placement.kind !== 'tall') continue;
+      const story = group.items[placement.index];
+      const shown = story ? shownMarket(story, tick, reduced) : null;
+      if (shown) sparkTargets.add(shown.symbol);
+    }
+  }
+  const sparkKey = [...sparkTargets].sort().join('|');
+  const sparksRef = useRef(sparks);
+  sparksRef.current = sparks;
 
   useEffect(() => {
-    const leads = leadKey.split('|').flatMap((entry) => {
-      const [slug, symbol] = entry.split(':');
-      return slug && symbol ? [{ slug, symbol }] : [];
-    });
-    if (!leads.length) return undefined;
+    const symbols = sparkKey.split('|').filter(Boolean);
+    const missing = symbols.filter((symbol) => !(symbol in sparksRef.current));
+    if (!missing.length) return undefined;
     const controller = new AbortController();
     void (async () => {
-      try {
-        const markets = await fetchPhoenixMarkets();
+      await Promise.all(missing.map(async (symbol) => {
+        let closes: number[] = [];
+        try {
+          const candles = await fetchStoryMarketCandles(symbol, { signal: controller.signal });
+          closes = candles.map((candle) => candle.close).filter((close) => Number.isFinite(close));
+        } catch {
+          closes = [];
+        }
         if (controller.signal.aborted) return;
-        const next: Record<string, TileQuote> = {};
-        await Promise.all(leads.map(async (lead) => {
-          const market = markets.find((item) => item.venueSymbol === lead.symbol || item.symbol === lead.symbol);
-          let closes: number[] = [];
-          try {
-            const candles = await fetchPhoenixCandles(lead.symbol, '1h', 24, { signal: controller.signal });
-            closes = candles.map((candle) => candle.close).filter((close) => Number.isFinite(close));
-          } catch {
-            closes = [];
-          }
-          const fromCloses = percentChange(closes);
-          next[lead.slug] = {
-            change: fromCloses ?? (typeof market?.change24h === 'number' && Number.isFinite(market.change24h) ? market.change24h : null),
-            closes: closes.length >= 2 ? closes : [],
-          };
-        }));
-        if (!controller.signal.aborted) setQuotes(next);
-      } catch {
-        if (!controller.signal.aborted) setQuotes({});
-      }
+        const cached = closes.length >= 2 ? closes : [];
+        sparksRef.current = { ...sparksRef.current, [symbol]: cached };
+        setSparks(sparksRef.current);
+      }));
     })();
     return () => controller.abort();
-  }, [leadKey]);
+  }, [sparkKey]);
 
   const pan = Gesture.Pan()
     .activeOffsetX([-16, 16])
@@ -125,7 +122,7 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
   return (
     <View style={styles.section}>
       <View style={styles.head}>
-        <Text accessibilityRole="header" style={styles.heading}>Developing story</Text>
+        <Text accessibilityRole="header" style={styles.heading}>Developing stories</Text>
         <MosaicDots page={current} count={pages.length} />
       </View>
       <GestureDetector gesture={pan}>
@@ -158,8 +155,7 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
                   {group.placements.map((placement) => {
                     const story = group.items[placement.index];
                     if (!story) return null;
-                    const link = topicMarket(story.storySlug);
-                    const quote = link ? quotes[story.storySlug] : undefined;
+                    const shown = shownMarket(story, tick, reduced);
                     return (
                       <TopicTile
                         key={story.storySlug}
@@ -168,12 +164,11 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
                         story={story}
                         kind={placement.kind}
                         now={now}
-                        change={quote?.change ?? null}
-                        closes={quote?.closes ?? []}
-                        marketLabel={link?.assetName ?? null}
+                        shown={shown}
+                        closes={shown ? sparks[shown.symbol] ?? [] : []}
                         showExcerpt={stories.length <= 4}
                         frame={placement}
-                        onPress={() => router.push(storyHref(story.storySlug))}
+                        onPress={() => router.push(storyHref(story.storySlug, shown?.symbol ?? null))}
                       />
                     );
                   })}
@@ -204,9 +199,8 @@ function TopicTile({
   story,
   kind,
   now,
-  change,
+  shown,
   closes,
-  marketLabel,
   showExcerpt,
   frame,
   onPress,
@@ -216,18 +210,32 @@ function TopicTile({
   story: StorySummary;
   kind: MosaicTileKind;
   now: Date;
-  change: number | null;
+  shown: StoryMarket | null;
   closes: number[];
-  marketLabel: string | null;
   showExcerpt: boolean;
   frame: { col: number; row: number; colSpan: number; rowSpan: number };
   onPress: () => void;
 }) {
   const lead = kind === 'large' || kind === 'tall';
+  const count = storyCountLabel(story.eventCount);
   const age = storyAge(story.updatedAt, now).replace(' ago', '');
-  const meta = kind === 'slim' ? age : storyCountLabel(story.eventCount);
-  const direction = change === null || change === 0 ? null : change > 0 ? 'up' : 'down';
-  const quote = marketLabel && change !== null ? `${marketLabel} ${formatSignedPercent(change)}` : '';
+  const move = shown && shown.change24hPct !== null ? formatTileMove(shown.change24hPct) : null;
+  const arrow = move && move.tone !== 'dim' ? move.tone : null;
+
+  // The market slot (label, sparkline, move, arrow) crossfades on rotation;
+  // title, count and size never move.
+  const slot = shown?.symbol ?? null;
+  const fade = useSharedValue(1);
+  const slotRef = useRef(slot);
+  useEffect(() => {
+    if (slotRef.current === slot) return;
+    slotRef.current = slot;
+    if (reduced || slot === null) return;
+    fade.value = 0;
+    fade.value = withTiming(1, { duration: SLOT_FADE_MS });
+  }, [fade, reduced, slot]);
+  const slotStyle = useAnimatedStyle(() => ({ opacity: fade.value }));
+
   const pressed = useSharedValue(0);
   const reduceMotion = useSharedValue(reduced ? 1 : 0);
   useEffect(() => { reduceMotion.value = reduced ? 1 : 0; }, [reduceMotion, reduced]);
@@ -247,6 +255,7 @@ function TopicTile({
     .onEnd(() => {
       runOnJS(onPress)();
     });
+  const quote = shown && move ? `${shown.displayName} ${move.text}` : null;
   return (
     <View
       style={[
@@ -263,7 +272,7 @@ function TopicTile({
         <Animated.View
           accessible
           accessibilityRole="button"
-          accessibilityLabel={`${story.name}, ${storyCountLabel(story.eventCount)}${quote ? `, ${quote}` : ''}`}
+          accessibilityLabel={`${story.name}, ${count}${quote ? `, ${quote}` : ''}`}
           onAccessibilityTap={onPress}
           style={[styles.tile, lead && styles.tileLead, pressedStyle]}
         >
@@ -271,24 +280,40 @@ function TopicTile({
             {story.name}
           </Text>
           {showExcerpt && lead ? <Text style={styles.excerpt} numberOfLines={4}>{story.latestDevelopment}</Text> : null}
-          {lead && marketLabel && change !== null ? (
-            <View style={styles.market}>
+          {lead && shown ? (
+            <Animated.View style={[styles.market, slotStyle]}>
               {closes.length >= 2 ? <LeadSpark closes={closes} /> : null}
               <Text style={styles.marketLabel} numberOfLines={1}>
-                {marketLabel} <Text style={{ color: change > 0 ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }}>{formatSignedPercent(change)}</Text>
+                {shown.displaySymbol} <Text style={[styles.moveText, tileMoveColour(move)]}>{move?.text}</Text>
               </Text>
-            </View>
+            </Animated.View>
           ) : null}
-          {meta ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
-          {direction ? (
-            <Text style={[styles.direction, { color: direction === 'up' ? FEED_TOKENS.colors.up : FEED_TOKENS.colors.down }]}>
-              {direction === 'up' ? '↑' : '↓'}
-            </Text>
+          {!lead && shown ? (
+            <Animated.View style={[styles.moveRow, slotStyle]}>
+              <Text style={styles.moveLabel} numberOfLines={1}>
+                {kind === 'wide' ? `${shown.displaySymbol} ` : ''}
+                <Text style={[styles.moveText, tileMoveColour(move)]}>{move?.text}</Text>
+              </Text>
+            </Animated.View>
+          ) : null}
+          {lead || !shown ? <Text style={styles.meta} numberOfLines={1}>{kind === 'slim' ? age : count}</Text> : null}
+          {arrow ? (
+            <Animated.Text style={[styles.direction, slotStyle, { color: tileMoveColour(move)?.color }]}>
+              {arrow === 'up' ? '↑' : '↓'}
+            </Animated.Text>
           ) : null}
         </Animated.View>
       </GestureDetector>
     </View>
   );
+}
+
+/** Only the move text and the arrow take a meaning colour; tiles stay neutral. */
+function tileMoveColour(move: TileMove | null): { color: string } | null {
+  if (!move) return null;
+  if (move.tone === 'up') return { color: FEED_TOKENS.colors.up };
+  if (move.tone === 'down') return { color: FEED_TOKENS.colors.down };
+  return { color: FEED_TOKENS.colors.textDim };
 }
 
 function LeadSpark({ closes }: { closes: number[] }) {
@@ -355,6 +380,16 @@ const styles = StyleSheet.create({
     fontSize: FEED_TOKENS.type.label,
     lineHeight: 14,
   },
+  moveRow: { marginTop: 'auto' },
+  moveLabel: {
+    color: FEED_TOKENS.colors.textDim,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  moveText: { fontWeight: '600' },
   meta: {
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
@@ -365,6 +400,6 @@ const styles = StyleSheet.create({
   },
   direction: { position: 'absolute', top: 6, right: 8, fontSize: FEED_TOKENS.type.secondary, fontWeight: '700' },
   dots: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  dot: { width: 8, height: 4, backgroundColor: FEED_TOKENS.colors.textFaint },
+  dot: { width: 8, height: 3, backgroundColor: FEED_TOKENS.colors.border },
   dotOn: { width: 16, backgroundColor: FEED_TOKENS.colors.accent },
 });

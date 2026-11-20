@@ -23,6 +23,7 @@ const story = (slug: string, hoursAgo: number): StorySummary => ({
   imageUrl: null,
   imageKind: null,
   imageAttribution: null,
+  markets: [],
 });
 
 const event = (text: string, eventAt: string): StoryEvent => ({
@@ -109,6 +110,13 @@ test('storyHref encodes the slug into the story route', () => {
   assert.equal(storyHref('a/b'), '/story/a%2Fb');
 });
 
+test('storyHref appends the encoded market param only when a symbol is given', () => {
+  assert.equal(storyHref('bitcoin', 'BTC'), '/story/bitcoin?market=BTC');
+  assert.equal(storyHref('bitcoin', 'xyz:CL'), '/story/bitcoin?market=xyz%3ACL');
+  assert.equal(storyHref('us-iran', null), '/story/us-iran');
+  assert.equal(storyHref('us-iran', ''), '/story/us-iran');
+});
+
 test('timelineEvents orders newest first, keeps timestamp ties stable, sinks invalid dates', () => {
   const rows = [
     event('oldest', ago(72)),
@@ -164,5 +172,5 @@ test('showAllStoriesLink hides the Home link when there are no stories', () => {
   assert.equal(showAllStoriesLink(null), false);
   assert.equal(showAllStoriesLink(undefined), false);
   assert.equal(showAllStoriesLink([]), false);
-  assert.equal(showAllStoriesLink([{ storySlug: 'a', name: 'A', latestDevelopment: 'x', eventCount: 1, updatedAt: '2026-10-01T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null }]), true);
+  assert.equal(showAllStoriesLink([{ storySlug: 'a', name: 'A', latestDevelopment: 'x', eventCount: 1, updatedAt: '2026-10-01T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null, markets: [] }]), true);
 });

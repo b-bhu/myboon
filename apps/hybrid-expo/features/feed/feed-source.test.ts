@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { fetchFeedItems, reportSourceName } from './feed.api';
 
 function update(id: string, publishedAt: string, sourceTitle?: string, imageUrl?: string | null) {
@@ -52,4 +54,50 @@ test('report items keep a trimmed outlet and drop a blank, missing, or oversized
   } finally {
     globalThis.fetch = original;
   }
+});
+
+/** Every .ts(x) file under features/feed, nested directories included. */
+function feedSourceFiles(): string[] {
+  const root = new URL('.', import.meta.url).pathname;
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.(ts|tsx)$/.test(entry.name)) files.push(path);
+    }
+  };
+  walk(root);
+  return files;
+}
+
+test('feed features read story prices and candles only from the MyBoon API', () => {
+  const self = new URL('.', import.meta.url);
+  const offenders = feedSourceFiles().filter((file) => {
+    // This test names the forbidden modules itself, so it is skipped.
+    if (file.startsWith(self.pathname)) return false;
+    const source = readFileSync(file, 'utf8');
+    return source.includes('@/features/perps/phoenix.api') || source.includes('api.hyperliquid.xyz');
+  });
+  assert.deepEqual(
+    offenders.map((file) => relative(self.pathname, file)),
+    [],
+    'features/feed must not call Phoenix or Hyperliquid directly',
+  );
+});
+
+test('tiles and the details price section no longer use topicMarket; only the trade dock does', () => {
+  const root = new URL('.', import.meta.url).pathname;
+  for (const file of ['components/TopicMosaic.tsx', 'components/StoryMarketsSection.tsx']) {
+    const source = readFileSync(join(root, file), 'utf8');
+    assert.equal(source.includes('topicMarket'), false, `${file} still references topicMarket`);
+  }
+  const screen = readFileSync(join(root, 'StoryScreen.tsx'), 'utf8');
+  // The retired price block is gone; the pinned trade dock keeps its own path.
+  assert.equal(screen.includes('TopicMarketSection'), false);
+  assert.match(screen, /const link = story \? topicMarket\(story\.storySlug\) : null;/);
+  assert.match(screen, /\/markets\/phoenix\/\[symbol\]/);
+  // The details price section renders from the story's linked markets.
+  assert.match(screen, /StoryMarketsSection/);
+  assert.match(screen, /story\.markets\.length > 0/);
 });

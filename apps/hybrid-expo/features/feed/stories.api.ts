@@ -1,3 +1,8 @@
+import type {
+  HyperliquidCandlesResponse,
+  MarketCandle,
+  StoryMarket,
+} from '@myboon/shared/stories';
 import type { StoryDetail, StoryEvent, StoryPagination, StorySummary } from '@/features/feed/feed.types';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 
@@ -89,7 +94,7 @@ function parseStoryPagination(
   };
 }
 
-function parseStorySummary(value: unknown): StorySummary | null {
+export function parseStorySummary(value: unknown): StorySummary | null {
   if (!isRecord(value)) return null;
   if (
     !nonEmptyString(value.storySlug)
@@ -113,7 +118,74 @@ function parseStorySummary(value: unknown): StorySummary | null {
     imageUrl: httpUrlOrNull(value.imageUrl),
     imageKind: imageKindOrNull(value.imageKind),
     imageAttribution: optionalString(value.imageAttribution),
+    markets: parseStoryMarkets(value.markets),
   };
+}
+
+/**
+ * The story's linked Hyperliquid markets (#691). A missing or non-array value
+ * gives `[]`; a malformed entry is dropped, never the story.
+ */
+function parseStoryMarkets(value: unknown): StoryMarket[] {
+  if (!Array.isArray(value)) return [];
+  const parsed = new Map<string, StoryMarket>();
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    if (
+      !nonEmptyString(entry.symbol)
+      || !nonEmptyString(entry.displaySymbol)
+      || !nonEmptyString(entry.displayName)
+      || (entry.rank !== 1 && entry.rank !== 2 && entry.rank !== 3)
+    ) {
+      continue;
+    }
+    const price = finiteOrNull(entry.price);
+    const market: StoryMarket = {
+      symbol: entry.symbol.trim(),
+      displaySymbol: entry.displaySymbol.trim(),
+      displayName: entry.displayName.trim(),
+      rank: entry.rank,
+      price,
+      // The server nulls a change and its stamp whenever the price is stale.
+      change24hPct: price === null ? null : finiteOrNull(entry.change24hPct),
+      asOf: price === null ? null : isoOrNull(entry.asOf),
+    };
+    // A repeated symbol keeps its lowest-rank row.
+    const existing = parsed.get(market.symbol);
+    if (existing && existing.rank <= market.rank) continue;
+    parsed.set(market.symbol, market);
+  }
+  return [...parsed.values()].sort((a, b) => a.rank - b.rank).slice(0, 3);
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function isoOrNull(value: unknown): string | null {
+  return nonEmptyString(value) && Number.isFinite(Date.parse(value)) ? value.trim() : null;
+}
+
+/**
+ * 1h candles for one Hyperliquid market, `count` bars oldest first. The
+ * endpoint answers 400 (missing symbol or bad interval), 404 (unknown
+ * market), 503 (no price snapshot) or 502 (candle upstream down).
+ */
+export async function fetchStoryMarketCandles(
+  symbol: string,
+  options?: { readonly signal?: AbortSignal },
+): Promise<MarketCandle[]> {
+  const response = await fetchWithTimeout(
+    `${resolveApiBaseUrl()}/market/hyperliquid/candles?symbol=${encodeURIComponent(symbol)}&interval=1h&count=24`,
+    { signal: options?.signal },
+  );
+  if (!response.ok) throw new Error(`Candles request failed (${response.status})`);
+
+  const payload = (await response.json()) as HyperliquidCandlesResponse | null;
+  if (!payload || !Array.isArray(payload.candles)) {
+    throw new Error('Invalid Candles response');
+  }
+  return payload.candles;
 }
 
 function parseStoryEvent(value: unknown): StoryEvent | null {
