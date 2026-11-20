@@ -10,6 +10,7 @@ import {
   eventLocalDate,
   eventLocalTime,
   eventMetaLabel,
+  eventMetaLine,
   eventReactionSample,
   eventWhen,
   eventsByDay,
@@ -307,6 +308,16 @@ test('eventMetaLabel reads Macro with the currency, country, or nothing', () => 
 });
 test('eventMetaLabel reads Earnings with the symbol', () => {
   assert.equal(eventMetaLabel(earnings('2026-10-28', null)), 'Earnings · META');
+});
+
+test('eventMetaLine joins the date, the time and the summary', () => {
+  assert.equal(eventMetaLine('Thu 10 Dec', '00:30', 'Est 4.25%'), 'Thu 10 Dec · 00:30 · Est 4.25%');
+});
+test('eventMetaLine stops after the time when there is no summary', () => {
+  assert.equal(eventMetaLine('Thu 10 Dec', '00:30', ''), 'Thu 10 Dec · 00:30');
+});
+test('eventMetaLine keeps the All day label for date-only events', () => {
+  assert.equal(eventMetaLine('Thu 10 Dec', 'All day', 'Est 4.25%'), 'Thu 10 Dec · All day · Est 4.25%');
 });
 
 test('eventFigures labels the economic boxes with their unit suffix', () => {
