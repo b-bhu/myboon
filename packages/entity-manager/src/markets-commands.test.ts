@@ -170,3 +170,75 @@ describe('#690 markets:apply — the plan (no --yes)', () => {
     expect(dirty().some((c) => c.sql.includes('markets_checked_at = now()'))).toBe(true);
   });
 });
+
+describe('#696 markets:apply — an empty approved markets list still marks the entity checked', () => {
+  const EMPTY_FILE = '[{"slug":"a","entityId":"e1","markets":[]}]';
+
+  it('an unchecked entity with an empty markets list is planned and printed as checked, no markets', async () => {
+    const { db, clean, dirty } = fakeDb({ entities: { e1: { slug: 'a', markets_checked_at: null } } });
+    const plan = await planApply(db, parseApplyFile(EMPTY_FILE));
+    expect(plan).toEqual([{ slug: 'a', kind: 'empty_write' }]);
+    expect(planLine(plan[0]!)).toBe('a: checked, no markets');
+    // a non-empty list whose only pick is already pinned keeps the old nothing path
+    const { db: db2 } = fakeDb({ entities: { e1: { slug: 'a', markets_checked_at: null } }, pinned: [{ rank: 1, symbol: 'BTC' }] });
+    const pinnedPlan = await planApply(db2, parseApplyFile('[{"slug":"a","entityId":"e1","markets":[{"symbol":"BTC","setBy":"manual","pinned":true}]}]'));
+    expect(pinnedPlan).toEqual([{ slug: 'a', kind: 'nothing' }]);
+    expect(planLine(pinnedPlan[0]!)).toBe('a: nothing to write (all picks pinned)');
+
+    const log: string[] = [];
+    await runApply({ db, entries: parseApplyFile(EMPTY_FILE), yes: false, list: async () => new Set(['BTC']), log: (l) => log.push(l) });
+    expect(log.join('\n')).toContain('a: checked, no markets');
+    expect(log.join('\n')).toContain('nothing was written; pass --yes to write these rows');
+    expect(clean()).toEqual([]);
+    expect(dirty()).toEqual([]);
+  });
+
+  it('with --yes the empty-list entity runs the writeMarkets transaction: timestamp set, no insert', async () => {
+    const { db, dirty } = fakeDb({ entities: { e1: { slug: 'a', markets_checked_at: null } }, tx: { exists: true, checked: null } });
+    const log: string[] = [];
+    const refused = await runApply({ db, entries: parseApplyFile(EMPTY_FILE), yes: true, list: async () => new Set(['BTC']), log: (l) => log.push(l) });
+    expect(refused).toBe(0);
+    expect(log.join('\n')).toContain('a: wrote 0 row(s)');
+    const tx = dirty();
+    expect(tx.some((c) => c.sql.includes('markets_checked_at = now()'))).toBe(true);
+    expect(tx.some((c) => c.sql.includes('insert into atlas.entity_markets'))).toBe(false);
+  });
+
+  it('a mixed file still writes the other entity and sets both timestamps', async () => {
+    const { db, dirty } = fakeDb({
+      entities: { e1: { slug: 'a', markets_checked_at: null }, e2: { slug: 'b', markets_checked_at: null } },
+      tx: { exists: true, checked: null },
+    });
+    const log: string[] = [];
+    const refused = await runApply({
+      db,
+      entries: parseApplyFile('[{"slug":"a","entityId":"e1","markets":[{"symbol":"BTC","setBy":"model"}]},{"slug":"b","entityId":"e2","markets":[]}]'),
+      yes: true,
+      list: async () => new Set(['BTC']),
+      log: (l) => log.push(l),
+    });
+    expect(refused).toBe(0);
+    expect(log.join('\n')).toContain('a: wrote 1 row(s)');
+    expect(log.join('\n')).toContain('b: wrote 0 row(s)');
+    const nows = dirty().filter((c) => c.sql.includes('markets_checked_at = now()'));
+    expect(nows).toHaveLength(2);
+    expect(nows.map((c) => c.params[0])).toEqual(['e1', 'e2']);
+    const inserts = dirty().filter((c) => c.sql.includes('insert into atlas.entity_markets'));
+    expect(inserts).toHaveLength(1);
+    expect(inserts.every((c) => c.params[0] === 'e1')).toBe(true);
+  });
+
+  it('an already-checked empty-list entity is still reported as skipped and is not written', async () => {
+    const checked = new Date();
+    const { db, dirty } = fakeDb({ entities: { e1: { slug: 'a', markets_checked_at: checked } }, tx: { exists: true, checked } });
+    const plan = await planApply(db, parseApplyFile(EMPTY_FILE));
+    expect(plan).toEqual([{ slug: 'a', kind: 'skip', why: 'already checked' }]);
+    expect(planLine(plan[0]!)).toBe('a: skipped: already checked');
+    const log: string[] = [];
+    const refused = await runApply({ db, entries: parseApplyFile(EMPTY_FILE), yes: true, list: async () => new Set(['BTC']), log: (l) => log.push(l) });
+    expect(refused).toBe(0);
+    expect(log.join('\n')).toContain('a: skipped: already checked');
+    expect(log.join('\n')).not.toContain('wrote 0 row(s)');
+    expect(dirty()).toEqual([]);
+  });
+});
