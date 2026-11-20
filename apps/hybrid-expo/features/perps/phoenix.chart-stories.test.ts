@@ -108,6 +108,7 @@ function story(overrides: Partial<StorySummary> = {}): StorySummary {
     imageUrl: 'https://example.com/bitcoin.jpg',
     imageKind: 'content',
     imageAttribution: 'Example',
+    markets: [],
     ...overrides,
   };
 }

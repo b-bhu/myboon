@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeedSectionState } from './components/feed-section-state';
 import { FeedBox } from './components/ui/FeedBox';
-import { TopicMarketSection } from './components/TopicMarketSection';
+import { StoryMarketsSection } from './components/StoryMarketsSection';
 import { FEED_TOKENS, monoFontFamily } from './feed-design';
 import { topicMarket } from './feed-mosaic';
 import { storyAge, storyCountLabel, timelineEvents, timelineLabel } from './feed-stories';
@@ -13,15 +13,16 @@ import type { StoryEvent } from './feed.types';
 
 /**
  * Topic detail. Real story fields fill the header, latest development and
- * timeline. The market block and pinned action appear only when the story
- * matches a Phoenix market. Causal chain and a separate news list are not
+ * timeline. The price section appears only when the story has linked
+ * markets. Causal chain and a separate news list are not
  * returned by the API, so they stay off this screen.
  */
 export default function StoryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const params = useLocalSearchParams<{ slug?: string | string[] }>();
+  const params = useLocalSearchParams<{ slug?: string | string[]; market?: string | string[] }>();
   const slug = Array.isArray(params.slug) ? params.slug[0] : params.slug;
+  const marketParam = Array.isArray(params.market) ? params.market[0] : params.market;
   const { detail, loading, error, loadingMore, loadMoreError, loadEarlierMemories, retry } = useStoryDetail(slug);
   const story = detail?.story ?? null;
   const events = detail ? timelineEvents(detail.events) : [];
@@ -75,7 +76,7 @@ export default function StoryScreen() {
                 <Text style={styles.latestBody} numberOfLines={4}>{story.latestDevelopment}</Text>
               </FeedBox>
             </View>
-            {link ? <TopicMarketSection link={link} active /> : null}
+            {story && story.markets.length > 0 ? <StoryMarketsSection story={story} marketParam={marketParam} /> : null}
             <View style={styles.sectionHead}>
               <Text accessibilityRole="header" style={styles.sectionTitle}>How we got here</Text>
               <Text style={styles.kickerText}>Newest first</Text>

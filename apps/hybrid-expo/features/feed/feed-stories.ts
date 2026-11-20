@@ -78,9 +78,11 @@ export function storyMeta(story: StorySummary, now: Date): string {
   return age ? `${count} · ${age}` : count;
 }
 
-/** Story route for a slug; encoding keeps spaces and slashes one segment deep. */
-export function storyHref(slug: string): `/story/${string}` {
-  return `/story/${encodeURIComponent(slug)}`;
+/** Story route for a slug; encoding keeps spaces and slashes one segment deep.
+ *  A market symbol adds the `?market=` detail deep-link for the story page. */
+export function storyHref(slug: string, marketSymbol?: string | null): `/story/${string}` {
+  const path = `/story/${encodeURIComponent(slug)}` as const;
+  return marketSymbol ? `${path}?market=${encodeURIComponent(marketSymbol)}` : path;
 }
 
 /**

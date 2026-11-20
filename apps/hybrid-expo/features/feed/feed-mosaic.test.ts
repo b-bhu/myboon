@@ -1,26 +1,52 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { StoryMarket } from '@myboon/shared/stories';
 import {
   formatSignedPercent,
+  formatTileMove,
   isOfflineMessage,
   mosaicPages,
-  placeMosaicTiles,
+  pickDetailMarket,
+  pricedMarkets,
+  rankStories,
+  shownMarket,
   topicMarket,
 } from './feed-mosaic';
 import type { StorySummary } from './feed.types';
 
-const story = (slug: string, eventCount: number, name = slug): StorySummary => ({
+const story = (
+  slug: string,
+  eventCount: number,
+  overrides: Partial<StorySummary> = {},
+): StorySummary => ({
   storySlug: slug,
-  name,
+  name: slug,
   latestDevelopment: 'Latest',
   eventCount,
   updatedAt: '2026-10-26T07:02:09.000Z',
   imageUrl: null,
   imageKind: null,
   imageAttribution: null,
+  markets: [],
+  ...overrides,
 });
 
-function emptyCells(placed: ReturnType<typeof placeMosaicTiles>): number {
+const market = (
+  rank: 1 | 2 | 3,
+  symbol: string,
+  change24hPct: number | null,
+  price: number | null = 12.5,
+): StoryMarket => ({
+  symbol,
+  displaySymbol: symbol.split(':')[1] ?? symbol,
+  displayName: `Name of ${symbol}`,
+  rank,
+  price,
+  change24hPct: price === null ? null : change24hPct,
+  asOf: price === null ? null : '2026-10-26T07:00:00.000Z',
+});
+
+function emptyCells(placed: { col: number; row: number; colSpan: number; rowSpan: number }[]): number {
   const grid = Array.from({ length: 4 }, () => Array.from({ length: 6 }, () => false));
   for (const tile of placed) {
     for (let y = 0; y < tile.rowSpan; y += 1) {
@@ -34,45 +60,132 @@ function emptyCells(placed: ReturnType<typeof placeMosaicTiles>): number {
   return grid.flat().filter((filled) => !filled).length;
 }
 
-test('mosaic pages fill the grid for 1–10 stories and keep a short last page small', () => {
-  assert.equal(mosaicPages([]).length, 0);
-  for (let count = 1; count <= 10; count += 1) {
-    const placed = placeMosaicTiles(count);
-    assert.equal(placed.length, count, `count ${count}`);
-    assert.equal(emptyCells(placed), 0, `empty cells for ${count}`);
-  }
-  const pages = mosaicPages(Array.from({ length: 11 }, (_, index) => index));
-  assert.equal(pages.length, 2);
-  assert.equal(pages[0]?.items.length, 10);
-  assert.equal(pages[1]?.items.length, 1);
-  assert.equal(pages[1]?.placements[0]?.colSpan, 3);
-  assert.equal(pages[1]?.placements[0]?.rowSpan, 2);
-  const dozen = mosaicPages(Array.from({ length: 12 }, (_, index) => index));
-  assert.equal(dozen[1]?.items.length, 2);
-  assert.equal(emptyCells(dozen[1]?.placements ?? []), 0);
+test('rankStories puts the busiest first, ties on the newer update, full ties on slug', () => {
+  const stamp = '2026-10-26T07:02:09.000Z';
+  const input = [
+    story('z-tie', 4, { updatedAt: stamp }),
+    story('b-tie', 4, { updatedAt: stamp }),
+    // Activity outranks recency; the two 9s sort newest first.
+    story('stale-nine', 9, { updatedAt: '2026-10-25T07:02:09.000Z' }),
+    story('fresh-nine', 9, { updatedAt: '2026-10-26T07:02:09.000Z' }),
+    story('quiet', 2, { updatedAt: stamp }),
+  ];
+  const ranked = rankStories(input);
+  assert.deepEqual(ranked.map((item) => item.storySlug), ['fresh-nine', 'stale-nine', 'b-tie', 'z-tie', 'quiet']);
+  // The input list is never reordered in place.
+  assert.deepEqual(input.map((item) => item.storySlug), ['z-tie', 'b-tie', 'stale-nine', 'fresh-nine', 'quiet']);
 });
 
-test('mosaicPages keeps API order and pages twelve stories as ten then two', () => {
-  const quietFirst = [story('quiet-new', 1), story('loud-old', 99)];
-  assert.deepEqual(
-    mosaicPages(quietFirst)[0]?.items.map((item) => item.storySlug),
-    ['quiet-new', 'loud-old'],
-  );
+test('one story fills only the large slot, two fill large and tall', () => {
+  assert.deepEqual(mosaicPages([story('only', 1)])[0]?.placements, [
+    { index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
+  ]);
+  const pair = mosaicPages([story('a', 2), story('b', 1)]);
+  assert.deepEqual(pair[0]?.placements.map((placement) => placement.kind), ['large', 'tall']);
+});
 
-  const dozen = Array.from({ length: 12 }, (_, index) => story(`topic-${index}`, 12 - index));
-  const pages = mosaicPages(dozen);
-  assert.equal(pages.length, 2);
-  assert.equal(pages[0]?.items.length, 10);
-  assert.equal(pages[0]?.placements.length, 10);
-  assert.equal(pages[0]?.placements[0]?.kind, 'large');
-  assert.equal(pages[0]?.placements[0]?.index, 0);
-  assert.equal(pages[1]?.items.length, 2);
-  assert.equal(pages[1]?.placements.length, 2);
+test('a full page holds all ten slots in the mock layout with no overlap', () => {
+  const ten = mosaicPages(Array.from({ length: 10 }, (_, index) => story(`s${index}`, 10 - index)));
   assert.deepEqual(
-    pages.flatMap((page) => page.items.map((item) => item.storySlug)),
-    dozen.map((item) => item.storySlug),
+    ten[0]?.placements.map((placement) => [placement.index, placement.kind, placement.col, placement.row, placement.colSpan, placement.rowSpan]),
+    [
+      [0, 'large', 0, 0, 3, 2],
+      [1, 'tall', 3, 0, 2, 2],
+      [2, 'wide', 0, 2, 2, 1],
+      [3, 'wide', 2, 2, 2, 1],
+      [4, 'wide', 4, 2, 2, 1],
+      [5, 'wide', 0, 3, 2, 1],
+      [6, 'wide', 2, 3, 2, 1],
+      [7, 'wide', 4, 3, 2, 1],
+      [8, 'slim', 5, 0, 1, 1],
+      [9, 'slim', 5, 1, 1, 1],
+    ],
   );
-  assert.equal(emptyCells(pages[1]?.placements ?? []), 0);
+  assert.equal(emptyCells(ten[0]?.placements ?? []), 0);
+  // Slot n carries the page's n-th busiest story.
+  assert.deepEqual(ten[0]?.items.map((item) => item.storySlug), Array.from({ length: 10 }, (_, index) => `s${index}`));
+});
+
+test('pages split by ten with fixed tiles: one leftover large, three keep the first slots', () => {
+  const eleven = mosaicPages(Array.from({ length: 11 }, (_, index) => story(`s${index}`, 11 - index)));
+  assert.equal(eleven.length, 2);
+  assert.equal(eleven[0]?.items.length, 10);
+  assert.equal(eleven[1]?.items.length, 1);
+  assert.deepEqual(eleven[1]?.placements, [
+    { index: 0, kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
+  ]);
+
+  const pages = mosaicPages(Array.from({ length: 23 }, (_, index) => story(`s${index}`, 23 - index)));
+  assert.deepEqual(pages.map((page) => page.items.length), [10, 10, 3]);
+  const last = pages[2]?.placements.map((placement) => placement.kind);
+  assert.deepEqual(last, ['large', 'tall', 'wide']);
+  assert.equal(pages[2]?.placements[0]?.colSpan, 3);
+  assert.equal(pages[2]?.placements[0]?.rowSpan, 2);
+  assert.equal(emptyCells(pages[2]?.placements ?? []), 24 - (6 + 4 + 2));
+});
+
+test('the busiest story on every page takes the large slot', () => {
+  // API order is loud-quiet-loud: ranking must flip it.
+  const ranked = mosaicPages([
+    story('quiet', 1),
+    story('loud', 99),
+    story('middle', 50),
+  ]);
+  assert.deepEqual(ranked[0]?.items.map((item) => item.storySlug), ['loud', 'middle', 'quiet']);
+  assert.equal(ranked[0]?.placements[0]?.kind, 'large');
+
+  const spread = mosaicPages(Array.from({ length: 23 }, (_, index) => story(`s${index}`, 30 - index)));
+  assert.ok(spread.every((page) => page.items[0]?.eventCount === Math.max(...page.items.map((item) => item.eventCount))));
+  assert.ok(spread.every((page) => page.placements[0]?.kind === 'large'));
+});
+
+test('pricedMarkets keeps priced markets in rank order and skips stale ones', () => {
+  const priced = pricedMarkets(story('a', 3, {
+    markets: [
+      market(3, 'SOL', -0.9),
+      market(1, 'BTC', 2.8),
+      // An unpriced rank 2 (stale snapshot) never reaches the cycle.
+      market(2, 'STALE', 5, null),
+      market(2, 'ETH', 0.5),
+    ],
+  }));
+  assert.deepEqual(priced.map((item) => item.symbol), ['BTC', 'ETH', 'SOL']);
+  assert.deepEqual(pricedMarkets(story('b', 1, { markets: [market(1, 'STALE', null, null)] })), []);
+});
+
+test('shownMarket cycles priced markets by tick and parks on rank 1 for reduce motion', () => {
+  const three = story('a', 3, { markets: [market(1, 'BTC', 2.8), market(2, 'ETH', 0.5), market(3, 'SOL', -0.9)] });
+  assert.deepEqual(
+    [0, 1, 2, 3].map((tick) => shownMarket(three, tick, false)?.symbol),
+    ['BTC', 'ETH', 'SOL', 'BTC'],
+  );
+  assert.equal(shownMarket(three, 41, true)?.symbol, 'BTC');
+
+  // A stale rank 2 never shows; the cycle runs over the remaining two.
+  const stale = story('b', 3, { markets: [market(1, 'BTC', 2.8), market(2, 'STALE', null), market(3, 'SOL', -0.9)] });
+  assert.deepEqual(
+    [0, 1, 2].map((tick) => shownMarket(stale, tick, false)?.symbol),
+    ['BTC', 'SOL', 'BTC'],
+  );
+  assert.equal(shownMarket(stale, 7, true)?.symbol, 'BTC');
+
+  assert.equal(shownMarket(story('c', 1, { markets: [market(1, 'STALE', null, null)] }), 0, false), null);
+  assert.equal(shownMarket(story('d', 1), 0, false), null);
+});
+
+test('formatTileMove colours one-decimal moves and dims a 0.0 move', () => {
+  assert.deepEqual(formatTileMove(2.84), { text: '+2.8%', tone: 'up' });
+  assert.deepEqual(formatTileMove(-0.61), { text: '-0.6%', tone: 'down' });
+  assert.deepEqual(formatTileMove(0.04), { text: '0.0%', tone: 'dim' });
+  assert.deepEqual(formatTileMove(-0.04), { text: '0.0%', tone: 'dim' });
+});
+
+test('pickDetailMarket opens the market param tab, else rank 1', () => {
+  const markets = [market(1, 'BTC', 2.8), market(2, 'ETH', 0.5), market(3, 'SOL', -0.9)];
+  assert.equal(pickDetailMarket(markets, 'ETH')?.symbol, 'ETH');
+  assert.equal(pickDetailMarket(markets, 'nope')?.symbol, 'BTC');
+  assert.equal(pickDetailMarket(markets, null)?.symbol, 'BTC');
+  assert.equal(pickDetailMarket([], undefined), null);
 });
 
 test('topicMarket matches exact slugs and ignores words in the name', () => {

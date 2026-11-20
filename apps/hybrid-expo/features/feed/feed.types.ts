@@ -1,5 +1,6 @@
 import type { ComponentProps } from 'react';
 import type MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import type { StoryMarket } from '@myboon/shared/stories';
 
 export type FeedCategory = string;
 
@@ -47,6 +48,8 @@ export interface StorySummary {
   imageUrl: string | null;
   imageKind: 'content' | 'source_avatar' | null;
   imageAttribution: string | null;
+  /** This story's linked Hyperliquid markets (rank order, at most 3, #691). */
+  markets: StoryMarket[];
 }
 
 export interface StoryEvent {
