@@ -4,7 +4,9 @@
  * any is unknown, an entity has more than 3, or a symbol repeats. setBy ('model' or 'manual') and
  * pinned come from the file, so Bibhu edits picks before saving. Per entity the transaction is the
  * writeMarkets one: it writes only while markets_checked_at is still null and otherwise reports
- * "skipped: already checked". Without --yes it only prints what it would write (selects only).
+ * "skipped: already checked". An entry whose markets list is empty still runs that transaction
+ * (#696): zero rows, markets_checked_at set. Without --yes it only prints what it would write
+ * (selects only).
  *
  * Usage: pnpm --filter @myboon/entity-manager markets:apply --file <json> [--yes]
  */
@@ -70,6 +72,7 @@ export function validateApplyFile(entries: ApplyEntry[], live: ReadonlySet<strin
 
 export type ApplyPlanLine =
   | { slug: string; kind: 'write'; rows: Array<{ rank: number; symbol: string; setBy: string; pinned: boolean }> }
+  | { slug: string; kind: 'empty_write' }
   | { slug: string; kind: 'skip'; why: string }
   | { slug: string; kind: 'nothing' }
   | { slug: string; kind: 'missing' }
@@ -82,6 +85,7 @@ export function planLine(line: ApplyPlanLine): string {
       .join(', ')}`;
   }
   if (line.kind === 'skip') return `${line.slug}: skipped: ${line.why}`;
+  if (line.kind === 'empty_write') return `${line.slug}: checked, no markets`;
   if (line.kind === 'nothing') return `${line.slug}: nothing to write (all picks pinned)`;
   if (line.kind === 'missing') return `${line.slug}: not found (no atlas.entities row with that entityId); refusing this entity`;
   return `${line.slug}: slug does not match the entity that id resolves to; refusing this entity`;
@@ -113,7 +117,15 @@ export async function planApply(db: Q, entries: ApplyEntry[]): Promise<ApplyPlan
       [e.entityId],
     );
     const assigned = assignMarketRanks(e.markets, pinned.rows);
-    out.push(assigned.length ? { slug: e.slug, kind: 'write', rows: assigned.map((a) => ({ rank: a.rank, symbol: a.row.symbol, setBy: a.row.setBy, pinned: a.row.pinned })) } : { slug: e.slug, kind: 'nothing' });
+    if (assigned.length) {
+      out.push({ slug: e.slug, kind: 'write', rows: assigned.map((a) => ({ rank: a.rank, symbol: a.row.symbol, setBy: a.row.setBy, pinned: a.row.pinned })) });
+    } else if (e.markets.length === 0) {
+      // #696 an approved empty list is still an approval: the write transaction must run so
+      // markets_checked_at is set and the next pass stops re-picking this entity.
+      out.push({ slug: e.slug, kind: 'empty_write' });
+    } else {
+      out.push({ slug: e.slug, kind: 'nothing' });
+    }
   }
   return out;
 }
@@ -139,7 +151,8 @@ export async function runApply(deps: ApplyDeps): Promise<number> {
   }
   for (const [i, e] of deps.entries.entries()) {
     const line = plan[i]!;
-    if (line.kind !== 'write') continue;
+    // #696 empty_write runs the same writeMarkets transaction with zero rows; only refusals skip.
+    if (line.kind !== 'write' && line.kind !== 'empty_write') continue;
     const r = await writeMarkets(deps.db, e.entityId, e.markets);
     if (r.outcome === 'skip') log(`${e.slug}: skipped: already checked`);
     else log(`${e.slug}: wrote ${r.rows} row(s)`);
