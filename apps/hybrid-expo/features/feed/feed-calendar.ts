@@ -112,6 +112,15 @@ export function eventLocalTime(event: CalendarEvent): string {
   return `${pad(start.getHours())}:${pad(start.getMinutes())}`;
 }
 
+/**
+ * The home card's one-line meta (issue #682): 'date · time' plus the figure
+ * summary when one exists ('Thu 10 Dec · 00:30 · Est 4.25%'), never a
+ * trailing separator.
+ */
+export function eventMetaLine(dateLabel: string, time: string, summary: string): string {
+  return [dateLabel, time, summary].filter(Boolean).join(' · ');
+}
+
 /** Epoch ms of the last millisecond of the local day named by isoDate (NaN if unusable). */
 function localDayEndMs(isoDate: string): number {
   const date = parseDate(isoDate);

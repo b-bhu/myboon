@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
   today: { gap: 8 },
   mosaic: { height: STORIES_HEAD_HEIGHT + STORIES_HEAD_GAP + STORIES_PAGER_HEIGHT, overflow: 'hidden' },
   mosaicEmpty: { justifyContent: 'center' },
-  calendar: { flex: 0, minHeight: 120 },
+  calendar: {},
   latestNotice: { color: FEED_TOKENS.colors.textDim, fontSize: 12, lineHeight: 16 },
   newUpdates: { position: 'absolute', bottom: 12, left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: color.border, borderRadius: 8, backgroundColor: color.card },
   action: { color: color.accent, fontSize: 12, fontWeight: '700' },
