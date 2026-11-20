@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { EntityKnowledgeMemoryV1, EntityKnowledgeReader } from '@myboon/collectors/entity-manager'
 import entityManager from '@myboon/collectors/entity-manager'
+import type { StoryMarket } from '@myboon/shared/stories'
+import type { HyperliquidQuotes } from './hyperliquid.js'
 import { createStoryRoutes, storySummary } from './stories.js'
 
 const { ENTITY_KNOWLEDGE_SCHEMA_VERSION } = entityManager
@@ -33,12 +35,14 @@ function app(
     },
   },
   source?: 'legacy' | 'atlas',
+  prices?: HyperliquidQuotes,
 ) {
   return createStoryRoutes({
     supabaseUrl: 'https://project.supabase.co',
     serviceRoleKey: 'service-role-test-key',
     memoryReader,
     ...(source ? { source } : {}),
+    ...(prices ? { prices } : {}),
     fetch: fetchImpl,
     now: () => ATLAS_NOW,
   })
@@ -114,6 +118,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageKind: 'content',
         imageAttribution: 'Example News',
         entityType: null,
+        markets: [],
       },
       {
         storySlug: 'story-2',
@@ -125,6 +130,7 @@ test('Story list selects and caps Entities, reads bounded latest memories, and a
         imageKind: null,
         imageAttribution: null,
         entityType: null,
+        markets: [],
       },
     ],
   })
@@ -177,6 +183,7 @@ test('Story detail returns the selected Entity timeline newest-first with pagina
       imageKind: null,
       imageAttribution: null,
       entityType: null,
+      markets: [],
     },
     events: [
       {
@@ -361,6 +368,7 @@ test('Story summary tracks the latest reported memory; a future-dated one never 
     imageKind: null,
     imageAttribution: null,
     entityType: null,
+    markets: [],
   })
 })
 
@@ -485,6 +493,7 @@ test('Story Atlas list selects eligible active entities by latest development an
         imageKind: null,
         imageAttribution: null,
         entityType: null,
+        markets: [],
       },
       {
         storySlug: 'story-2',
@@ -496,6 +505,7 @@ test('Story Atlas list selects eligible active entities by latest development an
         imageKind: null,
         imageAttribution: null,
         entityType: null,
+        markets: [],
       },
     ],
   })
@@ -536,6 +546,7 @@ test('Story Atlas list returns an entity with a production UUIDv7 id', async () 
         imageKind: null,
         imageAttribution: null,
         entityType: null,
+        markets: [],
       },
     ],
   })
@@ -583,6 +594,7 @@ test('Story Atlas list carries the entity card image with kind content and the e
         imageKind: 'content',
         imageAttribution: null,
         entityType: 'news',
+        markets: [],
       },
       {
         storySlug: 'story-2',
@@ -594,6 +606,7 @@ test('Story Atlas list carries the entity card image with kind content and the e
         imageKind: null,
         imageAttribution: null,
         entityType: 'topic',
+        markets: [],
       },
     ],
   })
@@ -633,6 +646,7 @@ test('Story Atlas entity image and entity type also flow into the detail story s
     imageKind: 'content',
     imageAttribution: null,
     entityType: 'news',
+    markets: [],
   })
 })
 
@@ -759,6 +773,7 @@ test('Story Atlas detail pages items newest-first with pagination fields', async
       imageKind: null,
       imageAttribution: null,
       entityType: null,
+      markets: [],
     },
     events: [
       { text: 'Second event', eventAt: '2026-07-11T00:00:00.000Z', imageUrl: null, imageKind: null, imageAttribution: null },
@@ -887,13 +902,24 @@ interface FakeEntity {
   show_in_carousel?: boolean
 }
 
+interface FakeMarket {
+  entity_id: string
+  rank: number
+  symbol: string
+}
+
 /** Minimal PostgREST stand-in for the atlas reads the Stories route makes; honours the filters it is sent. */
-function atlasFake(entities: FakeEntity[], items: FakeItem[], options: { maxRows?: number } = {}) {
+function atlasFake(entities: FakeEntity[], items: FakeItem[], options: { maxRows?: number, entityMarkets?: FakeMarket[] } = {}) {
   const requests: URL[] = []
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     requests.push(url)
     const headers = (init?.headers ?? {}) as Record<string, string>
+    if (url.pathname.endsWith('/entity_markets')) {
+      const entityFilter = url.searchParams.get('entity_id') ?? ''
+      const requested = entityFilter.startsWith('in.(') ? entityFilter.slice(4, -1).split(',') : []
+      return jsonResponse((options.entityMarkets ?? []).filter((row) => requested.includes(row.entity_id)))
+    }
     if (url.pathname.endsWith('/entities')) {
       const id = url.searchParams.get('id')
       const slug = url.searchParams.get('slug')
@@ -1051,6 +1077,244 @@ test('Story Atlas by-slug still returns 404 for an unknown, inactive or item-les
   }
 })
 
+// ---- Markets on stories (#691) ----
+
+interface PricesStubCall {
+  symbols: readonly string[]
+  waitMs: number
+}
+
+/** A `HyperliquidQuotes` stand-in: answers the recorded map, leaving other symbols out of the map. */
+function pricesStub(quotes: Record<string, { price: number | null, change24hPct: number | null, asOf: string | null }>, calls: PricesStubCall[] = []): HyperliquidQuotes {
+  return {
+    async quotes(symbols, options) {
+      calls.push({ symbols, waitMs: options.waitMs })
+      return new Map(Object.entries(quotes).filter(([symbol]) => symbols.includes(symbol)))
+    },
+  }
+}
+
+test('Story Atlas list sends linked markets in rank order with prices from one quotes call', async () => {
+  const quotesCalls: PricesStubCall[] = []
+  const prices = pricesStub({
+    'xyz:CL': { price: 82.54, change24hPct: -1.25, asOf: '2026-07-13T00:00:00.000Z' },
+    BTC: { price: 61770, change24hPct: -3.15, asOf: '2026-07-13T00:00:00.000Z' },
+    'xyz:SP500': { price: 6100, change24hPct: 0.4, asOf: '2026-07-13T00:00:00.000Z' },
+  }, quotesCalls)
+  const fake = atlasFake(
+    [fakeEntity(1), fakeEntity(2)],
+    [...fakeItems(1, 3, 5), ...fakeItems(2, 3, 4)],
+    {
+      entityMarkets: [
+        { entity_id: entityUuid(1), rank: 2, symbol: 'BTC' },
+        { entity_id: entityUuid(1), rank: 1, symbol: 'xyz:CL' },
+        { entity_id: entityUuid(2), rank: 1, symbol: 'xyz:SP500' },
+      ],
+    },
+  )
+  const response = await app(fake.fetchImpl, undefined, 'atlas', prices).request('/')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { stories: Array<{ storySlug: string, markets: StoryMarket[] }> }
+  assert.deepEqual(body.stories.map((story) => [story.storySlug, story.markets]), [
+    ['topic-2', [
+      { symbol: 'xyz:SP500', displaySymbol: 'SPX', displayName: 'S&P 500', rank: 1, price: 6100, change24hPct: 0.4, asOf: '2026-07-13T00:00:00.000Z' },
+    ]],
+    ['topic-1', [
+      { symbol: 'xyz:CL', displaySymbol: 'WTI', displayName: 'WTI crude oil', rank: 1, price: 82.54, change24hPct: -1.25, asOf: '2026-07-13T00:00:00.000Z' },
+      { symbol: 'BTC', displaySymbol: 'BTC', displayName: 'Bitcoin', rank: 2, price: 61770, change24hPct: -3.15, asOf: '2026-07-13T00:00:00.000Z' },
+    ]],
+  ])
+  // One entity_markets read per request with the exact atlas filter shape.
+  const reads = fake.requests.filter((url) => url.pathname.endsWith('/entity_markets'))
+  assert.equal(reads.length, 1)
+  assert.equal(reads[0]?.searchParams.get('select'), 'entity_id,rank,symbol')
+  assert.equal(reads[0]?.searchParams.get('entity_id'), `in.(${entityUuid(2)},${entityUuid(1)})`)
+  assert.equal(reads[0]?.searchParams.get('order'), 'entity_id.asc,rank.asc')
+  // One quotes call per request, every symbol together (rank-sorted per story), capped at 1.5 s.
+  assert.equal(quotesCalls.length, 1)
+  assert.deepEqual([...(quotesCalls[0]?.symbols ?? [])], ['xyz:CL', 'BTC', 'xyz:SP500'])
+  assert.equal(quotesCalls[0]?.waitMs, 1500)
+})
+
+test('Story Atlas sends linked markets with null prices when prices is absent or a symbol is unpriced', async () => {
+  // No prices injected at all: the link still ships, unpriced.
+  const fake = atlasFake(
+    [fakeEntity(1)],
+    fakeItems(1, 3, 5),
+    { entityMarkets: [{ entity_id: entityUuid(1), rank: 1, symbol: 'xyz:CL' }] },
+  )
+  const absentResponse = await app(fake.fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(absentResponse.status, 200)
+  const absentBody = await absentResponse.json() as { stories: Array<{ markets: Array<Record<string, unknown>> }> }
+  assert.deepEqual(absentBody.stories[0]?.markets, [
+    { symbol: 'xyz:CL', displaySymbol: 'WTI', displayName: 'WTI crude oil', rank: 1, price: null, change24hPct: null, asOf: null },
+  ])
+
+  // A symbol missing from the snapshot keeps the link with null prices.
+  const quotesCalls: PricesStubCall[] = []
+  const partial = pricesStub({ BTC: { price: 61770, change24hPct: -3.15, asOf: '2026-07-13T00:00:00.000Z' } }, quotesCalls)
+  const fakePartial = atlasFake(
+    [fakeEntity(1)],
+    fakeItems(1, 3, 5),
+    {
+      entityMarkets: [
+        { entity_id: entityUuid(1), rank: 1, symbol: 'xyz:CL' },
+        { entity_id: entityUuid(1), rank: 2, symbol: 'BTC' },
+      ],
+    },
+  )
+  const partialResponse = await app(fakePartial.fetchImpl, undefined, 'atlas', partial).request('/')
+  assert.equal(partialResponse.status, 200)
+  const partialBody = await partialResponse.json() as { stories: Array<{ markets: Array<Record<string, unknown>> }> }
+  assert.deepEqual(partialBody.stories[0]?.markets, [
+    { symbol: 'xyz:CL', displaySymbol: 'WTI', displayName: 'WTI crude oil', rank: 1, price: null, change24hPct: null, asOf: null },
+    { symbol: 'BTC', displaySymbol: 'BTC', displayName: 'Bitcoin', rank: 2, price: 61770, change24hPct: -3.15, asOf: '2026-07-13T00:00:00.000Z' },
+  ])
+  assert.deepEqual([...(quotesCalls[0]?.symbols ?? [])], ['xyz:CL', 'BTC'])
+})
+
+test('Story Atlas list stays 200 within the cap when prices throws or hangs', async () => {
+  const fake = atlasFake(
+    [fakeEntity(1)],
+    fakeItems(1, 3, 5),
+    { entityMarkets: [{ entity_id: entityUuid(1), rank: 1, symbol: 'BTC' }] },
+  )
+  const unpriced = [{ symbol: 'BTC', displaySymbol: 'BTC', displayName: 'Bitcoin', rank: 1, price: null, change24hPct: null, asOf: null }]
+
+  const throwing: HyperliquidQuotes = {
+    async quotes() {
+      throw new Error('quotes exploded')
+    },
+  }
+  const throwingResponse = await app(fake.fetchImpl, undefined, 'atlas', throwing).request('/')
+  assert.equal(throwingResponse.status, 200)
+  const throwingBody = await throwingResponse.json() as { stories: Array<{ markets: Array<Record<string, unknown>> }> }
+  assert.deepEqual(throwingBody.stories[0]?.markets, unpriced)
+
+  const hanging: HyperliquidQuotes = {
+    quotes: () => new Promise(() => undefined),
+  }
+  const started = Date.now()
+  const hangingResponse = await app(fake.fetchImpl, undefined, 'atlas', hanging).request('/')
+  assert.equal(hangingResponse.status, 200)
+  const elapsed = Date.now() - started
+  assert.ok(elapsed < 2500, `the list should answer within the 1.5 s cap, took ${elapsed}ms`)
+  const hangingBody = await hangingResponse.json() as { stories: Array<{ markets: Array<Record<string, unknown>> }> }
+  assert.deepEqual(hangingBody.stories[0]?.markets, unpriced)
+})
+
+test('Story Atlas list stays 200 with empty markets when the entity_markets read fails', async () => {
+  const fake = atlasFake([fakeEntity(1)], fakeItems(1, 3, 5))
+  const quotesCalls: PricesStubCall[] = []
+  const prices = pricesStub({ BTC: { price: 1, change24hPct: 0, asOf: '2026-07-13T00:00:00.000Z' } }, quotesCalls)
+  const logged: string[] = []
+  const reads: URL[] = []
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/entity_markets')) {
+      reads.push(url)
+      return new Response('link read down', { status: 503 })
+    }
+    return fake.fetchImpl(input, init)
+  }
+  const originalConsoleError = console.error
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map((arg) => String(arg)).join(' '))
+  }
+  try {
+    const response = await app(fetchImpl, undefined, 'atlas', prices).request('/')
+    assert.equal(response.status, 200)
+    const body = await response.json() as { stories: Array<{ storySlug: string, markets: Array<Record<string, unknown>> }> }
+    assert.deepEqual(body.stories.map((story) => story.storySlug), ['topic-1'])
+    assert.deepEqual(body.stories[0]?.markets, [])
+    assert.equal(reads.length, 1)
+    assert.equal(logged.filter((line) => line.includes('[stories] entity_markets read failed')).length, 1)
+    // No links survived the failed read, so no quotes call was made.
+    assert.equal(quotesCalls.length, 0)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('Story Atlas detail carries markets the same way as the list', async () => {
+  const quotesCalls: PricesStubCall[] = []
+  const prices = pricesStub({
+    ETH: { price: 3000.25, change24hPct: -1.97, asOf: '2026-07-13T00:00:00.000Z' },
+    'xyz:CL': { price: null, change24hPct: null, asOf: null },
+  }, quotesCalls)
+  const fake = atlasFake(
+    [fakeEntity(1)],
+    fakeItems(1, 4, 6),
+    {
+      entityMarkets: [
+        { entity_id: entityUuid(1), rank: 2, symbol: 'xyz:CL' },
+        { entity_id: entityUuid(1), rank: 1, symbol: 'ETH' },
+      ],
+    },
+  )
+  const response = await app(fake.fetchImpl, undefined, 'atlas', prices).request('/topic-1')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { story: { storySlug: string, markets: Array<Record<string, unknown>> }, events: unknown[] }
+  assert.deepEqual(body.story.markets, [
+    { symbol: 'ETH', displaySymbol: 'ETH', displayName: 'Ethereum', rank: 1, price: 3000.25, change24hPct: -1.97, asOf: '2026-07-13T00:00:00.000Z' },
+    { symbol: 'xyz:CL', displaySymbol: 'WTI', displayName: 'WTI crude oil', rank: 2, price: null, change24hPct: null, asOf: null },
+  ])
+  assert.equal(fake.requests.filter((url) => url.pathname.endsWith('/entity_markets')).length, 1)
+  assert.equal(quotesCalls.length, 1)
+  assert.equal(body.events.length > 0, true)
+})
+
+test('Story legacy source sends markets: [] and never reads entity_markets or prices', async () => {
+  const quotesCalls: PricesStubCall[] = []
+  const prices = pricesStub({ BTC: { price: 1, change24hPct: 0, asOf: '2026-07-13T00:00:00.000Z' } }, quotesCalls)
+  const requests: URL[] = []
+  const fetchImpl = async (input: RequestInfo | URL) => {
+    const url = new URL(String(input))
+    requests.push(url)
+    if (url.pathname.endsWith('/entities')) {
+      return jsonResponse([{ id: entityIds[0], slug: 'legacy-markets', name: 'Legacy' }])
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  }
+  const legacyReader: StoryMemoryReader = {
+    async getEntityMemoryEvents() {
+      return eventPage([memory(entityIds[0], 'Latest development', '2026-07-12T00:00:00.000Z')], 1)
+    },
+  }
+  const response = await app(fetchImpl, legacyReader, undefined, prices).request('/')
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    stories: [
+      {
+        storySlug: 'legacy-markets',
+        name: 'Legacy',
+        latestDevelopment: 'Latest development',
+        eventCount: 1,
+        updatedAt: '2026-07-12T00:00:00.000Z',
+        imageUrl: null,
+        imageKind: null,
+        imageAttribution: null,
+        entityType: null,
+        markets: [],
+      },
+    ],
+  })
+  assert.equal(requests.length, 1)
+  assert.equal(requests.some((url) => url.pathname.endsWith('/entity_markets')), false)
+  assert.equal(quotesCalls.length, 0)
+})
+
+test('Story Atlas list with no linked markets ships every story with markets: []', async () => {
+  const fake = atlasFake([fakeEntity(1), fakeEntity(2)], [...fakeItems(1, 3, 5), ...fakeItems(2, 3, 4)])
+  const response = await app(fake.fetchImpl, undefined, 'atlas').request('/')
+  assert.equal(response.status, 200)
+  const body = await response.json() as { stories: Array<{ storySlug: string, markets: unknown[] }> }
+  assert.deepEqual(body.stories.map((story) => [story.storySlug, story.markets]), [
+    ['topic-2', []],
+    ['topic-1', []],
+  ])
+})
+
 test('Story routes default to the legacy source when source is omitted or legacy', async () => {
   for (const source of [undefined, 'legacy'] as const) {
     const requests: Array<{ url: URL; init?: RequestInit }> = []
@@ -1087,6 +1351,7 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
     const url = new URL(String(input))
     const headers = (init?.headers ?? {}) as Record<string, string>
     if (url.pathname.endsWith('/entities')) return jsonResponse([atlasRow])
+    if (url.pathname.endsWith('/entity_markets')) return jsonResponse([])
     if (isWindowRead(url)) return windowResponse(url, windowRows(atlasEntityIds[0], 3))
     if (url.pathname.endsWith('/entity_items')) {
       if (headers.Prefer === 'count=exact') return jsonResponse([], 1)
@@ -1101,8 +1366,8 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
   const atlasList = await app(atlasFetch, undefined, 'atlas').request('/')
   assert.equal(legacyList.status, 200)
   assert.equal(atlasList.status, 200)
-  const legacyListBody = await legacyList.json()
-  const atlasListBody = await atlasList.json()
+  const legacyListBody = await legacyList.json() as { stories: Array<{ markets: unknown[] }> }
+  const atlasListBody = await atlasList.json() as { stories: Array<{ markets: unknown[] }> }
   assert.deepEqual(atlasListBody, legacyListBody)
   assert.deepEqual(shapeOf(atlasListBody), shapeOf(legacyListBody))
 
@@ -1110,10 +1375,30 @@ test('Contract: Atlas and legacy Story responses share key sets and value types'
   const atlasDetail = await app(atlasFetch, undefined, 'atlas').request('/contract-slug')
   assert.equal(legacyDetail.status, 200)
   assert.equal(atlasDetail.status, 200)
-  const legacyDetailBody = await legacyDetail.json()
-  const atlasDetailBody = await atlasDetail.json()
+  const legacyDetailBody = await legacyDetail.json() as { story: { markets: unknown[] } }
+  const atlasDetailBody = await atlasDetail.json() as { story: { markets: unknown[] } }
   assert.deepEqual(atlasDetailBody, legacyDetailBody)
   assert.deepEqual(shapeOf(atlasDetailBody), shapeOf(legacyDetailBody))
+
+  // #691: both sources carry the `markets` key on every story summary, empty
+  // when there are no links — and the shape covers the key set of StoryMarket.
+  const markets = {
+    symbol: 'xyz:CL',
+    displaySymbol: 'WTI',
+    displayName: 'WTI crude oil',
+    rank: 1,
+    price: null,
+    change24hPct: null,
+    asOf: null,
+  }
+  assert.deepEqual(Object.keys(markets).sort(), [
+    'asOf', 'change24hPct', 'displayName', 'displaySymbol', 'price', 'rank', 'symbol',
+  ])
+  assert.deepEqual(legacyListBody.stories.map((story: { markets: unknown[] }) => story.markets), [[]])
+  assert.deepEqual(atlasListBody.stories.map((story: { markets: unknown[] }) => story.markets), [[]])
+  assert.equal('markets' in legacyDetailBody.story && 'markets' in atlasDetailBody.story, true)
+  assert.deepEqual(legacyDetailBody.story.markets, [])
+  assert.deepEqual(atlasDetailBody.story.markets, [])
 })
 
 /**

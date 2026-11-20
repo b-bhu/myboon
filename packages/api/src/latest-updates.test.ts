@@ -463,8 +463,10 @@ test('/stories, /stories/:slug and /narratives are unchanged and never touch the
 test('create-app mounts /latest-updates and leaves the /stories and /narratives mounts as they were', () => {
   const source = readFileSync(new URL('./bootstrap/create-app.ts', import.meta.url), 'utf8')
   assert.match(source, /app\.route\('\/latest-updates', createLatestUpdateRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*\}\)\)/)
-  assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*source: process\.env\.STORIES_SOURCE === 'atlas' \? 'atlas' : 'legacy',\s*\}\)\)/)
+  assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*source: process\.env\.STORIES_SOURCE === 'atlas' \? 'atlas' : 'legacy',\s*prices: hyperliquidPrices,\s*\}\)\)/)
   assert.match(source, /app\.route\('\/narratives', createNarrativeRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*\}\)\)/)
+  // #691: /market/hyperliquid serves the same shared price instance /stories receives.
+  assert.match(source, /app\.route\('\/market\/hyperliquid', createHyperliquidRoutes\(\{ prices: hyperliquidPrices \}\)\)/)
 })
 
 // #670: card image from the newest linked entity item.

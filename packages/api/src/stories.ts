@@ -2,6 +2,9 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { EntityKnowledgeMemoryV1, EntityKnowledgeReader } from '@myboon/collectors/entity-manager'
 import entityManager from '@myboon/collectors/entity-manager'
+import type { StoryMarket } from '@myboon/shared/stories'
+import type { HyperliquidQuoteMap, HyperliquidQuotes } from './hyperliquid.js'
+import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from './hyperliquid-names.js'
 
 const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
 
@@ -20,6 +23,8 @@ const DEFAULT_STORY_EVENT_LIMIT = 20
 const MAX_STORY_EVENT_LIMIT = 50
 const MAX_STORY_EVENT_OFFSET = 10_000
 const REQUEST_TIMEOUT_MS = 10_000
+// #691: how long a quotes() call may wait for a price refresh before the list answers with what it has.
+const MARKETS_QUOTES_WAIT_MS = 1500
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const ENTITY_SELECT = 'id,slug,name'
@@ -83,6 +88,12 @@ export interface StorySummary {
   imageAttribution: string | null
   /** Atlas entity type (lets the client pick a placeholder per type); null on legacy. */
   entityType: string | null
+  /**
+   * Entity-linked Hyperliquid markets (#691), lead first. `storySummary()` keeps
+   * it empty; the routes fill it from the `entity_markets` read (atlas source
+   * only — the legacy source always sends an empty list).
+   */
+  markets: StoryMarket[]
 }
 
 export interface StoryEvent {
@@ -110,6 +121,8 @@ export interface StoryRoutesConfig {
   fetch?: typeof globalThis.fetch
   /** Clock for the Atlas 7-day window; defaults to Date.now. Tests inject it. */
   now?: () => number
+  /** Hyperliquid price reader (#691); injected like `fetch` and `now`. Absent keeps links but sends null prices. */
+  prices?: HyperliquidQuotes
 }
 
 /**
@@ -378,14 +391,120 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
   const entityBySlug = atlas ? atlasSelectedEntityBySlug : selectedEntityBySlug
   const memoryPage = atlas ? atlasItemPage : storyMemoryPage
 
+  interface EntityMarketRow {
+    entity_id: unknown
+    rank: unknown
+    symbol: unknown
+  }
+
+  interface EntityMarketLink {
+    entityId: string
+    rank: 1 | 2 | 3
+    symbol: string
+  }
+
+  /** One PostgREST read of the atlas entity_markets links for the listed entity ids (#691). */
+  function entityMarketsParams(entityIds: string[]): URLSearchParams {
+    return new URLSearchParams({
+      select: 'entity_id,rank,symbol',
+      entity_id: `in.(${entityIds.join(',')})`,
+      order: 'entity_id.asc,rank.asc',
+    })
+  }
+
+  /**
+   * Atlas source only: reads the 0-3 market links per listed entity. A failed
+   * read is contained — logged once and answered with no links, so /stories
+   * still returns 200 and every story keeps its `markets`, just empty (`[]`).
+   */
+  async function entityMarketLinks(entityIds: string[]): Promise<Map<string, EntityMarketLink[]>> {
+    const linksByEntity = new Map<string, EntityMarketLink[]>()
+    try {
+      if (entityIds.length === 0) return linksByEntity
+      const rows = await readRows<EntityMarketRow>('entity_markets', entityMarketsParams(entityIds), 'atlas')
+      for (const row of rows) {
+        const entityId = row.entity_id
+        const rank = row.rank
+        const symbol = row.symbol
+        if (typeof entityId !== 'string' || !entityIds.includes(entityId)) continue
+        if (rank !== 1 && rank !== 2 && rank !== 3) continue
+        if (typeof symbol !== 'string' || !symbol) continue
+        const links = linksByEntity.get(entityId) ?? []
+        if (links.some((link) => link.symbol === symbol)) continue
+        links.push({ entityId, rank, symbol })
+        linksByEntity.set(entityId, links)
+      }
+    } catch (error) {
+      console.error('[stories] entity_markets read failed', error instanceof Error ? error.message : 'unknown error')
+      return new Map()
+    }
+    // The table is unique per (entity_id, rank); keep the lead-first order defensively, capped at 3.
+    for (const [entityId, links] of linksByEntity) {
+      links.sort((left, right) => left.rank - right.rank || (left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0))
+      linksByEntity.set(entityId, links.slice(0, 3))
+    }
+    return linksByEntity
+  }
+
+  /**
+   * Builds each story's `markets` in rank order: one `quotes` call per request
+   * for every linked symbol together, capped at MARKETS_QUOTES_WAIT_MS even
+   * when an injected prices never settles. Links are never hidden by price
+   * state — a missing or unpriced symbol keeps the link with null prices.
+   */
+  async function storyMarkets(linksByEntity: Map<string, EntityMarketLink[]>): Promise<Map<string, StoryMarket[]>> {
+    if (linksByEntity.size === 0) return new Map()
+    const symbols = [...new Set([...linksByEntity.values()].flat().map((link) => link.symbol))]
+    let quoteMap: HyperliquidQuoteMap | null = null
+    if (config.prices && symbols.length > 0) {
+      quoteMap = await quotesWithinCap(symbols)
+    }
+    const marketsByEntity = new Map<string, StoryMarket[]>()
+    for (const [entityId, links] of linksByEntity) {
+      marketsByEntity.set(entityId, links.map((link) => {
+        const quote = quoteMap instanceof Map ? quoteMap.get(link.symbol) : null
+        return {
+          symbol: link.symbol,
+          displaySymbol: hyperliquidDisplaySymbol(link.symbol),
+          displayName: hyperliquidDisplayName(link.symbol),
+          rank: link.rank,
+          price: quote?.price ?? null,
+          change24hPct: quote?.change24hPct ?? null,
+          asOf: quote?.asOf ?? null,
+        }
+      }))
+    }
+    return marketsByEntity
+  }
+
+  async function quotesWithinCap(symbols: string[]): Promise<HyperliquidQuoteMap | null> {
+    let timerHandle: ReturnType<typeof setTimeout> | undefined
+    const guard = new Promise<null>((resolve) => {
+      timerHandle = setTimeout(() => resolve(null), MARKETS_QUOTES_WAIT_MS)
+    })
+    const raced = await Promise.race([
+      config.prices!.quotes(symbols, { waitMs: MARKETS_QUOTES_WAIT_MS }).then(
+        (value) => (value instanceof Map ? value : null),
+        () => null,
+      ),
+      guard,
+    ])
+    if (timerHandle) clearTimeout(timerHandle)
+    return raced
+  }
+
   app.get('/', async (c) => {
     try {
       const entities = await listEntities()
       const { memoriesByEntity, totalsByEntity } = await listMemories(entities.map((entity) => entity.id))
+      const marketsByEntity = atlas
+        ? await storyMarkets(await entityMarketLinks(entities.map((entity) => entity.id)))
+        : null
       const stories = entities.flatMap((entity) => {
         const memories = memoriesByEntity.get(entity.id) ?? []
         const story = storySummary(entity, memories, totalsByEntity.get(entity.id) ?? memories.length)
-        return story ? [story] : []
+        if (!story) return []
+        return [{ ...story, markets: marketsByEntity?.get(entity.id) ?? [] }]
       })
       return c.json({ stories })
     } catch (error) {
@@ -408,6 +527,9 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       const page = await memoryPage(entity.id, limit, offset)
       const story = storySummary(entity, page.latest ? [page.latest] : [], page.total)
       if (!story) return c.json({ error: 'Story not found' }, 404)
+      const marketsByEntity = atlas
+        ? await storyMarkets(await entityMarketLinks([entity.id]))
+        : null
 
       const events: StoryEvent[] = page.memories.map((memory) => ({
         text: memory.summary,
@@ -424,7 +546,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
         hasMore: nextOffset < page.total,
         nextOffset: nextOffset < page.total ? nextOffset : null,
       }
-      return c.json({ story, events, pagination })
+      return c.json({ story: { ...story, markets: marketsByEntity?.get(entity.id) ?? [] }, events, pagination })
     } catch (error) {
       return storyError(c, error, 'GET /stories/:storySlug')
     }
@@ -588,6 +710,7 @@ export function storySummary(entity: SelectedEntity, memories: StoryMemory[], ev
     imageKind: imageUrl ? (entityImage ? 'content' : latest.imageKind) : null,
     imageAttribution: entityImage ? null : latest.imageAttribution,
     entityType: entity.type ?? null,
+    markets: [],
   }
 }
 

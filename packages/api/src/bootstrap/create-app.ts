@@ -25,6 +25,8 @@ import {
   UpDownPriceService,
 } from '../polymarket/read/updown-prices.js'
 import { spotRoutes } from '../spot.js'
+import { createHyperliquidPrices } from '../hyperliquid.js'
+import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
 import { createWaitlistRoutes } from '../waitlist.js'
@@ -84,6 +86,8 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     config.supabaseServiceRoleKey,
     { clientOptions: { auth: { persistSession: false, autoRefreshToken: false } } },
   ))
+  // One Hyperliquid price cache per process (#691), shared by /stories markets and the candles route.
+  const hyperliquidPrices = createHyperliquidPrices()
 
   const publicCors = cors()
   app.use('*', async (c, next) => {
@@ -125,6 +129,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
     memoryReader: entityKnowledgeReader,
     source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
+    prices: hyperliquidPrices,
   }))
   app.route('/latest-updates', createLatestUpdateRoutes({
     supabaseUrl: config.supabaseUrl,
@@ -152,6 +157,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
       }
     },
   }) }))
+  app.route('/market/hyperliquid', createHyperliquidRoutes({ prices: hyperliquidPrices }))
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)
