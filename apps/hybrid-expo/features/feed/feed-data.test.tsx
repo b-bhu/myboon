@@ -6,8 +6,45 @@ import { useFeedSection } from './use-feed-section';
 import { useReportPages } from './use-report-pages';
 import { fetchCalendar } from './calendar.api';
 import { useStoryDetail } from './use-story-detail';
+import { FEED_HOME_STORAGE_KEYS } from './feed-section-cache';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
+// AsyncStorage is a native module and cannot load under `tsx`: stub it before
+// the first persistence call, the features/chain/activation.test.ts way. The
+// backing is a real key/value map, not a spy.
+const disk = new Map<string, string>();
+let failNextRead = false;
+const asyncStorageId = require.resolve('@react-native-async-storage/async-storage');
+require.cache[asyncStorageId] = {
+  id: asyncStorageId,
+  filename: asyncStorageId,
+  loaded: true,
+  exports: {
+    __esModule: true,
+    default: {
+      getItem: async (key: string) => {
+        if (failNextRead) {
+          failNextRead = false;
+          throw new Error('simulated storage read failure');
+        }
+        return disk.get(key) ?? null;
+      },
+      setItem: async (key: string, value: string) => { disk.set(key, value); },
+      removeItem: async (key: string) => { disk.delete(key); },
+    },
+  },
+} as never;
+
+/** Persists an envelope the way the app writes one, ready for a hook mount to read. */
+function seedSaved(key: string, payload: unknown, savedAt = Date.now()) {
+  disk.set(key, JSON.stringify({ version: 1, savedAt, payload }));
+}
+
+/** Drains the read-then-fetch microtask chain of a mount inside act. */
+async function settle() {
+  for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
+}
 
 test('module polls queue changes; errors retain readable data; late cancelled results cannot replace it', async () => {
   let next: () => Promise<string[]> = async () => ['old'];
@@ -149,4 +186,164 @@ test('closing/switching/retrying Story aborts older-page requests and cannot lea
     assert.equal(story.detail, null);
     assert.equal(story.loadMoreError, false);
   } finally { if (renderer) await act(async () => renderer.unmount()); globalThis.fetch = original; }
+});
+
+test('a successful Home-section fetch (empty included) is persisted and a fresh mount shows it before the network returns', async () => {
+  disk.clear();
+  const emptyFetcher = () => Promise.resolve([]); // stable identity, like the app's callers
+  let first!: ReturnType<typeof useFeedSection<string[]>>;
+  function EmptyHarness() { first = useFeedSection<string[]>(emptyFetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.updates }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(EmptyHarness)); await settle(); });
+    // The empty result was persisted, not skipped.
+    assert.deepEqual(first.data, []);
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.updates)!) as { payload: string[] }).payload, []);
+    await act(async () => renderer.unmount());
+
+    // A cold mount reads the copy and shows it while the fresh fetch is still hanging.
+    let releaseNetwork!: (value: string[]) => void;
+    const blockedFetcher = () => new Promise<string[]>((resolve) => { releaseNetwork = resolve; });
+    let second!: ReturnType<typeof useFeedSection<string[]>>;
+    function SavedHarness() {
+      second = useFeedSection<string[]>(blockedFetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.updates });
+      return null;
+    }
+    await act(async () => { renderer = create(createElement(SavedHarness)); await settle(); });
+    assert.deepEqual(second.data, []); // the saved copy, empty list and all
+    assert.equal(second.loading, true); // the fetch is running, but no placeholder replaces the saved copy
+    const savedEnvelope = JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.updates)!) as { payload: string[] };
+    assert.deepEqual(savedEnvelope.payload, []); // a fetch that has not succeeded does not rewrite the copy
+
+    // The first fresh response swaps in and is persisted.
+    await act(async () => { releaseNetwork(['fresh']); await settle(); });
+    assert.deepEqual(second.data, ['fresh']);
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.updates)!) as { payload: string[] }).payload, ['fresh']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('after a saved copy the first queue=false load swaps in immediately and is persisted; a queued poll keeps data in place', async () => {
+  disk.clear();
+  seedSaved(FEED_HOME_STORAGE_KEYS.stories, ['saved']);
+  let respond!: (value: string[]) => void; // resolver of the most recent request
+  const fetcher = () => new Promise<string[]>((resolve) => { respond = resolve; });
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(fetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.stories }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['saved']); // hydrated while the first fetch hangs
+
+    // The first fresh fetch (queue=false) applies immediately and is persisted.
+    await act(async () => { respond(['fresh']); await settle(); });
+    assert.deepEqual(section.data, ['fresh']);
+    assert.equal(section.pending, null);
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.stories)!) as { payload: string[] }).payload, ['fresh']);
+
+    // Later background refreshes keep today's behaviour: pending queues on change.
+    await act(async () => { void section.load(true); await settle(); });
+    await act(async () => { respond(['changed', 'fresh']); await settle(); });
+    assert.deepEqual(section.data, ['fresh']);
+    assert.deepEqual(section.pending, ['changed', 'fresh']);
+    await act(async () => section.apply());
+    assert.deepEqual(section.data, ['changed', 'fresh']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('a first-fresh payload arriving while the section is mid-press is not applied until the press ends', async () => {
+  disk.clear();
+  seedSaved(FEED_HOME_STORAGE_KEYS.stories, ['saved']);
+  const hold = { current: false };
+  let respond!: (value: string[]) => void;
+  const fetcher = () => new Promise<string[]>((resolve) => { respond = resolve; });
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(fetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.stories, holdRef: hold }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['saved']); // hydrated
+
+    hold.current = true; // a tile is pressed
+    await act(async () => { respond(['fresh']); await settle(); });
+    assert.deepEqual(section.data, ['saved']); // the swap waits for the press
+    assert.equal(section.pending, null); // the press hold does not light up the poll queue
+
+    hold.current = false;
+    await act(async () => { section.release(); await settle(); });
+    assert.deepEqual(section.data, ['fresh']);
+    // A successful fetch was persisted even though its swap was held.
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.stories)!) as { payload: string[] }).payload, ['fresh']);
+
+    // Releasing with nothing held is a no-op.
+    await act(async () => { section.release(); await settle(); });
+    assert.deepEqual(section.data, ['fresh']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('an error after a saved copy keeps the copy and surfaces the existing last-loaded path', async () => {
+  disk.clear();
+  seedSaved(FEED_HOME_STORAGE_KEYS.updates, ['saved']);
+  let fail = false;
+  const fetcher = () => fail ? Promise.reject(new Error('offline')) : Promise.resolve(['saved']);
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(fetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.updates }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['saved']);
+    assert.equal(section.error, null);
+
+    fail = true;
+    await act(async () => { await section.load(); await settle(); });
+    assert.equal(section.error, 'offline');
+    assert.deepEqual(section.data, ['saved']); // the last-loaded copy stays readable
+    assert.equal(section.loading, false);
+    // A thrown fetch never overwrites the saved copy.
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.updates)!) as { payload: string[] }).payload, ['saved']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('a corrupt or expired saved copy is no copy: today\'s placeholder stays until the first response', async () => {
+  const hangingFetcher = () => new Promise<string[]>(() => { /* the response never arrives */ });
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(hangingFetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.updates }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    disk.clear();
+    disk.set(FEED_HOME_STORAGE_KEYS.updates, '{corrupt');
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.equal(section.data, null);
+    assert.equal(section.loading, true); // the placeholder shows
+    assert.equal(disk.has(FEED_HOME_STORAGE_KEYS.updates), false); // the corrupt entry was removed
+    await act(async () => renderer.unmount());
+
+    disk.clear();
+    seedSaved(FEED_HOME_STORAGE_KEYS.updates, ['old'], Date.now() - 25 * 60 * 60 * 1000);
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.equal(section.data, null);
+    assert.equal(section.loading, true);
+    assert.equal(disk.has(FEED_HOME_STORAGE_KEYS.updates), false);
+    await act(async () => renderer.unmount());
+
+    // Nearly 24 hours old still shows (the exact boundary is covered in feed-section-cache.test.ts).
+    disk.clear();
+    seedSaved(FEED_HOME_STORAGE_KEYS.updates, ['edge'], Date.now() - 23 * 60 * 60 * 1000);
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['edge']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('callers with no storage key stay memory-only', async () => {
+  disk.clear();
+  const memoryFetcher = () => Promise.resolve(['m']);
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(memoryFetcher, true); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['m']);
+    assert.equal(disk.size, 0); // nothing was persisted
+    await act(async () => { section.release(); }); // no held payload, no-op
+    assert.deepEqual(section.data, ['m']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
 });

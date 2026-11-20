@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -7,6 +7,7 @@ import type { CalendarResult } from '../calendar.types';
 import { eventCountdown, eventLocalDate, eventLocalTime, eventMetaLine, localDateKey, nextBigEvent, shiftDate } from '../feed-calendar';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { sectionFailureTitle } from '../feed-mosaic';
+import { FEED_HOME_STORAGE_KEYS } from '../feed-section-cache';
 import { useFeedSection } from '../use-feed-section';
 import { FeedSectionState } from './feed-section-state';
 import { FeedBox } from './ui/FeedBox';
@@ -20,7 +21,12 @@ const fetchWeek = (signal: AbortSignal): Promise<CalendarResult> => {
 /** Home calendar card. The whole card opens Calendar. Markets now lives one step further, on that screen. */
 export function HomeCalendarCard({ active }: { active: boolean }) {
   const router = useRouter();
-  const section = useFeedSection(fetchWeek, active);
+  // While a press is down on the card, a first fresh swap waits for the press
+  // to end so the card under the finger does not move (#416).
+  const hold = useRef(false);
+  const pressDown = () => { hold.current = true; };
+  const releasePress = () => { if (hold.current) { hold.current = false; section.release(); } };
+  const section = useFeedSection(fetchWeek, active, { storageKey: FEED_HOME_STORAGE_KEYS.calendar, holdRef: hold });
   useFocusedAppStateInterval(() => { void section.load(); }, 5 * 60_000, { enabled: active });
   const [, setClock] = useState(0);
   useFocusedAppStateInterval(() => setClock((value) => value + 1), 60_000, { enabled: active });
@@ -57,26 +63,28 @@ export function HomeCalendarCard({ active }: { active: boolean }) {
   if (!event) return null;
 
   return (
-    <FeedBox tone="ground" onPress={openCalendar} accessibilityLabel={`Next big event: ${event.title}. Open calendar.`} style={styles.card}>
-      <View style={styles.row}>
-        <Text style={styles.label}>Next big event</Text>
-        <Text style={styles.link}>Calendar →</Text>
-      </View>
-      <View style={styles.rowEnd}>
-        <View style={styles.event}>
-          <Text style={styles.title} numberOfLines={2}>{event.title}</Text>
-          <Text style={styles.meta} numberOfLines={1}>
-            {eventMetaLine(
-              calendarDateLabel(eventLocalDate(event), { weekday: 'short', day: 'numeric', month: 'short' }),
-              eventLocalTime(event),
-              summary,
-            )}
-          </Text>
+    <View onTouchStart={pressDown} onTouchEnd={releasePress} onTouchCancel={releasePress}>
+      <FeedBox tone="ground" onPress={openCalendar} accessibilityLabel={`Next big event: ${event.title}. Open calendar.`} style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.label}>Next big event</Text>
+          <Text style={styles.link}>Calendar →</Text>
         </View>
-        <Text style={styles.countdown} numberOfLines={1}>{eventCountdown(event, now)}</Text>
-      </View>
-      {section.error ? <Text selectable style={styles.notice}>Refresh failed. Showing the last loaded event.</Text> : null}
-    </FeedBox>
+        <View style={styles.rowEnd}>
+          <View style={styles.event}>
+            <Text style={styles.title} numberOfLines={2}>{event.title}</Text>
+            <Text style={styles.meta} numberOfLines={1}>
+              {eventMetaLine(
+                calendarDateLabel(eventLocalDate(event), { weekday: 'short', day: 'numeric', month: 'short' }),
+                eventLocalTime(event),
+                summary,
+              )}
+            </Text>
+          </View>
+          <Text style={styles.countdown} numberOfLines={1}>{eventCountdown(event, now)}</Text>
+        </View>
+        {section.error ? <Text selectable style={styles.notice}>Refresh failed. Showing the last loaded event.</Text> : null}
+      </FeedBox>
+    </View>
   );
 }
 

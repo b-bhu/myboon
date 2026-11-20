@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Animated, Pressable, RefreshControl, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HomeCalendarCard } from '@/features/feed/components/HomeCalendarCard';
@@ -11,6 +11,7 @@ import { fetchStories } from '@/features/feed/stories.api';
 import { FEED_TOKENS } from '@/features/feed/feed-design';
 import { todaySlides } from '@/features/feed/feed-home';
 import { sectionFailureTitle } from '@/features/feed/feed-mosaic';
+import { FEED_HOME_STORAGE_KEYS, dropStaleMarketPrices } from '@/features/feed/feed-section-cache';
 import { FEED_COLORS as color } from '@/features/feed/feed.constants';
 import type { FeedItem } from '@/features/feed/feed.types';
 import { useFeedSection } from '@/features/feed/use-feed-section';
@@ -29,8 +30,16 @@ export function HomeFeedOverview({ active, onScroll }: {
   active: boolean; onScroll: ScrollViewProps['onScroll']; bottomPadding: number;
 }) {
   const router = useRouter();
-  const stories = useFeedSection(fetchSelectedStories, active);
-  const reports = useFeedSection(fetchToday, active);
+  // While a press is down inside a section, a first fresh swap waits for the
+  // press to end, so the tile or slide under the finger does not move (#416).
+  const storiesPress = useRef(false);
+  const reportsPress = useRef(false);
+  const pressToday = () => { reportsPress.current = true; };
+  const releaseToday = () => { if (reportsPress.current) { reportsPress.current = false; reports.release(); } };
+  const pressStories = () => { storiesPress.current = true; };
+  const releaseStories = () => { if (storiesPress.current) { storiesPress.current = false; stories.release(); } };
+  const stories = useFeedSection(fetchSelectedStories, active, { storageKey: FEED_HOME_STORAGE_KEYS.stories, holdRef: storiesPress });
+  const reports = useFeedSection(fetchToday, active, { storageKey: FEED_HOME_STORAGE_KEYS.updates, holdRef: reportsPress });
   const [refreshing, setRefreshing] = useState(false);
   const [report, setReport] = useState<NarrativeSheetItem | null>(null);
   const [, setClock] = useState(0);
@@ -46,7 +55,10 @@ export function HomeFeedOverview({ active, onScroll }: {
   const openReport = (item: FeedItem) => setReport(feedItemDetail(item));
   const slides = todaySlides(reports.data ?? []);
   const now = new Date();
-  const storyList = stories.data ?? [];
+  // Render-time pass over the stories (#416): markets whose snapshot is older
+  // than 15 minutes lose their move even on a copy that hydrates and then ages
+  // while Home is open. The story tiles themselves stay.
+  const storyList = dropStaleMarketPrices(stories.data ?? [], now.getTime());
 
   return <>
     <Animated.ScrollView
@@ -58,7 +70,7 @@ export function HomeFeedOverview({ active, onScroll }: {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={color.accent} colors={[color.accent]} />}
     >
       <View style={styles.column}>
-        <View style={styles.today}>
+        <View style={styles.today} onTouchStart={pressToday} onTouchEnd={releaseToday} onTouchCancel={releaseToday}>
           {reports.loading && !reports.data ? <TodayCarouselSkeleton /> : null}
           {reports.error && !slides.length ? (
             <FeedSectionState
@@ -73,7 +85,7 @@ export function HomeFeedOverview({ active, onScroll }: {
           {reports.data && !slides.length && !reports.error ? <FeedSectionState title="No published updates yet" text="New reports will appear here." /> : null}
           {reports.error && slides.length ? <Text selectable style={styles.latestNotice}>Refresh failed. Showing the last loaded updates.</Text> : null}
         </View>
-        <View style={[styles.mosaic, storyList.length ? null : styles.mosaicEmpty]}>
+        <View style={[styles.mosaic, storyList.length ? null : styles.mosaicEmpty]} onTouchStart={pressStories} onTouchEnd={releaseStories} onTouchCancel={releaseStories}>
           {stories.loading && !stories.data ? <FeedSectionState title="Loading stories…" loading /> : null}
           {stories.error ? (
             <FeedSectionState
