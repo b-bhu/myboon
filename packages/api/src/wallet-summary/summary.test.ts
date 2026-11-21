@@ -4,9 +4,10 @@ import { Hono } from 'hono'
 import type { WalletSummary } from '@myboon/shared/wallet-summary'
 import { unavailableApp, type WalletVenue } from './service.js'
 
-// These modules read no env vars and make no upstream calls (every venue is
-// a stub this issue), so no env setup or globalThis.fetch mock is needed —
-// the throwing-venue case is injected through the service's venues option.
+// These route tests make no upstream calls either: spot is a real venue as
+// of #742, so every test that reaches the service injects the venue list
+// without it (its own venue is covered in venues/spot.test.ts); the
+// throwing-venue case is injected through the service's venues option.
 const { createWalletSummaryRoutes } = await import('./routes.js')
 const { createWalletSummaryService } = await import('./service.js')
 const { walletVenues } = await import('./venues/index.js')
@@ -53,7 +54,13 @@ test('GET /wallet/summary with a bad address returns 400', async () => {
 })
 
 test('GET /wallet/summary with only solana returns stubs and Polymarket not_connected', async () => {
-  const response = await app().request(`/wallet/summary?solana=${SOL}`)
+  // #742: spot is real now and would call Helius here; the stub check is
+  // about the wiring, so the registry is injected without the spot venue.
+  const service = createWalletSummaryService({
+    now: () => new Date('2026-11-21T12:34:56.789Z'),
+    venues: walletVenues().filter((venue) => venue.id !== 'spot'),
+  })
+  const response = await app(service).request(`/wallet/summary?solana=${SOL}`)
   assert.equal(response.status, 200)
   const body = await response.json() as WalletSummary
   assert.equal(body.solana, SOL)
@@ -67,8 +74,12 @@ test('GET /wallet/summary with only solana returns stubs and Polymarket not_conn
 })
 
 test('GET /wallet/summary still answers when one venue throws', async () => {
-  // Replace one entry with a venue that throws; the others must still return.
-  const venues: WalletVenue[] = filterVenues('phoenix')
+  // Replace phoenix with a venue that throws; the others must still return.
+  // The real spot venue (#742) is left out too, so it cannot log a Helius
+  // failure into this test's console-error count.
+  const venues: WalletVenue[] = walletVenues().filter(
+    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot',
+  )
   venues.push({ id: 'phoenix', fetch: async () => { throw new Error('phoenix upstream 503') } })
 
   const consoleErrors: string[] = []
@@ -174,7 +185,3 @@ test('a slow app becomes unavailable and the others return', async () => {
     console.error = originalConsoleError
   }
 })
-
-function filterVenues(id: WalletVenue['id']): WalletVenue[] {
-  return walletVenues().filter((venue) => venue.id !== id)
-}

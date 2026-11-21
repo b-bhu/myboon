@@ -139,7 +139,8 @@ function nativeSolBalance(result: HeliusGetAssetsByOwnerResult): SpotTokenBalanc
   }
 }
 
-async function fetchWalletBalances(wallet: string): Promise<SpotWalletBalances> {
+/** Shared by the /spot routes and the wallet summary's spot venue (#742). */
+export async function fetchWalletBalances(wallet: string): Promise<SpotWalletBalances> {
   const cached = balancesCache.get(wallet)
   const now = Date.now()
   if (cached && cached.expiresAt > now) return cached.data
