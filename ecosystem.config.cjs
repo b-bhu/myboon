@@ -368,6 +368,29 @@ module.exports = {
       },
     },
     {
+      // #702 the calendar releases job (packages/api): saves past US macro
+      // releases from Backpack into atlas.event_releases. One run per day at
+      // 21:00 UTC (2:30 AM IST, after the day's US prints), then exit. Secret
+      // CALENDAR_RELEASES_DATABASE_URL (calendar_worker) is never set in this
+      // file; it comes from packages/api/.env. The gate defaults to false in
+      // this file so a plain reload never enables it; the shell turns it on.
+      name: 'myboon-calendar-releases',
+      script: 'src/calendar/run-releases.ts',
+      interpreter: TSX,
+      cwd: `${ROOT}/packages/api`,
+      watch: false,
+      // One run per day, then exit; autorestart must not fight that exit.
+      autorestart: false,
+      cron_restart: '0 21 * * *',
+      max_memory_restart: '200M',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env: {
+        // Off-switch: set in the shell, never by editing this tracked file:
+        // `CALENDAR_RELEASES_ENABLED=false pm2 restart ecosystem.config.cjs --only myboon-calendar-releases --update-env`
+        CALENDAR_RELEASES_ENABLED: process.env.CALENDAR_RELEASES_ENABLED ?? 'false',
+      },
+    },
+    {
       name: 'myboon-polymarket-data-engineer',
       script: 'src/polymarket/run-markets-data-engineer.ts',
       interpreter: TSX,

@@ -391,6 +391,9 @@ importers:
       hono:
         specifier: ^4.6.0
         version: 4.12.5
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
       tslib:
         specifier: ^2.8.1
         version: 2.8.1
@@ -410,6 +413,9 @@ importers:
       '@types/node':
         specifier: ^25.3.5
         version: 25.3.5
+      '@types/pg':
+        specifier: 8.15.5
+        version: 8.15.5
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
