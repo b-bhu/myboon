@@ -32,6 +32,7 @@ import {
 import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
+import { PortfolioSection } from '@/features/wallet/components/PortfolioSection';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
 import { LegalLinks } from '@/features/wallet/components/LegalLinks';
 import {
@@ -202,6 +203,7 @@ export function HomeWalletOverview({
   onOpenMeteora,
   onOpenPhoenix,
   onOpenPacifica,
+  onOpenPolymarket,
   onOpenSpot,
   onConnect,
   dormantNotices,
@@ -221,6 +223,8 @@ export function HomeWalletOverview({
   onOpenMeteora: () => void;
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
+  /** The Polymarket profile route the Portfolio row still opens (#769). */
+  onOpenPolymarket: () => void;
   onOpenSpot: () => void;
   onConnect: () => void;
   dormantNotices?: React.ReactNode;
@@ -416,6 +420,17 @@ export function HomeWalletOverview({
             <AccountTabs accountTab={accountTab} tradeBusy={tradeBusy} onSelect={selectAccountTab} />
           </View>
           <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest }, panelLiftStyle]}>
+            {/* Portfolio table (#769): the new sheet content above the old
+                rows, which stay until #770 removes them. */}
+            <PortfolioSection
+              solana={chainAddress('solana')}
+              evm={chainAddress('evm')}
+              onOpenPolymarket={onOpenPolymarket}
+              onOpenPhoenix={onOpenPhoenix}
+              onOpenPacifica={onOpenPacifica}
+              onOpenMeteora={onOpenMeteora}
+              onOpenSpot={onOpenSpot}
+            />
             <AccountBody
               dormantNotices={dormantNotices}
               showSolana={showSolana}

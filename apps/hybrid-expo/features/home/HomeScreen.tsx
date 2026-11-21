@@ -368,6 +368,7 @@ export default function HomeScreen() {
           onOpenMeteora={() => router.push('/markets/meteora/profile')}
           onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
           onOpenPacifica={() => router.push('/markets/pacifica/profile')}
+          onOpenPolymarket={() => router.push('/markets/polymarket/profile')}
           onOpenSpot={() => router.push('/spot' as never)}
           onConnect={() => {
             Keyboard.dismiss();
