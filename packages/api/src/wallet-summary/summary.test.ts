@@ -54,11 +54,12 @@ test('GET /wallet/summary with a bad address returns 400', async () => {
 })
 
 test('GET /wallet/summary with only solana returns stubs and Polymarket not_connected', async () => {
-  // #742: spot is real now and would call Helius here; the stub check is
-  // about the wiring, so the registry is injected without the spot venue.
+  // #742 / #726: spot and meteora are real now and would call their
+  // upstreams here; the stub check is about the wiring, so the registry is
+  // injected without them (their own venues are covered in venues/*.test.ts).
   const service = createWalletSummaryService({
     now: () => new Date('2026-11-21T12:34:56.789Z'),
-    venues: walletVenues().filter((venue) => venue.id !== 'spot'),
+    venues: walletVenues().filter((venue) => venue.id !== 'spot' && venue.id !== 'meteora'),
   })
   const response = await app(service).request(`/wallet/summary?solana=${SOL}`)
   assert.equal(response.status, 200)
@@ -75,10 +76,11 @@ test('GET /wallet/summary with only solana returns stubs and Polymarket not_conn
 
 test('GET /wallet/summary still answers when one venue throws', async () => {
   // Replace phoenix with a venue that throws; the others must still return.
-  // The real spot venue (#742) is left out too, so it cannot log a Helius
-  // failure into this test's console-error count.
+  // The real spot (#742) and meteora (#726) venues are left out too, so
+  // their upstream calls cannot log a failure into this test's
+  // console-error count.
   const venues: WalletVenue[] = walletVenues().filter(
-    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot',
+    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot' && venue.id !== 'meteora',
   )
   venues.push({ id: 'phoenix', fetch: async () => { throw new Error('phoenix upstream 503') } })
 
