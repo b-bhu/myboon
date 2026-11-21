@@ -103,7 +103,7 @@ async function renderSwitch(loaded: ReturnType<typeof loadSwitch>, extra: Render
   return { renderer, selected };
 }
 
-test('wallet mode shell: four modes in order, only Swap enabled, fixed 430 body', () => {
+test('wallet mode shell: four modes in order, Swap and Receive enabled, fixed 430 body', () => {
   const loaded = loadSwitch();
   // The mode constants come from the fixture's vm realm: JSON round-trip so
   // deepStrictEqual compares same-realm objects.
@@ -113,7 +113,7 @@ test('wallet mode shell: four modes in order, only Swap enabled, fixed 430 body'
       { id: 'swap', label: 'Swap', enabled: true },
       { id: 'move', label: 'Move', enabled: false },
       { id: 'send', label: 'Send', enabled: false },
-      { id: 'receive', label: 'Receive', enabled: false },
+      { id: 'receive', label: 'Receive', enabled: true },
     ],
   );
   assert.equal(loaded.modes.WALLET_ACTION_BODY_HEIGHT, 430);
@@ -138,7 +138,7 @@ test('the switch renders the four labels in order with Swap selected on load', a
   );
   assert.deepEqual(
     segments.map((segment) => segment.props.accessibilityHint),
-    ['Switch to this mode', 'Coming soon', 'Coming soon', 'Coming soon'],
+    ['Switch to this mode', 'Coming soon', 'Coming soon', 'Switch to this mode'],
   );
   assert.deepEqual(selected, []);
 });
@@ -161,6 +161,37 @@ test('tapping a disabled mode shows "Coming soon" and never switches', async () 
   assert.deepEqual(selected, []);
 
   // Unmount before the real auto-dismiss timer fires outside act().
+  await act(async () => {
+    renderer.unmount();
+  });
+});
+
+test('tapping Receive switches to receive; Move and Send stay Coming soon', async () => {
+  const loaded = loadSwitch();
+  const { renderer, selected } = await renderSwitch(loaded);
+
+  const receive = renderer.root.find(
+    (node) => node.type === loaded.Pressable && node.props.accessibilityLabel === 'Receive',
+  );
+  await act(async () => {
+    receive.props.onPress();
+  });
+  assert.deepEqual(selected, ['receive']);
+
+  for (const label of ['Move', 'Send']) {
+    const segment = renderer.root.find(
+      (node) => node.type === loaded.Pressable && node.props.accessibilityLabel === label,
+    );
+    await act(async () => {
+      segment.props.onPress();
+    });
+  }
+  assert.deepEqual(selected, ['receive']);
+  // A "Coming soon" tooltip is showing for the last placeholder mode; unmount
+  // before the real auto-dismiss timer fires outside act().
+  assert.ok(renderer.root.find(
+    (node) => node.type === loaded.Text && node.props.children === 'Coming soon',
+  ));
   await act(async () => {
     renderer.unmount();
   });

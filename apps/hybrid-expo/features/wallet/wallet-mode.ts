@@ -17,5 +17,5 @@ export const WALLET_ACTION_MODES: readonly WalletActionModeOption[] = [
   { id: 'swap', label: 'Swap', enabled: true },
   { id: 'move', label: 'Move', enabled: false },
   { id: 'send', label: 'Send', enabled: false },
-  { id: 'receive', label: 'Receive', enabled: false },
+  { id: 'receive', label: 'Receive', enabled: true },
 ];
