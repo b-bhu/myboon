@@ -41,9 +41,7 @@ import {
   beginPrivyExport,
   canGoBack,
   interpretPrivyExportSession,
-  classifyWalletSetupError,
   connectedChainLabel,
-  isUserCancelled,
   sheetChrome,
   showsLogout,
   type LinkedKind,
@@ -70,6 +68,7 @@ import {
 import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
 import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
 import { pasteCode, useEmailOtp } from '@/features/wallet/components/useEmailOtp';
+import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
 
 export function ConnectionSheet({
   visible,
@@ -125,23 +124,19 @@ export function ConnectionSheet({
     onClose();
   }, [keyboardLift, onClose]);
 
-  const finishActivated = useCallback((kind: LinkedKind) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    onConnected?.();
-    dispatch({ type: 'wallet_setup_succeeded', linked: kind });
-    onClose();
-  }, [dispatch, onClose, onConnected]);
-
-  /**
-   * Wallet step only. The caller has already signed in. A throw here is a
-   * setup failure, never an "Invalid code".
-   */
-  const runWalletSetup = useCallback(async () => {
-    if (chain === 'solana') await privy.waitForWallet();
-    else if (!evm.isProvisioned) await evm.provision();
-    await activate(chain);
-    finishActivated('privy');
-  }, [activate, chain, evm, finishActivated, privy]);
+  const { runWalletSetup, handleExternalWallet, handleRetryWallet } = useWalletSetup({
+    chain,
+    dispatch,
+    privy,
+    evm,
+    activate,
+    onClose,
+    onConnected,
+    solana,
+    busy,
+    setBusy,
+    setActionError,
+  });
 
   const {
     emailInput,
@@ -168,45 +163,6 @@ export function ConnectionSheet({
   const emailAvailable = options.includes('email');
   const externalAvailable = options.includes('external_wallet');
   const chrome = sheetChrome(flow, { email: sentEmail });
-
-  const handleExternalWallet = useCallback(async () => {
-    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet.
-    // connectExternal is that call. This path does not sign in or create a wallet.
-    if (busy || chain !== 'solana') return;
-    setActionError(null);
-    dispatch({ type: 'choose_external' });
-    setBusy(true);
-    try {
-      await solana.connectExternal();
-      await activate('solana');
-      finishActivated('external');
-    } catch (error: unknown) {
-      if (isUserCancelled(error)) {
-        dispatch({ type: 'external_cancelled' });
-      } else {
-        const message = error instanceof Error && error.message
-          ? error.message
-          : 'Could not connect that wallet.';
-        dispatch({ type: 'external_failed', message });
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, [activate, busy, chain, dispatch, finishActivated, solana]);
-
-  const handleRetryWallet = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    dispatch({ type: 'retry_wallet' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, runWalletSetup]);
 
   const handleLogout = useCallback(async () => {
     if (busy) return;
