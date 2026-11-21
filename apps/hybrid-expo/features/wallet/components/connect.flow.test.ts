@@ -4,12 +4,14 @@
  * Locks the inline email entry, the #316 split between a bad code and a
  * wallet-setup failure, and the rule that the external-wallet action never
  * becomes a Privy login.
+ * #734: the last describe scans every module the sheet split may use, so its
+ * rules survive the later moves instead of pinning the one big file.
  *
  * Run: pnpm --filter hybrid-expo test:wallet
  */
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -375,63 +377,174 @@ describe('Privy export entry', () => {
 });
 
 describe('ConnectionSheet wires the external path off Privy', () => {
-  const source = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), 'ConnectionSheet.tsx'),
-    'utf8',
-  );
+  // #734: the 1,433-line ConnectionSheet.tsx is being split into modules.
+  // ConnectionSheet.styles.ts is extracted in this issue; the later issues in
+  // this group add the parts file, the hooks and the step components below.
+  // The scans read every module this group is allowed to use, so each rule
+  // must hold in whichever file the code ends up in, and files that do not
+  // exist yet are skipped until they appear.
+  const SHEET_MODULES = [
+    'ConnectionSheet.tsx',
+    'ConnectionSheet.styles.ts',
+    'ConnectionSheetParts.tsx',
+    'useKeyboardLift.ts',
+    'useConnectFlow.ts',
+    'useEmailOtp.ts',
+    'useWalletSetup.ts',
+    'useSheetDisconnect.ts',
+    'usePrivyExport.ts',
+    'useCopyAddress.ts',
+  ];
+
+  // Co-located modules that will never belong to this group (the flow
+  // reducer, the option list, the OTP resend helper, the openConnect
+  // controller and the unrelated chain/logout components) stay out of the
+  // scans; this directory also holds those.
+  const NEVER_SCANNED = new Set([
+    'connect.flow.ts',
+    'connect.options.ts',
+    'otp-resend.ts',
+    'useConnectionSheet.ts',
+    'ChainRow.tsx',
+    'DormantChainNotice.tsx',
+    'LegalLinks.tsx',
+    'WalletModeSwitch.tsx',
+  ]);
+
+  interface ScanPart {
+    file: string;
+    text: string;
+  }
+
+  function scanSources(): ScanPart[] {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const names = new Set(SHEET_MODULES.filter((name) => existsSync(join(dir, name))));
+    for (const entry of readdirSync(dir)) {
+      if (
+        !NEVER_SCANNED.has(entry)
+        && !entry.includes('.test.')
+        && (entry.endsWith('.ts') || entry.endsWith('.tsx'))
+      ) {
+        names.add(entry);
+      }
+    }
+    return [...names].sort().map((file) => ({
+      file,
+      text: readFileSync(join(dir, file), 'utf8'),
+    }));
+  }
+
+  /** True when at least one scanned module contains `needle`. */
+  function somewhere(parts: ScanPart[], needle: string): boolean {
+    return parts.some((part) => part.text.includes(needle));
+  }
+
+  /**
+   * A copy helper may only write one of the four address values the sheet
+   * knows, never some other identifier or an arbitrary string.
+   */
+  function assertAllowedCopyArgs(parts: ScanPart[]): void {
+    const allowed = ['address', 'walletAddress', 'depositAddress', 'connectedAddress'];
+    const calls = new Set<string>();
+    for (const { file, text } of parts) {
+      for (const match of text.matchAll(/setStringAsync\(\s*([^,();]+)/g)) {
+        const arg = match[1].trim().replace(/^['"`]+|['"`]+$/g, '');
+        calls.add(arg);
+        assert.ok(allowed.includes(arg), `${file}: setStringAsync saw a copy value it must not set`);
+      }
+    }
+    assert.ok(calls.size > 0, 'expected at least one Clipboard.setStringAsync call in the group');
+  }
+
+  const sources = scanSources();
 
   it('does not offer a generic Solana Wallet row, Google, or the Privy-creating connect()', () => {
-    assert.equal(source.includes('Solana Wallet'), false);
-    assert.equal(source.includes('loginWithGoogle'), false);
-    assert.equal(source.includes('solana.connect('), false);
-    assert.equal(source.includes('connectExternal'), true);
-    assert.equal(source.includes('482193'), false);
-    assert.equal(/Continue with Google|Create a new wallet|I already have a wallet/.test(source), false);
+    for (const { file, text } of sources) {
+      assert.equal(text.includes('Solana Wallet'), false, `${file}: generic Solana Wallet row`);
+      assert.equal(text.includes('loginWithGoogle'), false, `${file}: Google login`);
+      assert.equal(text.includes('solana.connect('), false, `${file}: Privy-creating connect()`);
+      assert.equal(text.includes('482193'), false, `${file}: demo pin`);
+      assert.equal(
+        /Continue with Google|Create a new wallet|I already have a wallet/.test(text),
+        false,
+        `${file}: mock row copy`,
+      );
+    }
+    assert.ok(somewhere(sources, 'connectExternal'));
   });
 
   it('the external handler does not log in, wait for, or create a Privy wallet', () => {
-    const start = source.indexOf('const handleExternalWallet');
-    const end = source.indexOf('const handleContinue');
-    assert.ok(start >= 0 && end > start);
-    const body = source.slice(start, end);
-    assert.equal(/waitForWallet|\.provision\(|loginWith|sendEmailOTP|Phantom|Seeker/.test(body), false);
-    assert.match(body, /connectExternal\(\)/);
-    assert.match(body, /external_mwa|activate\('solana'\)/);
+    let found = false;
+    for (const { file, text } of sources) {
+      const start = text.indexOf('const handleExternalWallet');
+      if (start < 0) continue;
+      found = true;
+      let end = text.indexOf('const handleContinue', start);
+      if (end < 0) end = text.length;
+      const body = text.slice(start, end);
+      const banned = /waitForWallet|\.provision\(|loginWith|sendEmailOTP|Phantom|Seeker/.test(body);
+      assert.equal(banned, false, `${file}: the external handler logs in or creates a Privy wallet`);
+      assert.match(body, /connectExternal\(\)/);
+      assert.match(body, /external_mwa|activate\('solana'\)/);
+    }
+    assert.ok(found, 'no scanned module contains the external wallet handler');
   });
 
   it('checks the email, then calls Privy sendCode, and keeps the draft across close', () => {
-    const start = source.indexOf('const requestEmailCode');
-    const end = source.indexOf('const handleVerifyOTP');
-    assert.ok(start >= 0 && end > start);
-    const body = source.slice(start, end);
-    const checked = body.indexOf('emailEntryError');
-    const sent = body.indexOf('sendEmailOTP');
-    assert.ok(checked >= 0 && sent >= 0);
-    assert.match(body, /emailEntryError[\s\S]*requestEmailCode\(email, false\)/);
-    assert.match(body, /sendEmailOTP\(email\)/);
-    assert.match(body, /login_failed/);
-    assert.equal(/loginWithGoogle|waitForWallet|482193/.test(body), false);
-    assert.match(source, /loginWithEmailOTP\(otpCode\.trim\(\), sentEmail\)/);
-    assert.match(body, /Resend code|handleResend/);
-    assert.match(source, /accessibilityLiveRegion="polite"/);
+    let found = false;
+    for (const { file, text } of sources) {
+      const start = text.indexOf('const requestEmailCode');
+      if (start < 0) continue;
+      found = true;
+      let end = text.indexOf('const handleVerifyOTP', start);
+      if (end < 0) end = text.length;
+      const body = text.slice(start, end);
+      const checked = body.indexOf('emailEntryError');
+      const sent = body.indexOf('sendEmailOTP');
+      assert.ok(checked >= 0 && sent >= 0, `${file}: the email check or the send is missing`);
+      assert.match(body, /emailEntryError[\s\S]*requestEmailCode\(email, false\)/);
+      assert.match(body, /sendEmailOTP\(email\)/);
+      assert.match(body, /login_failed/);
+      const banned = /loginWithGoogle|waitForWallet|482193/.test(body);
+      assert.equal(banned, false, `${file}: the email step logs in with Google or races wallet setup`);
+      assert.match(body, /Resend code|handleResend/);
 
-    const closeStart = source.indexOf('const requestClose');
-    const closeEnd = source.indexOf('const finishActivated');
-    assert.equal(source.slice(closeStart, closeEnd).includes('setEmailInput'), false);
-    assert.match(source, /Clipboard\.getStringAsync/);
-    assert.match(source, /Clipboard\.setStringAsync/);
+      const closeStart = text.indexOf('const requestClose');
+      if (closeStart >= 0) {
+        const closeEnd = text.indexOf('const finishActivated', closeStart);
+        const closeBody = text.slice(closeStart, closeEnd < 0 ? text.length : closeEnd);
+        assert.equal(closeBody.includes('setEmailInput'), false, `${file}: closing clears the email draft`);
+      }
+    }
+    assert.ok(found, 'no scanned module contains the email code request');
+    assert.ok(somewhere(sources, 'loginWithEmailOTP(otpCode.trim(), sentEmail)'));
+    assert.ok(somewhere(sources, 'accessibilityLiveRegion="polite"'));
+    assert.ok(somewhere(sources, 'Clipboard.getStringAsync'));
   });
 
   it('opens Privy Home in the system browser and does not read a key', () => {
-    const start = source.indexOf('async function openPrivyExportPage');
-    assert.ok(start >= 0);
-    const body = source.slice(start);
-    assert.match(body, /WebBrowser\.openBrowserAsync/);
-    assert.match(body, /assertPrivyHomeUrl/);
-    assert.equal(/exportWallet|console\.|Clipboard|privateKey|mnemonic/.test(body), false);
-    assert.match(source, /flow\.linked !== 'privy'/);
-    const exportRow = source.indexOf('CONNECT_COPY.export');
-    const privyBranch = source.lastIndexOf("flow.linked === 'privy'", exportRow);
-    assert.ok(privyBranch >= 0 && exportRow > privyBranch);
+    let found = false;
+    for (const { file, text } of sources) {
+      const start = text.indexOf('async function openPrivyExportPage');
+      if (start < 0) continue;
+      found = true;
+      const body = text.slice(start);
+      assert.match(body, /WebBrowser\.openBrowserAsync/);
+      assert.match(body, /assertPrivyHomeUrl/);
+      const banned = /exportWallet|console\.|Clipboard|privateKey|mnemonic/.test(body);
+      assert.equal(banned, false, `${file}: the export handoff reads a key, logs, or touches the clipboard`);
+    }
+    assert.ok(found, 'no scanned module contains the export handoff');
+    assert.ok(somewhere(sources, "flow.linked !== 'privy'"));
+    for (const { file, text } of sources) {
+      const exportRow = text.indexOf('CONNECT_COPY.export');
+      if (exportRow < 0) continue;
+      const privyBranch = text.lastIndexOf("flow.linked === 'privy'", exportRow);
+      assert.ok(privyBranch >= 0 && exportRow > privyBranch, `${file}: the export row lost its privy branch`);
+    }
+  });
+
+  it('a copy helper may only set an allowed address value', () => {
+    assertAllowedCopyArgs(sources);
   });
 });
