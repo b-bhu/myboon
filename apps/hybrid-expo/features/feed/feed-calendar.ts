@@ -1,4 +1,4 @@
-import { withMock } from './feed-mocks';
+import type { CalendarHistoryRelease, CalendarHistoryResponse } from '@myboon/shared/calendar';
 import type { CalendarEvent } from './calendar.types';
 
 /**
@@ -89,6 +89,15 @@ export function monthGrid(isoMonthDate: string): CalendarCell[][] {
 /** Local YYYY-MM-DD of an instant, read through the device zone's getters. */
 export function localDateKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Local label for a YYYY-MM-DD day (moved here from the event sheet so the
+ * Last-3-times rows share the sheet's one date formatter, #704).
+ */
+export function calendarDateLabel(date: string, options: Intl.DateTimeFormatOptions): string {
+  // Local noon keeps the calendar date stable across zones and DST edges.
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', options);
 }
 
 /**
@@ -344,25 +353,123 @@ export function eventFigures(event: CalendarEvent): EventFigure[] {
   return figures;
 }
 
-export interface EventReactionRow {
-  date: string;
-  result: string;
-  btc: string;
-  spx: string;
-  gold: string;
+/**
+ * The Last-3-times request for a sheet event (#704): the entity's slug and the
+ * `before` date — but only for economic events the API matched to a series.
+ * Earnings events, unmatched economic events and a closed sheet (null) never
+ * fetch and never show the table.
+ */
+export interface CalendarHistoryRequest {
+  entity: string;
+  before: string;
+}
+
+export function calendarHistoryRequest(event: CalendarEvent | null): CalendarHistoryRequest | null {
+  if (!event || event.type !== 'economic' || !event.entitySlug) return null;
+  return { entity: event.entitySlug, before: event.date };
 }
 
 /**
- * Prototype-only last-three-times table (mock #s-eventsheet .rt): generic
- * placeholders — no real market history claims behind the sheet.
+ * A past release's day in the device zone: startsAt's local day when an
+ * instant is present, otherwise the release date; an unusable start falls
+ * back to the date, the eventLocalDate way.
  */
-export const EVENT_REACTION_SAMPLE: EventReactionRow[] = [
-  { date: 'Sample one', result: 'Sample result', btc: '-1.8%', spx: '+0.6%', gold: '+0.9%' },
-  { date: 'Sample two', result: 'Sample result', btc: '+1.4%', spx: '-0.5%', gold: '-0.2%' },
-  { date: 'Sample three', result: 'Sample result', btc: '-0.7%', spx: '+0.2%', gold: '+0.4%' },
-];
+export function releaseLocalDate(release: Pick<CalendarHistoryRelease, 'date' | 'startsAt'>): string {
+  if (release.startsAt) {
+    const start = new Date(release.startsAt);
+    if (!Number.isNaN(start.getTime())) return localDateKey(start);
+  }
+  return release.date;
+}
 
-/** Sample reaction table only when mocks are active; null otherwise. */
-export function eventReactionSample(enabled?: boolean): EventReactionRow[] | null {
-  return withMock(EVENT_REACTION_SAMPLE, enabled);
+/**
+ * The Result cell: `actual vs estimate` with units, the actual alone when no
+ * estimate exists, or a plain '—' when the release has no actual at all.
+ */
+export function historyResultLabel(actual: number | null, estimate: number | null, unit: string): string {
+  if (actual === null) return '—';
+  if (estimate === null) return numbered(actual, unit);
+  return `${numbered(actual, unit)} vs ${numbered(estimate, unit)}`;
+}
+
+export type CalendarHistoryMoveDirection = 'up' | 'down' | 'flat' | 'none';
+
+/**
+ * One 24h move's text and meaning direction: signed 2 decimals ('+1.24%',
+ * '−0.80%'), zero neutral ('0.00%'), and '—' in neutral colour when the move
+ * is missing (no exact time, unfinished window, failed read).
+ */
+export function historyMoveCell(changePct: number | null): { text: string; dir: CalendarHistoryMoveDirection } {
+  if (changePct === null || !Number.isFinite(changePct)) return { text: '—', dir: 'none' };
+  if (changePct > 0) return { text: `+${changePct.toFixed(2)}%`, dir: 'up' };
+  if (changePct < 0) return { text: `−${Math.abs(changePct).toFixed(2)}%`, dir: 'down' };
+  return { text: '0.00%', dir: 'flat' };
+}
+
+export interface CalendarHistoryMoveColumn {
+  /** Hyperliquid symbol of the column's market (stable React key). */
+  symbol: string;
+  /** Column header text, from the response's market list. */
+  displaySymbol: string;
+  /** Formatted cell: '+1.24%', '−0.80%', '0.00%' or '—'. */
+  text: string;
+  /** Meaning direction; flat/none render in the neutral text colour. */
+  dir: CalendarHistoryMoveDirection;
+}
+
+export interface CalendarHistoryRow {
+  /** Stable React key from the release's date and title. */
+  key: string;
+  /** Release day label, e.g. '10 Nov' (the sheet when line's form). */
+  date: string;
+  /** Result cell: '3.7% vs 3.6%', '3.7%' or '—'. */
+  result: string;
+  /** One move per linked market, in the response's (rank) order. */
+  moves: CalendarHistoryMoveColumn[];
+  /** Spoken form of the whole row, e.g. '10 Nov, 3.7% versus 3.6%, BTC up 1.24%, SPX down 0.80%'. */
+  spoken: string;
+}
+
+/** The table's header cells: Date and Result, then one column per market. */
+export function historyTableColumns(response: CalendarHistoryResponse): string[] {
+  return ['Date', 'Result', ...response.markets.map((market) => market.displaySymbol)];
+}
+
+/** Spoken form of one move cell: '… up 1.24%', '… down 0.80%', 'BTC 0.00%'; no data stays unspoken. */
+function spokenMove(move: CalendarHistoryMoveColumn): string | null {
+  const magnitude = move.text.startsWith('+') || move.text.startsWith('−') ? move.text.slice(1) : move.text;
+  if (move.dir === 'up') return `${move.displaySymbol} up ${magnitude}`;
+  if (move.dir === 'down') return `${move.displaySymbol} down ${magnitude}`;
+  if (move.dir === 'flat') return `${move.displaySymbol} ${magnitude}`;
+  return null;
+}
+
+/**
+ * The event sheet's LAST 3 TIMES rows (#704): one per served release (newest
+ * first, at most three), each with the row's move per linked market in the
+ * response's market order (rank 1 lead first) and a one-line spoken form.
+ * Null when the response has no releases — the sheet renders no table block,
+ * never an empty one. `fallbackUnit` fills in when a release carries no unit
+ * of its own (the event's series unit).
+ */
+export function historyTableRows(response: CalendarHistoryResponse, fallbackUnit = ''): CalendarHistoryRow[] | null {
+  if (!response.releases.length) return null;
+  return response.releases.map((release) => {
+    const unit = release.unit ?? fallbackUnit;
+    const result = historyResultLabel(release.actual, release.estimate, unit);
+    const date = calendarDateLabel(releaseLocalDate(release), { day: 'numeric', month: 'short' });
+    const moves: CalendarHistoryMoveColumn[] = response.markets.map((market) => {
+      const move = release.moves.find((entry) => entry.symbol === market.symbol);
+      return { symbol: market.symbol, displaySymbol: market.displaySymbol, ...historyMoveCell(move ? move.changePct : null) };
+    });
+    return {
+      key: `${release.date}-${release.title}`,
+      date,
+      result,
+      moves,
+      spoken: [date, result.replace(' vs ', ' versus '), ...moves.map(spokenMove)]
+        .filter((part): part is string => part !== null)
+        .join(', '),
+    };
+  });
 }
