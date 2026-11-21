@@ -25,9 +25,9 @@ export interface AppSummary<T> {
 
 /** Everything the wallet needs about one person's accounts. */
 export interface WalletSummary {
-  /** Solana address backing spot/meteora, or null. */
+  /** Solana address backing phoenix/pacifica/meteora/spot, or null. */
   solana: string | null
-  /** EVM address backing polymarket/phoenix/pacifica, or null. */
+  /** EVM address backing polymarket, or null. */
   evm: string | null
   /** ISO-8601 time the server assembled this summary. */
   fetchedAt: string
