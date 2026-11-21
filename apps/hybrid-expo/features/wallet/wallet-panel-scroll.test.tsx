@@ -51,6 +51,7 @@ function loadOverview() {
   const Pressable = host('Pressable');
   const Text = host('Text');
   const RefreshControl = host('RefreshControl');
+  const ModeSwitchHost = host('WalletModeSwitch');
   const actionRenders: RenderProps[] = [];
   let actionMounts = 0;
   let actionUnmounts = 0;
@@ -131,6 +132,8 @@ function loadOverview() {
     '@/features/wallet/WalletActionPanel': { WalletActionPanel },
     '@/features/wallet/WalletAccountRow': { WalletAccountRow: () => null },
     '@/features/wallet/PerpsAccountRow': { PerpsAccountRow: () => null },
+    '@/features/wallet/components/WalletModeSwitch': { WalletModeSwitch: ModeSwitchHost },
+    '@/features/wallet/wallet-mode': { WALLET_ACTION_BODY_HEIGHT: 430 },
     '@/features/wallet/components/ChainRow': { ChainRow: () => null },
     '@/features/wallet/components/LegalLinks': { LegalLinks: () => null },
     '@/features/chain/chain.contract': {},
@@ -151,6 +154,7 @@ function loadOverview() {
     ScrollView,
     AnimatedScrollView,
     AnimatedView: Animated.View,
+    ModeSwitchHost,
     actionRenders,
     scrollCalls,
     get actionMounts() {
@@ -256,4 +260,30 @@ test('wallet panel scroll keeps composer mounted and only toggles it at the pane
   assert.equal(reset.animated, false);
   assert.equal(loaded.actionMounts, 1);
   assert.equal(loaded.actionUnmounts, 0);
+});
+
+test('wallet mode shell: the switch renders above a fixed 430 action body in the default swap mode', async () => {
+  const loaded = loadOverview();
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(loaded.Overview, overviewProps()));
+  });
+
+  const switchNode = renderer.root.findByType(loaded.ModeSwitchHost);
+  assert.equal(switchNode.props.mode, 'swap');
+
+  // views[0] is the wallet container, views[1] the gold upper block, views[2]
+  // the action body frame: it must carry the fixed height in the default state.
+  const body = renderer.root.findAllByType(loaded.View)[2].props.style;
+  assert.equal(body.height, 430);
+
+  // Re-selecting the only enabled mode must not move the frame or remount or
+  // re-render the composer ("switching changes only the panel body; header,
+  // panel height and slider position never move").
+  const rendersBefore = loaded.actionRenders.length;
+  await act(async () => {
+    switchNode.props.onSelect('swap');
+  });
+  assert.equal(renderer.root.findAllByType(loaded.View)[2].props.style.height, 430);
+  assert.equal(loaded.actionRenders.length, rendersBefore);
 });
