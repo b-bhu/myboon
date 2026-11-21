@@ -15,7 +15,7 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -27,9 +27,6 @@ import {
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
 import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
@@ -37,10 +34,7 @@ import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
   EXPORT_INSTRUCTIONS,
-  assertPrivyHomeUrl,
-  beginPrivyExport,
   canGoBack,
-  interpretPrivyExportSession,
   connectedChainLabel,
   sheetChrome,
   showsLogout,
@@ -48,12 +42,10 @@ import {
 } from '@/features/wallet/components/connect.flow';
 import {
   canRequestOtp,
-  emptyOtpSession,
   resendButtonLabel,
 } from '@/features/wallet/components/otp-resend';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
-import { selectMwaDisconnect } from '@/features/wallet/signOut';
 import { semantic, tokens } from '@/theme';
 import { styles } from '@/features/wallet/components/ConnectionSheet.styles';
 import {
@@ -69,6 +61,9 @@ import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
 import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
 import { pasteCode, useEmailOtp } from '@/features/wallet/components/useEmailOtp';
 import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
+import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
+import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
+import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
 
 export function ConnectionSheet({
   visible,
@@ -105,15 +100,8 @@ export function ConnectionSheet({
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const exportInFlight = useRef(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const otpInput = useRef<TextInput>(null);
   const { keyboardLift, lifted, setLifted } = useKeyboardLift();
-
-  useEffect(() => () => {
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-  }, []);
 
   const requestClose = useCallback(() => {
     // The typed email stays. Closing and reopening, or backing out of the
@@ -164,71 +152,24 @@ export function ConnectionSheet({
   const externalAvailable = options.includes('external_wallet');
   const chrome = sheetChrome(flow, { email: sentEmail });
 
-  const handleLogout = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      await privy.disconnect(selectMwaDisconnect(solana));
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      setEmailError(null);
-      dispatch({ type: 'logout' });
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not log out.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, privy, solana]);
-
-  const handleCopy = useCallback(async (key: string, address: string) => {
-    await Clipboard.setStringAsync(address);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    setCopiedKey(key);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopiedKey(null), 900);
-  }, []);
-
-  const handleExportContinue = useCallback(() => {
-    if (flow.linked !== 'privy' || exportInFlight.current) return;
-    const handoff = beginPrivyExport();
-    exportInFlight.current = true;
-    dispatch({ type: 'export_continue' });
-    void openPrivyExportPage(handoff.url)
-      .then((outcome) => {
-        dispatch(outcome === 'handed_off' ? { type: 'export_handed_off' } : { type: 'export_failed' });
-      })
-      .finally(() => {
-        exportInFlight.current = false;
-      });
-  }, [dispatch, flow.linked]);
-
-  const confirmDisconnect = useCallback(async () => {
-    if (busy || !flow.linked) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      if (flow.linked === 'external') {
-        if (solana.disconnect) await solana.disconnect();
-        await deactivate('solana');
-      } else if (privy.isPrivyUser) {
-        await privy.disconnect(selectMwaDisconnect(solana));
-      } else if (solana.disconnect) {
-        await solana.disconnect();
-        await deactivate(chain);
-      }
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      dispatch({ type: 'disconnected' });
-      onClose();
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not disconnect.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, chain, deactivate, dispatch, flow.linked, onClose, privy, solana]);
+  const { handleLogout, confirmDisconnect } = useSheetDisconnect({
+    flow,
+    dispatch,
+    privy,
+    solana,
+    chain,
+    deactivate,
+    onClose,
+    busy,
+    setBusy,
+    setActionError,
+    setOtpCode,
+    setOtpError,
+    setOtpSession,
+    setEmailError,
+  });
+  const { copiedKey, handleCopy } = useCopyAddress();
+  const { handleExportContinue } = usePrivyExport({ flow, dispatch });
 
   const goBack = useCallback(() => {
     setOtpError(null);
@@ -617,32 +558,4 @@ export function ConnectionSheet({
       </KeyboardAvoidingView>
     </Modal>
   );
-}
-
-
-/**
- * Open Privy Home in the system browser (Safari view on iOS, Custom Tab on
- * Android). The page stays in that browser. This function returns only whether
- * the handoff started, and it does not read the page, the result URL, or a key.
- */
-async function openPrivyExportPage(url: string): Promise<'handed_off' | 'failed'> {
-  let safeUrl: string;
-  try {
-    safeUrl = assertPrivyHomeUrl(url);
-  } catch {
-    return 'failed';
-  }
-  try {
-    const result = await WebBrowser.openBrowserAsync(safeUrl, {
-      dismissButtonStyle: 'close',
-      readerMode: false,
-      showTitle: true,
-      createTask: false,
-      showInRecents: false,
-      enableDefaultShareMenuItem: false,
-    });
-    return interpretPrivyExportSession(result);
-  } catch {
-    return 'failed';
-  }
 }
