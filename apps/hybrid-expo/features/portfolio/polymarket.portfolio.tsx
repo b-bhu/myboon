@@ -38,7 +38,7 @@ import { DepositModal } from '@/components/polymarket/DepositModal';
 import { CashOutConfirmModal } from '@/features/polymarket/components/CashOutConfirmModal';
 import { WithdrawModal } from '@/components/polymarket/WithdrawModal';
 import { cancelOrder, fetchClobBalance, fetchOpenOrders, fetchPortfolio, placeBet, redeemPosition } from '@/features/polymarket/polymarket.api';
-import type { ActivityItem, ClosedPortfolioPosition, OpenOrder, PortfolioPosition } from '@/features/polymarket/polymarket.api';
+import type { PortfolioPosition } from '@/features/polymarket/polymarket.api';
 import { getPolymarketMarketHref } from '@/features/polymarket/polymarket.navigation';
 import { formatPolymarketTitle } from '@/features/polymarket/formatPolymarketTitle';
 import { truncateUsd } from '@/features/polymarket/formatPolymarketMoney';
@@ -64,63 +64,31 @@ import {
   getPolymarketProfileAccountState,
   getPolymarketProfileSetupCopy,
 } from '@/features/polymarket/portfolio/profile-state';
-import { remainingOrderCost } from '@/features/polymarket/portfolio/profile-portfolio-state';
-import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from '@/features/polymarket/portfolio/portfolio-totals';
+import { APPROX_TOTAL_NOTE, formatApproxTotal } from '@/features/polymarket/portfolio/portfolio-totals';
 import { usePolymarketProfileStore } from '@/features/polymarket/portfolio/profile-store';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import {
+  activityCashValue,
+  activityLabel,
+  fetchUsdToInrRate,
+  formatAge,
+  formatProfileCurrency,
+  maskEmail,
+  orderCost,
+  POLYMARKET_PROFILE_CURRENCY_KEY,
+  POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
+  positionKey,
+  truncate,
+  type ConnectionIntent,
+  type PolymarketProfileCurrency,
+  type PolymarketSettingsView,
+} from '@/features/portfolio/polymarket/polymarket.format';
+import { styles } from '@/features/portfolio/polymarket/polymarket.portfolio.styles';
+import { derivePolymarketTotals } from '@/features/portfolio/polymarket/polymarket.totals';
 import { VenuePortfolioScreen } from '@/features/portfolio/VenuePortfolioScreen';
 import type { VenuePortfolioScreenTab } from '@/features/portfolio/VenuePortfolioScreen';
 import { semantic, tokens } from '@/theme';
-
-function truncate(addr: string, start = 6, end = 4): string {
-  return `${addr.slice(0, start)}···${addr.slice(-end)}`;
-}
-
-function maskEmail(email: string | null): string | null {
-  if (!email) return null;
-  const [local, domain] = email.split('@');
-  if (!local || !domain) return null;
-  return `${local.slice(0, Math.min(2, local.length))}•••@${domain}`;
-}
-
-const POLYMARKET_PROFILE_FALLBACK_USD_TO_INR = 95.67;
-const USD_INR_RATE_URL = 'https://open.er-api.com/v6/latest/USD';
-const POLYMARKET_PROFILE_CURRENCY_KEY = 'predict-profile-currency-format';
-type PolymarketProfileCurrency = 'USD' | 'INR';
-type PolymarketSettingsView = 'menu' | 'currency' | 'wallet' | 'security' | 'odds' | 'amounts' | 'signout';
-type ConnectionIntent = 'polymarket' | 'withdrawal' | null;
-const EMPTY_PORTFOLIO_POSITIONS: PortfolioPosition[] = [];
-
-function formatProfileCurrency(
-  value: number | null | undefined,
-  currency: PolymarketProfileCurrency,
-  usdToInr = POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
-): string {
-  if (currency === 'USD') return truncateUsd(value);
-  if (value == null || !Number.isFinite(value)) return '--';
-  const inr = Math.abs(value * usdToInr);
-  const prefix = value < 0 ? '-' : '';
-  if (inr >= 100000) return `${prefix}₹${(inr / 100000).toFixed(1)}L`;
-  if (inr >= 1000) return `${prefix}₹${(inr / 1000).toFixed(1)}K`;
-  return `${prefix}₹${inr.toFixed(0)}`;
-}
-
-async function fetchUsdToInrRate(): Promise<number | null> {
-  try {
-    const response = await fetch(USD_INR_RATE_URL);
-    if (!response.ok) return null;
-    const data = await response.json();
-    const rate = Number(data?.rates?.INR);
-    return Number.isFinite(rate) && rate > 0 ? rate : null;
-  } catch {
-    return null;
-  }
-}
-
-function getOrderCost(order: OpenOrder): number {
-  return remainingOrderCost(order) ?? 0;
-}
 
 export function PolymarketPortfolioScreen() {
   const insets = useSafeAreaInsets();
@@ -668,39 +636,29 @@ export function PolymarketPortfolioScreen() {
     setCashOutPosition(position);
   }, []);
 
-  const positions = portfolio?.positions ?? EMPTY_PORTFOLIO_POSITIONS;
-  const redeemablePositions = portfolio?.redeemablePositions ?? [];
-  const closedPositions = portfolio?.closedPositions ?? [];
+  const {
+    positions,
+    redeemablePositions,
+    closedPositions,
+    portfolioSummary,
+    showingLabel,
+    readyToCollect,
+    activePicksValue,
+    polymarketValue,
+    portfolioVisible,
+    accountStateLabel,
+    accountStatePositive,
+    actionsDisabled,
+  } = derivePolymarketTotals({
+    portfolio,
+    openOrders,
+    cashBalance,
+    accountState,
+  });
   const {
     quotes: sellQuotes,
     booksByAsset: sellQuoteBooks,
   } = usePositionSellQuotes(positions);
-  // #447: totals come from the API summary (every page, up to the ceiling),
-  // never re-summed over the capped list.
-  const portfolioSummary = portfolio?.summary ?? null;
-  const cashOutNow = resolveCashOutNow(portfolio);
-  const showingLabel = formatShowingLabel(portfolioSummary);
-  const readyToCollect = portfolio?.summary.readyToCollect ?? redeemablePositions.reduce((sum, p) => sum + (p.currentValue ?? 0), 0);
-  const waitingPickValue = openOrders.reduce((sum, order) => sum + getOrderCost(order), 0);
-  const activePicksValue = cashOutNow === null ? null : cashOutNow + waitingPickValue;
-  const polymarketValue = cashBalance === null || activePicksValue === null
-    ? null
-    : cashBalance + activePicksValue + readyToCollect;
-  const portfolioVisible = accountState === 'ready' || accountState === 'session_expired';
-  const accountStateLabel = accountState === 'ready'
-    ? 'Account protected'
-    : accountState === 'session_expired'
-      ? 'Reconnect needed'
-      : accountState === 'preparing'
-        ? 'Checking account'
-        : accountState === 'signed_out'
-          ? 'Not connected'
-          : accountState === 'unsupported'
-            ? 'Wallet unsupported'
-            : 'Setup needed';
-  const accountStatePositive = accountState === 'ready';
-
-  const actionsDisabled = accountState !== 'ready';
 
   // Redeem flow state, lifted from the retired ProfilePortfolioTabs component.
   const [redeemingId, setRedeemingId] = useState<string | null>(null);
@@ -1764,409 +1722,3 @@ export function PolymarketPortfolioScreen() {
     </>
   );
 }
-
-function orderCost(order: OpenOrder): number | null {
-  return remainingOrderCost(order);
-}
-
-function formatAge(value: number): string {
-  const createdMs = value < 10_000_000_000 ? value * 1000 : value;
-  const age = Date.now() - createdMs;
-  if (!Number.isFinite(age) || age < 0) return '';
-  const minutes = Math.floor(age / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function positionKey(position: PortfolioPosition): string {
-  return `${position.conditionId}:${position.outcomeIndex}:${position.asset}`;
-}
-
-function activityLabel(entry: ActivityItem): string {
-  const type = entry.type.trim().toLowerCase();
-  if (type.includes('redeem')) return 'Payout collected';
-  if (type.includes('trade')) return entry.side.toLowerCase() === 'sell' ? 'Position sold' : 'Position bought';
-  if (type.includes('split')) return 'Position prepared';
-  if (type.includes('merge')) return 'Position settled';
-  return entry.type.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function activityCashValue(entry: ActivityItem): number {
-  const value = Math.abs(entry.usdcSize);
-  const type = entry.type.trim().toLowerCase();
-  if (type.includes('redeem') || type.includes('merge')) return value;
-  if (type.includes('split')) return -value;
-  if (type.includes('trade')) return entry.side.trim().toLowerCase() === 'sell' ? value : -value;
-  return entry.usdcSize;
-}
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: semantic.background.screen },
-  titleLockup: { flex: 1, paddingHorizontal: 7 },
-  profileContent: { paddingHorizontal: 14, paddingTop: 9, gap: 9 },
-
-  settingsBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.62)',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  settingsCard: {
-    width: '100%',
-    maxWidth: 520,
-    maxHeight: '88%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: semantic.border.muted,
-    backgroundColor: tokens.colors.ground,
-  },
-  settingsCardContent: {
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
-    gap: 10,
-  },
-  sheetGrabber: { alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: semantic.border.muted, marginBottom: 3 },
-  sheetTop: { minHeight: 32, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sheetClose: { width: 34, height: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: semantic.background.lift },
-  sheetSectionLabel: { paddingTop: 6, fontFamily: 'monospace', fontSize: 9, fontWeight: '900', letterSpacing: 0.8, textTransform: 'uppercase', color: tokens.colors.accent },
-  settingsEyebrow: {
-    fontFamily: 'monospace',
-    fontSize: 8,
-    fontWeight: '800',
-    color: semantic.text.faint,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  settingsTitle: {
-    fontFamily: 'monospace',
-    fontSize: 18,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  settingsCopy: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    color: semantic.text.dim,
-    lineHeight: 15,
-    marginBottom: 4,
-  },
-  settingsDisconnectBtn: {
-    marginTop: 8,
-    minHeight: 42,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: tokens.colors.vermillion,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  settingsDisconnectText: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    fontWeight: '800',
-    color: tokens.colors.vermillion,
-  },
-  settingsBackRow: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    marginBottom: -2,
-    paddingVertical: 3,
-  },
-  settingsBackText: {
-    fontFamily: 'monospace',
-    fontSize: 10,
-    fontWeight: '800',
-    color: semantic.text.dim,
-  },
-  settingsOption: {
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: semantic.background.surface,
-  },
-  settingsOptionIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  settingsOptionCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  settingsOptionTitle: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  settingsOptionSub: {
-    marginTop: 3,
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-  },
-  settingsValue: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: semantic.text.dim },
-  alwaysOnText: { fontFamily: 'monospace', fontSize: 8, fontWeight: '900', color: tokens.colors.viridian },
-  walletInfoBox: {
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: 12,
-    padding: 12,
-    gap: 9,
-    backgroundColor: semantic.background.surface,
-  },
-  walletInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  walletInfoLabel: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-    textTransform: 'uppercase',
-  },
-  walletInfoValue: {
-    flexShrink: 1,
-    fontFamily: 'monospace',
-    fontSize: 10,
-    color: semantic.text.primary,
-    textAlign: 'right',
-  },
-  settingsFinePrint: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-    lineHeight: 14,
-  },
-  currencyOption: {
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: semantic.background.surface,
-  },
-  currencyOptionSelected: {
-    borderColor: tokens.colors.primary,
-    backgroundColor: 'rgba(17,138,178,0.08)',
-  },
-  currencyOptionTitle: {
-    fontFamily: 'monospace',
-    fontSize: 13,
-    fontWeight: '800',
-    color: semantic.text.primary,
-  },
-  currencyOptionSub: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-    marginTop: 3,
-  },
-  quickAmountRow: { flexDirection: 'row', gap: 8 },
-  quickAmountInputWrap: { flex: 1, minHeight: 48, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, backgroundColor: semantic.background.surface },
-  quickAmountCurrency: { fontFamily: 'monospace', fontSize: 13, fontWeight: '900', color: semantic.text.dim },
-  quickAmountInput: { flex: 1, minWidth: 0, paddingHorizontal: 4, fontFamily: 'monospace', fontSize: 15, fontWeight: '900', color: semantic.text.primary, textAlign: 'center' },
-  quickAmountError: { fontSize: 10, lineHeight: 14, color: tokens.colors.vermillion },
-  saveSettingsBtn: { minHeight: 44, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.viridian },
-  saveSettingsText: { fontSize: 11, fontWeight: '900', color: tokens.colors.backgroundDark },
-  signOutConfirm: { gap: 10, paddingTop: 4 },
-  signOutConfirmIcon: { width: 42, height: 42, borderRadius: 13, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(239,71,111,0.10)' },
-  signOutActions: { flexDirection: 'row', gap: 8, paddingTop: 5 },
-  staySignedInBtn: { flex: 1, minHeight: 44, borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: semantic.border.muted, alignItems: 'center', justifyContent: 'center', backgroundColor: semantic.background.surface },
-  staySignedInText: { fontSize: 10, fontWeight: '900', color: semantic.text.primary },
-  confirmSignOutBtn: { flex: 1, minHeight: 44, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.vermillion },
-  confirmSignOutText: { fontSize: 10, fontWeight: '900', color: semantic.text.primary },
-  identity: {
-    minHeight: 76,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: 20,
-    borderCurve: 'continuous',
-    backgroundColor: tokens.colors.surface,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    boxShadow: 'inset 0 1px 0 rgba(245,250,252,0.06)',
-  },
-  avatarInner: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    borderCurve: 'continuous',
-    borderWidth: 1,
-    borderColor: 'rgba(255,209,102,0.45)',
-    backgroundColor: tokens.colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: tokens.colors.backgroundDark,
-  },
-  avatarStatus: { position: 'absolute', right: -2, bottom: -2, width: 14, height: 14, borderRadius: 7, borderWidth: 3, borderColor: tokens.colors.surface, backgroundColor: tokens.colors.viridian },
-  avatarStatusMuted: { backgroundColor: tokens.colors.accent },
-  identityInfo: { flex: 1 },
-  handle: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: semantic.text.primary,
-    marginBottom: 4,
-  },
-  identityMeta: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.dim,
-  },
-  identityStateRow: { paddingTop: 6, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  identityStateText: { fontFamily: 'monospace', fontSize: 9, fontWeight: '800', color: tokens.colors.viridian },
-  identityStateAttention: { color: tokens.colors.accent },
-  connectedChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(52,199,123,0.10)',
-    borderWidth: 1,
-    borderColor: 'rgba(52,199,123,0.22)',
-    borderRadius: 4,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    marginTop: 5,
-    alignSelf: 'flex-start',
-  },
-  btnDisabled: { opacity: 0.5 },
-
-  loadingCard: { minHeight: 76, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 18, borderCurve: 'continuous', backgroundColor: tokens.colors.surface },
-  loadingCopy: { flex: 1, gap: 4 },
-  loadingTitle: { fontSize: 12, fontWeight: '900', color: semantic.text.primary },
-  loadingText: { fontFamily: 'monospace', fontSize: 9, lineHeight: 14, color: semantic.text.faint },
-  setupCard: { paddingHorizontal: 20, paddingVertical: 24, alignItems: 'center', gap: 9, borderWidth: 1, borderColor: semantic.border.muted, borderRadius: 22, borderCurve: 'continuous', backgroundColor: tokens.colors.surface },
-  setupIcon: { width: 48, height: 48, borderRadius: 16, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(6,214,160,0.10)' },
-  setupTitle: { fontSize: 17, lineHeight: 22, fontWeight: '900', color: semantic.text.primary, textAlign: 'center' },
-  setupDescription: { maxWidth: 300, fontFamily: 'monospace', fontSize: 9, lineHeight: 15, color: semantic.text.dim, textAlign: 'center' },
-  setupAction: { minWidth: 174, minHeight: 44, marginTop: 4, paddingHorizontal: 18, borderRadius: 12, borderCurve: 'continuous', alignItems: 'center', justifyContent: 'center', backgroundColor: tokens.colors.viridian },
-  setupActionText: { fontSize: 11, fontWeight: '900', color: tokens.colors.backgroundDark },
-  reconnectBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 12,
-    backgroundColor: 'rgba(255,209,102,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,209,102,0.35)',
-    borderRadius: 14,
-    borderCurve: 'continuous',
-  },
-  reconnectCopy: { flex: 1, gap: 3 },
-  reconnectTitle: { fontSize: 11, fontWeight: '900', color: semantic.text.primary },
-  reconnectText: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    lineHeight: 13,
-    color: semantic.text.dim,
-  },
-  moneyCard: {
-    backgroundColor: tokens.colors.walletCore,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    borderRadius: 25,
-    borderCurve: 'continuous',
-    padding: 15,
-    overflow: 'hidden',
-    boxShadow: '0 17px 36px rgba(3,31,44,0.30), inset 0 1px 0 rgba(245,250,252,0.06)',
-  },
-  moneyOrb: { position: 'absolute', top: -73, right: -52, width: 154, height: 154, borderWidth: 30, borderColor: 'rgba(17,138,178,0.12)', borderRadius: 77 },
-  moneyTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  moneyBar: {
-    flexDirection: 'row',
-    height: 12,
-    padding: 2,
-    gap: 2,
-    borderRadius: 999,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    backgroundColor: tokens.colors.ground,
-    marginTop: 15,
-  },
-  moneyBarSeg: {},
-  moneyBarAvailable: { backgroundColor: tokens.colors.viridian },
-  moneyBarInPicks: { backgroundColor: tokens.colors.primary },
-  moneyBarReady: { backgroundColor: tokens.colors.accent },
-  moneyBarEmpty: { flex: 1, backgroundColor: 'rgba(245,250,252,0.08)' },
-  moneyLegend: {
-    flexDirection: 'row',
-    gap: 7,
-    marginTop: 9,
-  },
-  moneyLegendItem: {
-    flex: 1,
-    minWidth: 0,
-    gap: 5,
-  },
-  moneyLegendAvailable: { flex: 1.2 },
-  moneyLegendHeading: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  moneyLegendDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  moneyLegendLabel: {
-    fontFamily: 'monospace',
-    fontSize: 9,
-    color: semantic.text.faint,
-  },
-  moneyLegendValue: {
-    fontFamily: 'monospace',
-    fontSize: 11,
-    fontWeight: '700',
-    color: semantic.text.primary,
-  },
-  moneyReadyValue: { color: tokens.colors.accent },
-  moneyActions: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-  },
-  signOutBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    height: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(239,71,111,0.35)',
-    backgroundColor: 'rgba(239,71,111,0.08)',
-    marginTop: 4,
-  },
-  signOutText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    fontWeight: '700',
-    color: tokens.colors.vermillion,
-  },
-  freshNote: { fontFamily: 'monospace', fontSize: 9, color: tokens.colors.vermillion, paddingHorizontal: 2 },
-  showingNote: { fontFamily: 'monospace', fontSize: 9, color: semantic.text.dim, paddingHorizontal: 2 },
-});
