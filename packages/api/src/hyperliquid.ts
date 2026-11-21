@@ -50,6 +50,13 @@ export interface HyperliquidPriceService extends HyperliquidQuotes {
   isListed(symbol: string): Promise<boolean | 'unavailable'>
   /** Cached OHLCV candles, oldest first; keeps the last good candles when a refresh fails. */
   candles(symbol: string, interval: CandleInterval, count: number): Promise<MarketCandle[]>
+  /**
+   * #703 past-window OHLCV candles for `GET /calendar/history`: the same
+   * `candleSnapshot` call as `candles` with an explicit start/end, parsed the
+   * same way and returned oldest first. Never cached here — the history
+   * module caches finished moves itself.
+   */
+  candlesBetween(symbol: string, interval: CandleInterval, startMs: number, endMs: number): Promise<MarketCandle[]>
 }
 
 interface PriceEntry {
@@ -253,6 +260,11 @@ export function createHyperliquidPrices(
   }
 
   async function fetchCandles(symbol: string, interval: CandleInterval, count: number, now: number): Promise<MarketCandle[]> {
+    return candlesBetween(symbol, interval, now - count * CANDLE_INTERVAL_MS[interval], now)
+  }
+
+  /** One explicit-window candleSnapshot request, parsed with parseCandles; the only candle request constructor. */
+  async function candlesBetween(symbol: string, interval: CandleInterval, startMs: number, endMs: number): Promise<MarketCandle[]> {
     const response = await fetchImpl(INFO_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -261,8 +273,8 @@ export function createHyperliquidPrices(
         req: {
           coin: symbol,
           interval,
-          startTime: now - count * CANDLE_INTERVAL_MS[interval],
-          endTime: now,
+          startTime: startMs,
+          endTime: endMs,
         },
       }),
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
@@ -310,6 +322,7 @@ export function createHyperliquidPrices(
     quotes,
     isListed,
     candles,
+    candlesBetween,
   }
 }
 

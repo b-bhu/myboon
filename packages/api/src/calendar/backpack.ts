@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { parseCalendarDate, parseEconomicTime } from './dates.js'
+import { matchSeries } from './series.js'
 import type { CalendarCategory, CalendarEvent, CalendarRange, CalendarSourceError } from './types.js'
 
 export const BACKPACK_CALENDAR_URL = 'https://backpack.exchange/stocks/calendar'
@@ -79,6 +80,9 @@ export function normalizeBackpackCalendar(
         : parseEconomicTime(row.date)
       const title = type === 'earnings' ? `${requiredText(row.symbol)} earnings` : requiredText(row.event)
       const country = type === 'economic' ? optionalText(row.country) : null
+      // The identity hash is computed below (unchanged from #702); entitySlug
+      // is derived data on the side and never joins the key.
+      const entitySlug = type === 'economic' ? matchSeries(title, country)?.entitySlug ?? null : null
       const key = [type, timing.date, timing.startsAt, country, title.toLowerCase()].join('|')
       const common = {
         id: `backpack:${type}:${createHash('sha256').update(key).digest('hex').slice(0, 24)}`,
@@ -86,6 +90,7 @@ export function normalizeBackpackCalendar(
         ...timing,
         source: 'backpack' as const,
         sourceUrl: BACKPACK_CALENDAR_URL,
+        entitySlug,
       }
       const event: CalendarEvent = type === 'earnings' ? {
         ...common, type: 'earnings', symbol: requiredText(row.symbol),

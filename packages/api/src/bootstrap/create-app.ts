@@ -142,7 +142,12 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   }))
 
   app.route('/clob', clobRoutes)
-  app.route('/calendar', createCalendarRoutes({ enabled: config.calendarBackpackEnabled }))
+  app.route('/calendar', createCalendarRoutes({
+    enabled: config.calendarBackpackEnabled,
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.supabaseServiceRoleKey,
+    prices: hyperliquidPrices,
+  }))
   const heatmapService = new MarketHeatmapService({ jupApiKey: config.jupApiKey, jupApiBase: config.jupApiBase })
   app.route('/market', createMarketHeatmapRoutes({ service: heatmapService }))
   app.route('/market', createWalletActivityRoutes({ service: createWalletActivityService({
