@@ -1,19 +1,22 @@
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import type { CalendarHistoryResponse } from '@myboon/shared/calendar';
 import { FEED_TOKENS, monoFontFamily } from '../feed-design';
-import { eventFigures, eventLocalDate, eventLocalTime, eventMetaLabel, eventReactionSample, eventWhen } from '../feed-calendar';
+import {
+  calendarDateLabel, eventFigures, eventLocalDate, eventLocalTime, eventMetaLabel, eventWhen,
+  historyTableColumns, historyTableRows, type CalendarHistoryMoveDirection,
+} from '../feed-calendar';
 import type { CalendarEvent } from '../calendar.types';
+import { useCalendarHistory } from '../use-calendar-history';
 import { FeedSheet } from './ui/FeedSheet';
-import { SampleDataLabel } from './ui/SampleDataLabel';
+
+// The sheet keeps re-exporting the date label: the slide, screen and Home card
+// import it from here. The implementation moved to feed-calendar.ts (#704).
+export { calendarDateLabel };
 
 /**
  * View-level date/time glue shared by the calendar surfaces (slide, sheet,
  * screen). All days and times follow the device's local zone; no zone label.
  */
-
-export function calendarDateLabel(date: string, options: Intl.DateTimeFormatOptions): string {
-  // Local noon keeps the calendar date stable across zones and DST edges.
-  return new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', options);
-}
 
 /** One-figure summary line, e.g. 'Est 4.25%' / 'EPS est $5.25'. Empty when absent. */
 export function eventFigureSummary(event: CalendarEvent): string {
@@ -29,13 +32,16 @@ interface CalendarEventSheetProps {
 
 /**
  * Event bottom sheet (mock #s-eventsheet, DESIGN.md §12): meta, title, when
- * line, figure boxes, mocked last-3-times reaction (mock-gated) and the
- * Backpack source link. No Remind me button — out of scope for #498.
+ * line, figure boxes, the real Last 3 times · 24h move history of matched
+ * economic events (#704) and the Backpack source link. No Remind me button —
+ * out of scope for #498.
  */
 export function CalendarEventSheet({ event, onClose }: CalendarEventSheetProps) {
   // One instant per render so the countdown and table agree.
   const now = new Date();
-  const reaction = eventReactionSample();
+  // Fetches only for matched economic events while the sheet is open; null
+  // otherwise (earnings, unmatched events, closed sheet).
+  const history = useCalendarHistory(event);
   return (
     <FeedSheet visible={event !== null} onClose={onClose}>
       {event ? (
@@ -59,28 +65,7 @@ export function CalendarEventSheet({ event, onClose }: CalendarEventSheetProps) 
               </View>
             ))}
           </View>
-          {reaction ? (
-            <View style={styles.reaction}>
-              <Text style={styles.reactionHeading}>LAST 3 TIMES · 24H MOVE</Text>
-              <SampleDataLabel enabled />
-              <View style={styles.tableRow}>
-                {['Date', 'Result', 'BTC', 'SPX', 'Gold'].map((head) => (
-                  <Text key={head} style={[styles.tableHeadCell, head === 'Result' && styles.tableHeadCellWide]}>
-                    {head}
-                  </Text>
-                ))}
-              </View>
-              {reaction.map((row) => (
-                <View key={row.date} style={styles.tableRow}>
-                  <Text style={styles.tableCell}>{row.date}</Text>
-                  <Text style={[styles.tableCell, styles.tableHeadCellWide]}>{row.result}</Text>
-                  <Text style={[styles.tableCell, reactionValueStyles(row.btc)]}>{row.btc}</Text>
-                  <Text style={[styles.tableCell, reactionValueStyles(row.spx)]}>{row.spx}</Text>
-                  <Text style={[styles.tableCell, reactionValueStyles(row.gold)]}>{row.gold}</Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
+          <EventHistoryTable history={history} unit={event.type === 'economic' ? event.unit ?? '' : ''} />
           <Pressable
             accessibilityRole="link"
             accessibilityLabel="Open event source"
@@ -95,9 +80,44 @@ export function CalendarEventSheet({ event, onClose }: CalendarEventSheetProps) 
   );
 }
 
-function reactionValueStyles(value: string): { color?: string } {
-  if (value.startsWith('-')) return { color: FEED_TOKENS.colors.down };
-  if (value.startsWith('+')) return { color: FEED_TOKENS.colors.up };
+/**
+ * The sheet's LAST 3 TIMES · 24H MOVE table (#704): real saved releases of the
+ * event's series, each row with the 24h move of every linked market. Optional
+ * context only — while loading, on any error, or with zero releases nothing
+ * renders: no placeholder, no error text, no retry.
+ */
+function EventHistoryTable({ history, unit }: { history: CalendarHistoryResponse | null; unit: string }) {
+  const rows = history ? historyTableRows(history, unit) : null;
+  if (!history || !rows) return null;
+  return (
+    <View style={styles.reaction}>
+      <Text style={styles.reactionHeading}>LAST 3 TIMES · 24H MOVE</Text>
+      <View style={styles.tableRow}>
+        {historyTableColumns(history).map((head) => (
+          <Text key={head} style={[styles.tableHeadCell, head === 'Result' && styles.tableHeadCellWide]}>
+            {head}
+          </Text>
+        ))}
+      </View>
+      {rows.map((row) => (
+        <View key={row.key} accessible accessibilityLabel={row.spoken} style={styles.tableRow}>
+          <Text style={styles.tableCell}>{row.date}</Text>
+          <Text style={[styles.tableCell, styles.tableHeadCellWide]}>{row.result}</Text>
+          {row.moves.map((move) => (
+            <Text key={move.symbol} style={[styles.tableCell, historyMoveColor(move.dir)]}>
+              {move.text}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/** Meaning colour for a 24h move: up green, down red; zero and missing neutral (#704). */
+function historyMoveColor(dir: CalendarHistoryMoveDirection): { color?: string } {
+  if (dir === 'up') return { color: FEED_TOKENS.colors.up };
+  if (dir === 'down') return { color: FEED_TOKENS.colors.down };
   return {};
 }
 

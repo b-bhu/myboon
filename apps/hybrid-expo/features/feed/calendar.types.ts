@@ -8,7 +8,7 @@ export type CalendarEvent = EventBase & ({
   revenueEstimated: number | null; revenueActual: number | null;
   providerUpdatedAt: string | null;
 } | {
-  type: 'economic'; country: string | null; currency: string | null; impact: string | null;
+  type: 'economic'; entitySlug: string | null; country: string | null; currency: string | null; impact: string | null;
   unit: string | null; previous: number | null; estimate: number | null; actual: number | null;
   change: number | null; changePercentage: number | null;
 });

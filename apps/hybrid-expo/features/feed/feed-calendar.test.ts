@@ -1,17 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createElement } from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import {
-  EVENT_REACTION_SAMPLE,
   NOW_WINDOW_MS,
+  calendarDateLabel,
+  calendarHistoryRequest,
   countdown,
   countdownLower,
   eventCountdown,
   eventFigures,
+  historyMoveCell,
+  historyResultLabel,
+  historyTableColumns,
+  historyTableRows,
   eventLocalDate,
   eventLocalTime,
   eventMetaLabel,
   eventMetaLine,
-  eventReactionSample,
   eventWhen,
   eventsByDay,
   isHighImpact,
@@ -19,11 +28,16 @@ import {
   monthGrid,
   monthRange,
   nextBigEvent,
+  releaseLocalDate,
   shiftDate,
   shiftMonth,
   weekCount,
 } from './feed-calendar';
+import { useCalendarHistory } from './use-calendar-history';
 import type { CalendarEvent } from './calendar.types';
+import type { CalendarHistoryMarket, CalendarHistoryRelease, CalendarHistoryResponse } from '@myboon/shared/calendar';
+
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 type EconomicEvent = Extract<CalendarEvent, { type: 'economic' }>;
 type EarningsEvent = Extract<CalendarEvent, { type: 'earnings' }>;
@@ -38,6 +52,7 @@ const economic = (date: string, startsAt: string | null, patch: Partial<Economic
   source: 'backpack',
   sourceUrl: 'https://example.com/fomc',
   type: 'economic',
+  entitySlug: null,
   country: null,
   currency: 'USD',
   impact: 'High',
@@ -360,23 +375,273 @@ test('eventFigures reads earnings compactly', () => {
   );
 });
 
-test('EVENT_REACTION_SAMPLE ships three clearly sample rows', () => {
-  assert.equal(EVENT_REACTION_SAMPLE.length, 3);
-  for (const row of EVENT_REACTION_SAMPLE) {
-    assert.equal(typeof row.date, 'string');
-    assert.equal(typeof row.result, 'string');
-    assert.match(row.date, /Sample/i);
-    assert.match(row.result, /Sample/i);
-    assert.match(row.btc, /^[+-]/);
-    assert.match(row.spx, /^[+-]/);
-    assert.match(row.gold, /^[+-]/);
+// ---------------------------------------------------------------------------
+// Last 3 times · 24h move (#704): the event sheet's real history table.
+// ---------------------------------------------------------------------------
+
+const historyMarket = (symbol: string, displaySymbol: string, rank: 1 | 2 | 3): CalendarHistoryMarket =>
+  ({ symbol, displaySymbol, displayName: displaySymbol, rank });
+
+const historyRelease = (patch: Partial<CalendarHistoryRelease> = {}): CalendarHistoryRelease => ({
+  date: '2026-11-12',
+  startsAt: null,
+  title: 'Inflation Rate YoY (Oct)',
+  period: 'Oct',
+  unit: null,
+  actual: null,
+  estimate: null,
+  previous: null,
+  moves: [],
+  ...patch,
+});
+
+const historyResponse = (patch: { markets?: CalendarHistoryMarket[]; releases?: CalendarHistoryRelease[] } = {}): CalendarHistoryResponse =>
+  ({ entity: { slug: 'us-cpi', name: 'US CPI' }, markets: patch.markets ?? [], releases: patch.releases ?? [] });
+
+test('historyTableColumns are Date, Result and one per market', () => {
+  assert.deepEqual(
+    historyTableColumns(historyResponse({
+      markets: [historyMarket('BTC', 'BTC', 1), historyMarket('SPX', 'SPX', 2), historyMarket('WTI', 'WTI', 3)],
+    })),
+    ['Date', 'Result', 'BTC', 'SPX', 'WTI'],
+  );
+  // Zero linked markets: the Date and Result columns only.
+  assert.deepEqual(historyTableColumns(historyResponse()), ['Date', 'Result']);
+});
+
+test('historyTableRows formats the example row and skips no-data moves in the spoken line', () => {
+  const response = historyResponse({
+    markets: [historyMarket('BTC', 'BTC', 1), historyMarket('SPX', 'SPX', 2)],
+    releases: [historyRelease({
+      date: '2026-11-10', unit: '%', actual: 3.7, estimate: 3.6,
+      moves: [{ symbol: 'BTC', changePct: 1.24 }, { symbol: 'SPX', changePct: -0.8 }],
+    })],
+  });
+  const rows = historyTableRows(response);
+  assert.ok(rows);
+  assert.equal(rows.length, 1);
+  assert.deepEqual({ date: rows[0].date, result: rows[0].result }, { date: '10 Nov', result: '3.7% vs 3.6%' });
+  assert.deepEqual(
+    rows[0].moves.map((move) => [move.symbol, move.displaySymbol, move.text, move.dir]),
+    [
+      ['BTC', 'BTC', '+1.24%', 'up'],
+      ['SPX', 'SPX', '−0.80%', 'down'],
+    ],
+  );
+  assert.equal(rows[0].spoken, '10 Nov, 3.7% versus 3.6%, BTC up 1.24%, SPX down 0.80%');
+});
+
+test('historyTableRows keeps the served order, one move cell per market, and needs releases', () => {
+  const rows = historyTableRows(historyResponse({
+    markets: [historyMarket('BTC', 'BTC', 1)],
+    releases: [
+      historyRelease({ date: '2026-11-12', title: 'Inflation Rate YoY (Nov)', unit: '%', actual: 3.1, moves: [{ symbol: 'BTC', changePct: 0 }] }),
+      historyRelease({ date: '2026-10-13', title: 'Inflation Rate YoY (Sep)', unit: '%', actual: 3.0, estimate: 3.2, moves: [] }),
+    ],
+  }));
+  assert.ok(rows);
+  assert.deepEqual(rows.map((row) => row.key), ['2026-11-12-Inflation Rate YoY (Nov)', '2026-10-13-Inflation Rate YoY (Sep)']);
+  // A finished window with no move speaks flat; a missing cell stays a dash.
+  assert.equal(rows[0].spoken, '12 Nov, 3.1%, BTC 0.00%');
+  assert.equal(rows[1].spoken, '13 Oct, 3% versus 3.2%');
+  // Zero markets → Date and Result rows only, no move cells at all.
+  const noMarkets = historyTableRows(historyResponse({ releases: [historyRelease({ date: '2026-11-10', unit: '%', actual: 3.7, estimate: 3.6 })] }));
+  assert.deepEqual(noMarkets?.map((row) => [row.date, row.result, row.moves.length]), [['10 Nov', '3.7% vs 3.6%', 0]]);
+  // No releases → no block at all.
+  assert.equal(historyTableRows(historyResponse()), null);
+});
+
+test('historyTableRows falls back to the series unit when a release carries none', () => {
+  assert.equal(historyTableRows(historyResponse({ releases: [historyRelease({ actual: 3.7, estimate: 3.6 })] }), '%')?.[0].result, '3.7% vs 3.6%');
+  // With no unit anywhere the numbered values read bare.
+  assert.equal(historyTableRows(historyResponse({ releases: [historyRelease({ actual: 3.7, estimate: 3.6 })] }))?.[0].result, '3.7 vs 3.6');
+});
+
+test('historyResultLabel reads actual vs estimate, the actual alone, or a dash', () => {
+  assert.equal(historyResultLabel(3.7, 3.6, '%'), '3.7% vs 3.6%');
+  assert.equal(historyResultLabel(3.7, null, '%'), '3.7%');
+  // No actual means no reading, estimate or not.
+  assert.equal(historyResultLabel(null, 3.6, '%'), '—');
+});
+
+test('historyMoveCell formats up, down, zero and missing moves with their meaning direction', () => {
+  assert.deepEqual(historyMoveCell(1.24), { text: '+1.24%', dir: 'up' });
+  assert.deepEqual(historyMoveCell(-0.8), { text: '−0.80%', dir: 'down' });
+  assert.deepEqual(historyMoveCell(0), { text: '0.00%', dir: 'flat' });
+  assert.deepEqual(historyMoveCell(null), { text: '—', dir: 'none' });
+});
+
+test("releaseLocalDate takes startsAt's local day and falls back to the release date", () => {
+  // Date-only releases (and unusable starts) never shift; the date is the day.
+  assert.equal(releaseLocalDate({ date: '2026-11-10', startsAt: null }), '2026-11-10');
+  assert.equal(releaseLocalDate({ date: '2026-11-10', startsAt: 'garbage' }), '2026-11-10');
+});
+
+test('calendarDateLabel formats the sheet-style day label for the table rows', () => {
+  assert.equal(calendarDateLabel('2026-11-10', { day: 'numeric', month: 'short' }), '10 Nov');
+});
+
+test('calendarHistoryRequest fetches only matched economic events, with before = the event date', () => {
+  assert.deepEqual(
+    calendarHistoryRequest(economic('2026-12-10', '2026-12-10T08:30:00Z', { entitySlug: 'us-cpi', title: 'Inflation Rate YoY (Nov)' })),
+    { entity: 'us-cpi', before: '2026-12-10' },
+  );
+  // Unmatched economic events and earnings events never fetch.
+  assert.equal(calendarHistoryRequest(economic('2026-12-10', '2026-12-10T08:30:00Z')), null);
+  assert.equal(calendarHistoryRequest(earnings('2026-12-10', '2026-12-10T21:00:00Z')), null);
+  // A closed sheet fetches nothing.
+  assert.equal(calendarHistoryRequest(null), null);
+});
+
+test('the sample reaction table is gone from feed-calendar', async () => {
+  const mod = (await import('./feed-calendar')) as unknown as Record<string, unknown>;
+  assert.equal(mod.EVENT_REACTION_SAMPLE, undefined);
+  assert.equal(mod.eventReactionSample, undefined);
+  // Not even mentioned in the module: no mock-gated sample path back.
+  const feedCalendarSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'feed-calendar.ts'), 'utf8');
+  assert.ok(!feedCalendarSource.includes('EVENT_REACTION_SAMPLE'));
+  assert.ok(!feedCalendarSource.includes('eventReactionSample'));
+  assert.ok(!feedCalendarSource.includes('EventReactionRow'));
+  assert.ok(!feedCalendarSource.includes('feed-mocks'));
+});
+
+// Hook-level visibility (#704). One fetch stub per test; settle() drains the
+// resolve → state microtasks, the feed-data.test.tsx way.
+const settle = async () => {
+  for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
+};
+
+const cpiOn = (date: string): CalendarEvent =>
+  economic(date, `${date}T13:30:00Z`, { entitySlug: 'us-cpi', title: 'Inflation Rate YoY (Nov)' });
+
+// A plain object holds the hook's latest state across renders (feed-data.test.tsx style).
+function makeHarness(): { state: { history: ReturnType<typeof useCalendarHistory> | null }, Harness: (props: { event: CalendarEvent | null }) => null } {
+  const state: { history: ReturnType<typeof useCalendarHistory> | null } = { history: null };
+  function Harness({ event }: { event: CalendarEvent | null }) {
+    state.history = useCalendarHistory(event);
+    return null;
+  }
+  return { state, Harness };
+}
+
+test('useCalendarHistory never fetches for earnings, unmatched events or a closed sheet', async () => {
+  const original = globalThis.fetch;
+  const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://feed-api.example.test';
+  let calls = 0;
+  const urls: string[] = [];
+  globalThis.fetch = (input) => {
+    calls += 1;
+    urls.push(String(input));
+    return Promise.resolve(Response.json(historyResponse({ releases: [historyRelease()] })));
+  };
+  const { state, Harness } = makeHarness();
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness, { event: earnings('2026-11-10', '2026-11-10T21:00:00Z') })); await settle(); });
+    assert.equal(calls, 0);
+    assert.equal(state.history, null);
+    // An unmatched economic event (entitySlug null) never fetches either.
+    await act(async () => { renderer.update(createElement(Harness, { event: economic('2026-11-10', '2026-11-10T13:30:00Z') })); await settle(); });
+    assert.equal(calls, 0);
+    assert.equal(state.history, null);
+    // A matched economic event fetches once with the event's date as before.
+    await act(async () => { renderer.update(createElement(Harness, { event: cpiOn('2026-11-10') })); await settle(); });
+    assert.equal(calls, 1);
+    assert.equal(urls[0], 'https://feed-api.example.test/calendar/history?entity=us-cpi&before=2026-11-10');
+    assert.deepEqual(state.history, historyResponse({ releases: [historyRelease()] }));
+    // Closing the sheet clears the table data and fetches nothing more.
+    await act(async () => { renderer.update(createElement(Harness, { event: null })); await settle(); });
+    assert.equal(calls, 1);
+    assert.equal(state.history, null);
+  } finally {
+    if (renderer) await act(async () => { await renderer.unmount(); });
+    globalThis.fetch = original;
+    if (originalBase === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    else process.env.EXPO_PUBLIC_API_BASE_URL = originalBase;
   }
 });
-test('eventReactionSample follows the mock gate', () => {
-  assert.equal(eventReactionSample(true), EVENT_REACTION_SAMPLE);
-  assert.equal(eventReactionSample(false), null);
-  // The test environment runs with mocks off; no implicit sample leaks in.
-  assert.equal(eventReactionSample(), null);
+
+test('useCalendarHistory shows nothing for zero releases or a failed fetch and never retries one', async () => {
+  const original = globalThis.fetch;
+  let mode: 'empty' | 'fail' | 'ok' = 'empty';
+  let calls = 0;
+  const okResponse = historyResponse({ releases: [historyRelease({ title: 'Inflation Rate YoY (Nov)' })] });
+  globalThis.fetch = () => {
+    calls += 1;
+    if (mode === 'empty') return Promise.resolve(Response.json(historyResponse()));
+    if (mode === 'fail') return Promise.reject(new Error('down'));
+    return Promise.resolve(Response.json(okResponse));
+  };
+  const { state, Harness } = makeHarness();
+  let renderer!: ReactTestRenderer;
+  try {
+    // Zero releases arrive as a valid response; the table block needs rows.
+    await act(async () => { renderer = create(createElement(Harness, { event: cpiOn('2026-11-10') })); await settle(); });
+    assert.equal(calls, 1);
+    assert.deepEqual(state.history, historyResponse());
+    assert.deepEqual(historyTableRows(historyResponse()), null); // → the sheet renders no block
+    // A failed fetch on the next event reads as nothing, with no silent retry.
+    mode = 'fail';
+    await act(async () => { renderer.update(createElement(Harness, { event: cpiOn('2026-11-11') })); await settle(); });
+    assert.equal(calls, 2);
+    assert.equal(state.history, null);
+    await act(async () => { await settle(); });
+    assert.equal(calls, 2);
+    // Only opening a different event fetches again (no retry for the same one).
+    mode = 'ok';
+    await act(async () => { renderer.update(createElement(Harness, { event: cpiOn('2026-11-12') })); await settle(); });
+    assert.equal(calls, 3);
+    assert.ok(state.history);
+    assert.deepEqual(state.history, okResponse);
+  } finally {
+    if (renderer) await act(async () => { await renderer.unmount(); });
+    globalThis.fetch = original;
+  }
+});
+
+test('useCalendarHistory aborts on event change and close, and stale answers never land', async () => {
+  const original = globalThis.fetch;
+  const pending = new Map<string, { signal: AbortSignal | null; resolve: (response: Response) => void }>();
+  const urls: string[] = [];
+  globalThis.fetch = (input, options) => {
+    const url = new URL(String(input));
+    urls.push(`${url.pathname}${url.search}`);
+    return new Promise<Response>((resolve) => {
+      pending.set(url.searchParams.get('before') ?? '', { signal: (options?.signal as AbortSignal | undefined) ?? null, resolve });
+    });
+  };
+  const { state, Harness } = makeHarness();
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness, { event: cpiOn('2026-11-10') })); });
+    assert.equal(urls[0], '/calendar/history?entity=us-cpi&before=2026-11-10');
+    const first = pending.get('2026-11-10')!;
+    // Switching events aborts the older request and opens the new one.
+    await act(async () => { renderer.update(createElement(Harness, { event: cpiOn('2026-11-12') })); });
+    assert.equal(first.signal?.aborted, true);
+    const second = pending.get('2026-11-12')!;
+    // The old event's answer landing late must never replace the new one's.
+    await act(async () => { first.resolve(Response.json(historyResponse({ releases: [historyRelease({ title: 'Inflation Rate YoY (Oct)' })] }))); await settle(); });
+    assert.equal(state.history, null);
+    await act(async () => { second.resolve(Response.json(historyResponse({ releases: [historyRelease({ title: 'Inflation Rate YoY (Nov)' })] }))); await settle(); });
+    // (The cast resets the control-flow narrowing left by the null assertion above.)
+    const landed = state.history as ReturnType<typeof useCalendarHistory> | null;
+    assert.ok(landed);
+    assert.equal(landed.releases[0].title, 'Inflation Rate YoY (Nov)');
+    // Closing aborts an in-flight request too, and a late answer after the
+    // close cannot land.
+    await act(async () => { renderer.update(createElement(Harness, { event: cpiOn('2026-11-14') })); });
+    const third = pending.get('2026-11-14')!;
+    await act(async () => { renderer.update(createElement(Harness, { event: null })); await settle(); });
+    assert.equal(third.signal?.aborted, true);
+    assert.equal(state.history, null);
+    await act(async () => { third.resolve(Response.json(historyResponse({ releases: [historyRelease()] }))); await settle(); });
+    assert.equal(state.history, null);
+  } finally {
+    if (renderer) await act(async () => { await renderer.unmount(); });
+    globalThis.fetch = original;
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -406,6 +671,11 @@ test('eventLocalDate shifts timed events to their local day and keeps date-only 
   // Date-only events never shift; an unusable start falls back to the date.
   assert.equal(eventLocalDate(economic('2026-10-28', null, { timePrecision: 'date' })), '2026-10-28');
   assert.equal(eventLocalDate(economic('2026-10-28', 'garbage')), '2026-10-28');
+});
+
+test('releaseLocalDate shifts releases across local midnight the same way', { skip: IST_SKIP }, () => {
+  assert.equal(releaseLocalDate({ date: '2026-10-28', startsAt: '2026-10-28T18:00:00Z' }), '2026-10-28'); // 23:30.
+  assert.equal(releaseLocalDate({ date: '2026-10-28', startsAt: '2026-10-28T19:00:00Z' }), '2026-10-29'); // 00:30 next day.
 });
 
 test('eventLocalTime reads a 24-hour local clock or All day', { skip: IST_SKIP }, () => {
