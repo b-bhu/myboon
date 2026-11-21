@@ -55,6 +55,11 @@
       "default": "./src/latest-updates/index.ts",
       "types": "./src/latest-updates/index.ts"
     },
+    "./wallet-summary": {
+      "import": "./src/wallet-summary/index.ts",
+      "default": "./src/wallet-summary/index.ts",
+      "types": "./src/wallet-summary/index.ts"
+    },
     "./stories": {
       "import": "./src/stories/index.ts",
       "default": "./src/stories/index.ts",
