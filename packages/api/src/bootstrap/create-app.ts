@@ -27,6 +27,7 @@ import {
 import { spotRoutes } from '../spot.js'
 import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
 import { createWalletSummaryService } from '../wallet-summary/service.js'
+import { createWalletMoveRoutes } from '../wallet-move/routes.js'
 import { createHyperliquidPrices } from '../hyperliquid.js'
 import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
 import { createStoryRoutes } from '../stories.js'
@@ -170,6 +171,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/spot', spotRoutes)
   app.route('/wallet', createWalletSummaryRoutes({
     service: createWalletSummaryService(),
+    // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
+    trustForwardedHeaders: config.trustProxyHeaders,
+  }))
+  app.route('/wallet', createWalletMoveRoutes({
+    relayApiKey: config.relayApiKey,
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
     trustForwardedHeaders: config.trustProxyHeaders,
   }))
