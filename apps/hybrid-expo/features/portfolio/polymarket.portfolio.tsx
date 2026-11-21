@@ -40,14 +40,11 @@ import { WithdrawModal } from '@/components/polymarket/WithdrawModal';
 import { cancelOrder, fetchClobBalance, fetchOpenOrders, fetchPortfolio, placeBet, redeemPosition } from '@/features/polymarket/polymarket.api';
 import type { PortfolioPosition } from '@/features/polymarket/polymarket.api';
 import { getPolymarketMarketHref } from '@/features/polymarket/polymarket.navigation';
-import { formatPolymarketTitle } from '@/features/polymarket/formatPolymarketTitle';
 import { truncateUsd } from '@/features/polymarket/formatPolymarketMoney';
 import {
   buildPolymarketActivityItems,
-  formatPolymarketFreshness,
-  getPolymarketActivityStatusLabel,
 } from '@/features/polymarket/polymarketActivityState';
-import { getPositionSellQuote, usePositionSellQuotes } from '@/features/polymarket/positionSellQuotes';
+import { usePositionSellQuotes } from '@/features/polymarket/positionSellQuotes';
 import { formatRedeemError, logRedeemError } from '@/features/polymarket/redeemErrors';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
@@ -69,13 +66,9 @@ import { usePolymarketProfileStore } from '@/features/polymarket/portfolio/profi
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
 import {
-  activityCashValue,
-  activityLabel,
   fetchUsdToInrRate,
-  formatAge,
   formatProfileCurrency,
   maskEmail,
-  orderCost,
   POLYMARKET_PROFILE_CURRENCY_KEY,
   POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
   positionKey,
@@ -86,6 +79,11 @@ import {
 } from '@/features/portfolio/polymarket/polymarket.format';
 import { styles } from '@/features/portfolio/polymarket/polymarket.portfolio.styles';
 import { derivePolymarketTotals } from '@/features/portfolio/polymarket/polymarket.totals';
+import { PolymarketIdentityHeader } from '@/features/portfolio/polymarket/PolymarketIdentityHeader';
+import { buildPolymarketHistoryRows, getPolymarketVisibleActivity } from '@/features/portfolio/polymarket/PolymarketHistoryTab';
+import { PolymarketMoneyCard } from '@/features/portfolio/polymarket/PolymarketMoneyCard';
+import { buildPolymarketOrdersTab } from '@/features/portfolio/polymarket/PolymarketOrdersTab';
+import { buildPolymarketPositionsTab } from '@/features/portfolio/polymarket/PolymarketPositionsTab';
 import { VenuePortfolioScreen } from '@/features/portfolio/VenuePortfolioScreen';
 import type { VenuePortfolioScreenTab } from '@/features/portfolio/VenuePortfolioScreen';
 import { semantic, tokens } from '@/theme';
@@ -677,181 +675,56 @@ export function PolymarketPortfolioScreen() {
     }),
     [closedPositions],
   );
-  const visibleActivity = useMemo(() => {
-    const sortedActivity = [...(portfolio?.activity ?? [])]
-      .sort((left, right) => (right.timestamp ?? 0) - (left.timestamp ?? 0))
-      .slice(0, 50);
-    const closedConditionIds = new Set(
-      closedItems.map((item) => item.conditionId?.toLowerCase()).filter((id): id is string => !!id),
-    );
-    return sortedActivity.filter((entry) => {
-      const type = entry.type.trim().toLowerCase();
-      return !(type.includes('redeem') && entry.conditionId && closedConditionIds.has(entry.conditionId.toLowerCase()));
-    });
-  }, [closedItems, portfolio]);
+  const visibleActivity = useMemo(
+    () => getPolymarketVisibleActivity(portfolio?.activity ?? [], closedItems),
+    [closedItems, portfolio],
+  );
 
-  const redeemableRows = redeemablePositions.map((position) => ({
-    key: `ready:${positionKey(position)}`,
-    title: formatPolymarketTitle({ title: position.title, slug: position.slug || position.eventSlug }),
-    titleAccent: position.outcome,
-    subtitle: redeemError?.id === positionKey(position) ? redeemError.message : 'Your winning position · redeem once the market settles',
-    value: truncateUsd(position.currentValue),
-    actionLabel:
-      redeemingId === positionKey(position)
-        ? 'Collecting…'
-        : `Collect ${truncateUsd(position.currentValue)}`,
-    actionPending: redeemingId === positionKey(position),
-    actionDisabled: actionsDisabled || !poly.client,
-    onActionPress: () => void collect(position),
-    onPress: undefined,
-  }));
-
-  const positionRows = positions.map((position) => {
-    const quote = getPositionSellQuote(sellQuotes, position);
-    const pnl = quote?.cashPnl ?? null;
-    const currentValue = quote?.estimatedProceeds ?? null;
-    return {
-      key: positionKey(position),
-      title: formatPolymarketTitle({ title: position.title, slug: position.slug || position.eventSlug }),
-      titleAccent: position.outcome,
-      subtitle: `You paid ${truncateUsd(position.size * position.avgPrice)} · ${Number.isFinite(position.curPrice) ? `${Math.round(position.curPrice * 100)}%` : '--'} chance now`,
-      value: currentValue !== null ? truncateUsd(currentValue) : '--',
-      valueTone: (pnl !== null ? (pnl < 0 ? 'neg' : 'pos') : undefined) as 'pos' | 'neg' | undefined,
-      subValue: pnl === null ? undefined : `${pnl >= 0 ? '+' : ''}${truncateUsd(pnl)}`,
-      subValueTone: (pnl !== null ? (pnl < 0 ? 'neg' : 'pos') : undefined) as 'pos' | 'neg' | undefined,
-      actionLabel: quote?.loading ? 'Checking…' : 'Cash out',
-      actionDisabled: Boolean(quote?.loading) || actionsDisabled,
-      onActionPress: () => handleCashOut(position),
-      onPress: position.slug ? () => handleOpenMarket(position.slug) : undefined,
-    };
+  const { redeemableRows, positionRows } = buildPolymarketPositionsTab({
+    redeemablePositions,
+    positions,
+    sellQuotes,
+    redeemingId,
+    redeemError,
+    actionsDisabled,
+    polyClient: poly.client,
+    onCollect: collect,
+    onCashOut: handleCashOut,
+    onOpenMarket: handleOpenMarket,
   });
 
-  const orderRows = sortedOrders.map((order) => {
-    const cost = orderCost(order);
-    const waitingLabel = order.status === 'cancel_requested'
-      ? getPolymarketActivityStatusLabel('cancel_requested')
-      : order.status === 'local-pending'
-        ? getPolymarketActivityStatusLabel('syncing')
-        : getPolymarketActivityStatusLabel('waiting_to_match');
-    return {
-      key: order.id,
-      title: order.market || 'Polymarket',
-      titleAccent: order.outcome || undefined,
-      subtitle: [
-        `${Math.round((Number.parseFloat(order.price) || 0) * 100)}¢`,
-        cost === null ? null : `${truncateUsd(cost)} reserved`,
-        formatAge(order.created_at),
-      ].filter(Boolean).join(' · '),
-      value: waitingLabel,
-      actionLabel:
-        cancellingId === order.id ? 'Cancelling…' : order.status === 'cancel_requested' ? 'Requested' : 'Cancel',
-      actionPending: cancellingId === order.id,
-      actionDisabled: actionsDisabled || order.status === 'cancel_requested',
-      onActionPress: () => void handleCancel(order.id),
-      onPress: undefined,
-    };
+  const { orderRows, reservedNote } = buildPolymarketOrdersTab({
+    sortedOrders,
+    cancellingId,
+    actionsDisabled,
+    onCancel: handleCancel,
   });
-
-  const reservedNote = sortedOrders.length > 0 ? (
-    <Text style={styles.showingNote}>
-      Reserved for these orders: {truncateUsd(sortedOrders.reduce((sum, order) => sum + (orderCost(order) ?? 0), 0))} pUSD
-    </Text>
-  ) : null;
 
   const moneyCard = (
-    <View style={styles.moneyCard}>
-              <View pointerEvents="none" style={styles.moneyOrb} />
-              <View style={styles.moneyBar}>
-                {cashBalance !== null && cashBalance > 0 && (
-                  <View style={[styles.moneyBarSeg, styles.moneyBarAvailable, { flex: Math.max(cashBalance, 0.01) }]} />
-                )}
-                {activePicksValue !== null && activePicksValue > 0 && (
-                  <View style={[styles.moneyBarSeg, styles.moneyBarInPicks, { flex: Math.max(activePicksValue, 0.01) }]} />
-                )}
-                {readyToCollect > 0 && (
-                  <View style={[styles.moneyBarSeg, styles.moneyBarReady, { flex: Math.max(readyToCollect, 0.01) }]} />
-                )}
-                {((cashBalance ?? 0) <= 0 && (activePicksValue ?? 0) <= 0 && readyToCollect <= 0) && (
-                  <View style={[styles.moneyBarSeg, styles.moneyBarEmpty]} />
-                )}
-              </View>
-              <View style={styles.moneyLegend}>
-                <View style={[styles.moneyLegendItem, styles.moneyLegendAvailable]}>
-                  <View style={styles.moneyLegendHeading}>
-                    <View style={[styles.moneyLegendDot, styles.moneyBarAvailable]} />
-                    <Text style={styles.moneyLegendLabel}>Available</Text>
-                  </View>
-                  <Text style={styles.moneyLegendValue}>{truncateUsd(cashBalance)}</Text>
-                </View>
-                <View style={styles.moneyLegendItem}>
-                  <View style={styles.moneyLegendHeading}>
-                    <View style={[styles.moneyLegendDot, styles.moneyBarInPicks]} />
-                    <Text style={styles.moneyLegendLabel}>In picks</Text>
-                  </View>
-                  <Text style={styles.moneyLegendValue}>{truncateUsd(activePicksValue)}</Text>
-                </View>
-                <View style={styles.moneyLegendItem}>
-                  <View style={styles.moneyLegendHeading}>
-                    <View style={[styles.moneyLegendDot, styles.moneyBarReady]} />
-                    <Text style={styles.moneyLegendLabel}>Ready</Text>
-                  </View>
-                  <Text style={[styles.moneyLegendValue, readyToCollect > 0 && styles.moneyReadyValue]}>
-                    {truncateUsd(readyToCollect)}
-                  </Text>
-                </View>
-              </View>
-    </View>
+    <PolymarketMoneyCard
+      cashBalance={cashBalance}
+      activePicksValue={activePicksValue}
+      readyToCollect={readyToCollect}
+    />
   );
 
   const pageAbove = (
-    <>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open account and security"
-                style={styles.identity}
-                onPress={() => {
-                  if (accountState === 'signed_out') {
-                    handleConnectPolymarketAccount();
-                    return;
-                  }
-                  setSettingsView('security');
-                  setSettingsOpen(true);
-                }}>
-                <View style={styles.avatarInner}>
-                  <Text style={styles.avatarText}>{displayName.charAt(0).toUpperCase()}</Text>
-                  <View style={[styles.avatarStatus, !accountStatePositive && styles.avatarStatusMuted]} />
-                </View>
-                <View style={styles.identityInfo}>
-                  <Text style={styles.handle} numberOfLines={1}>{displayName}</Text>
-                  <Text style={styles.identityMeta} numberOfLines={1}>{identitySubtitle}</Text>
-                  <View style={styles.identityStateRow}>
-                    <MaterialIcons
-                      name={accountStatePositive ? 'verified-user' : accountState === 'session_expired' ? 'sync-problem' : 'shield'}
-                      size={11}
-                      color={accountStatePositive ? tokens.colors.viridian : tokens.colors.accent}
-                    />
-                    <Text style={[styles.identityStateText, !accountStatePositive && styles.identityStateAttention]}>{accountStateLabel}</Text>
-                  </View>
-                </View>
-                <MaterialIcons name="chevron-right" size={20} color={semantic.text.faint} />
-              </Pressable>
-              {accountState === 'session_expired' ? (
-                <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
-                  <MaterialIcons name="refresh" size={15} color={tokens.colors.accent} />
-                  <View style={styles.reconnectCopy}>
-                    <Text style={styles.reconnectTitle}>{setupCopy.title}</Text>
-                    <Text style={styles.reconnectText}>{busy ? 'Reconnecting…' : setupCopy.description}</Text>
-                  </View>
-                </Pressable>
-              ) : polymarketUnavailable && isEnabled && !portfolioLoading ? (
-                <Pressable onPress={handleReconnect} disabled={busy} style={styles.reconnectBanner}>
-                  <MaterialIcons name="refresh" size={14} color={tokens.colors.primary} />
-                  <Text style={styles.reconnectText}>
-                    {busy ? 'Retrying…' : 'Could not refresh Polymarket — tap to retry'}
-                  </Text>
-                </Pressable>
-              ) : null}
-    </>
+    <PolymarketIdentityHeader
+      accountState={accountState}
+      accountStateLabel={accountStateLabel}
+      accountStatePositive={accountStatePositive}
+      displayName={displayName}
+      identitySubtitle={identitySubtitle}
+      setupCopy={setupCopy}
+      busy={busy}
+      polymarketUnavailable={polymarketUnavailable}
+      isEnabled={isEnabled}
+      portfolioLoading={portfolioLoading}
+      onConnectAccount={handleConnectPolymarketAccount}
+      onReconnect={handleReconnect}
+      setSettingsView={setSettingsView}
+      setSettingsOpen={setSettingsOpen}
+    />
   );
 
     async function collect(position: PortfolioPosition) {
@@ -889,32 +762,11 @@ export function PolymarketPortfolioScreen() {
         </Text>
       ) : null;
 
-    const historyModel = [
-      ...closedItems.map((item) => {
-        const slug = item.marketSlug;
-        return ({
-        key: item.id,
-        title: item.status === 'closed_won' ? 'Position won' : 'Position settled',
-        subtitle: `${item.marketTitle} · ${item.outcome}`,
-        value: (item.status === 'closed_won' ? `+${truncateUsd(item.currentValue)}` : truncateUsd(item.pnl)),
-        valueTone: (item.status === 'closed_won' ? 'pos' : 'neg') as 'pos' | 'neg',
-        subValue: item.createdAt ? formatAge(item.createdAt) : undefined,
-        onPress: slug ? (() => handleOpenMarket(slug)) : undefined,
-      });
-      }),
-      ...visibleActivity.map((entry, index) => {
-        const cashValue = activityCashValue(entry);
-        return {
-          key: `${entry.slug}:${entry.timestamp}:${index}`,
-          title: activityLabel(entry),
-          subtitle: `${entry.title} · ${entry.outcome}`,
-          value: truncateUsd(cashValue),
-          valueTone: (cashValue > 0 ? 'pos' : cashValue < 0 ? 'neg' : undefined) as 'pos' | 'neg' | undefined,
-          subValue: formatAge(entry.timestamp < 10_000_000_000 ? entry.timestamp * 1000 : entry.timestamp),
-          onPress: entry.slug ? () => handleOpenMarket(entry.slug) : undefined,
-        };
-      }),
-    ];
+    const historyModel = buildPolymarketHistoryRows({
+      closedItems,
+      visibleActivity,
+      onOpenMarket: handleOpenMarket,
+    });
 
     return {
       positions: {
