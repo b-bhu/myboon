@@ -48,6 +48,7 @@ import { sendPhoenixBuiltTransaction, type PhoenixSignAndSendTransactionFn } fro
 import { VenuePortfolioScreen } from '@/features/portfolio/VenuePortfolioScreen';
 import type { VenuePortfolioScreenTab } from '@/features/portfolio/VenuePortfolioScreen';
 import { semantic, tokens } from '@/theme';
+import { accountSummary, toNumber, toUsd } from '@myboon/shared/wallet-summary';
 
 type TransferAction = 'deposit' | 'withdraw';
 type TransferMessageTone = 'info' | 'success' | 'error';
@@ -122,20 +123,6 @@ interface PhoenixHistoryRow {
   tone?: 'pos' | 'neg';
   timestamp: number;
 }
-
-interface PhoenixAccountSummary {
-  portfolioValue: number | null;
-  collateralBalance: number | null;
-  effectiveCollateral: number | null;
-  withdrawable: number | null;
-  unrealizedPnl: number;
-  initialMargin: number | null;
-  maintenanceMargin: number | null;
-  accountLeverage: number | null;
-  riskLabel: string;
-}
-
-
 
 export function PhoenixPortfolioScreen() {
   const insets = useSafeAreaInsets();
@@ -1208,45 +1195,6 @@ function normalizeHistoryRows(
     .slice(0, 80);
 }
 
-function accountSummary(traders: PhoenixTraderRecord[]): PhoenixAccountSummary {
-  const portfolioValue = sumUsd(traders, 'portfolioValue');
-  const effectiveCollateral = sumUsd(traders, 'effectiveCollateral');
-  const initialMargin = sumUsd(traders, 'initialMargin');
-
-  return {
-    portfolioValue,
-    collateralBalance: sumUsd(traders, 'collateralBalance'),
-    effectiveCollateral,
-    withdrawable: sumUsd(traders, 'effectiveCollateralForWithdrawals'),
-    unrealizedPnl: sumUsd(traders, 'unrealizedPnl') ?? 0,
-    initialMargin,
-    maintenanceMargin: sumUsd(traders, 'maintenanceMargin'),
-    accountLeverage: effectiveCollateral && effectiveCollateral > 0 && initialMargin !== null
-      ? initialMargin / effectiveCollateral
-      : null,
-    riskLabel: worstRiskLabel(traders),
-  };
-}
-
-function sumUsd(records: PhoenixTraderRecord[], key: string): number | null {
-  const values = records
-    .map((record) => toUsd(record[key]))
-    .filter((value): value is number => value !== null);
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0);
-}
-
-function worstRiskLabel(traders: PhoenixTraderRecord[]): string {
-  const order = ['Safe', 'At Risk', 'Cancellable', 'Liquidatable', 'Backstop Liquidatable', 'High Risk'];
-  let worst = 'Safe';
-  for (const trader of traders) {
-    const label = statusText(trader.riskTier ?? trader.riskState);
-    if (!label || label === '--') continue;
-    if (order.indexOf(label) > order.indexOf(worst)) worst = label;
-  }
-  return traders.length > 0 ? worst : '--';
-}
-
 function traderLabel(trader: PhoenixTraderRecord, fallbackIndex: number): string {
   const pda = toNumber(trader.traderPdaIndex) ?? fallbackIndex;
   const subaccount = toNumber(trader.traderSubaccountIndex) ?? 0;
@@ -1260,37 +1208,6 @@ function asRecord(input: unknown): Record<string, unknown> | null {
 function asString(input: unknown): string | null {
   if (typeof input === 'number' && Number.isFinite(input)) return String(input);
   return typeof input === 'string' && input.trim().length > 0 ? input : null;
-}
-
-function toNumber(input: unknown): number | null {
-  if (typeof input === 'number') return Number.isFinite(input) ? input : null;
-  const record = asRecord(input);
-  if (record) {
-    const ui = toNumber(record.ui);
-    if (ui !== null) return ui;
-
-    const rawValue = toNumber(record.value);
-    const decimals = toNumber(record.decimals);
-    if (rawValue !== null && decimals !== null) {
-      const scaled = rawValue / (10 ** decimals);
-      return Number.isFinite(scaled) ? scaled : null;
-    }
-  }
-  if (typeof input !== 'string' || input.trim() === '') return null;
-  const parsed = Number.parseFloat(input);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function toUsd(input: unknown): number | null {
-  const value = toNumber(input);
-  if (value === null) return null;
-  if (
-    ((typeof input === 'string' && !input.includes('.')) || typeof input === 'number')
-    && Math.abs(value) >= 1_000_000
-  ) {
-    return value / 1_000_000;
-  }
-  return value;
 }
 
 function quoteLotsToUsd(input: unknown): number | null {

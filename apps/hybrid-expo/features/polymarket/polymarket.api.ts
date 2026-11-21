@@ -33,7 +33,7 @@ import {
   sumReadyToCollect,
   summarizeHeldPositions,
   walkAllPages,
-} from './portfolio-summary';
+} from '@myboon/shared/wallet-summary';
 
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
