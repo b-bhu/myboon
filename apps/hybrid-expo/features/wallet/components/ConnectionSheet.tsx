@@ -37,7 +37,6 @@ import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
   EXPORT_INSTRUCTIONS,
-  INITIAL_CONNECT_FLOW,
   assertPrivyHomeUrl,
   beginPrivyExport,
   canGoBack,
@@ -47,11 +46,8 @@ import {
   emailEntryError,
   isUserCancelled,
   otpFailureMessage,
-  reduceConnectFlow,
   sheetChrome,
   showsLogout,
-  type ConnectFlowEvent,
-  type ConnectFlowState,
   type LinkedKind,
 } from '@/features/wallet/components/connect.flow';
 import {
@@ -79,52 +75,7 @@ import {
   WalletMark,
 } from '@/features/wallet/components/ConnectionSheetParts';
 import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
-
-function useConnectFlow(
-  visible: boolean,
-  session: {
-    linked: LinkedKind | null;
-    privyAuthenticated: boolean;
-    hasEmbeddedWallet: boolean;
-    privyReady: boolean;
-  },
-) {
-  const [flow, setFlow] = useState<ConnectFlowState>(INITIAL_CONNECT_FLOW);
-  const decided = useRef(false);
-  let display = flow;
-
-  const openEvent: ConnectFlowEvent = {
-    type: 'open',
-    linked: session.linked,
-    privyAuthenticated: session.privyAuthenticated,
-    hasEmbeddedWallet: session.hasEmbeddedWallet,
-  };
-
-  if (!visible) {
-    decided.current = false;
-  } else if (!decided.current && session.privyReady) {
-    decided.current = true;
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  } else if (
-    visible
-    && decided.current
-    && session.linked
-    && flow.linked !== session.linked
-    && (flow.step.kind === 'entry' || flow.step.kind === 'fail_setup')
-  ) {
-    // The session can land a moment after the sheet opens. Show the connected
-    // sheet once it does, instead of leaving the user on the email form.
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  }
-
-  const dispatch = useCallback((event: ConnectFlowEvent) => {
-    setFlow((current) => reduceConnectFlow(current, event));
-  }, []);
-
-  return { flow: display, dispatch, deciding: visible && !session.privyReady };
-}
+import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
 
 export function ConnectionSheet({
   visible,
