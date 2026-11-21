@@ -6,6 +6,13 @@
  * upstream · Relay 500 gives 502 · the key is sent in the header and appears
  * in no response and no log line — plus the quote-adjacent Done-means cases:
  * a missing key gives 503 and a Relay timeout or unusable answer gives 502.
+ *
+ * #747 adds the status polling route on the same factory and extends this
+ * file, as that issue's Tests section names them: each of the eight Relay
+ * statuses maps to the right shared state · an unknown id answers a
+ * pending-style "not found yet" with `notFound: true` · a Relay error, an
+ * unusable answer or a timeout gives 502 · a non-hex request id gives 400
+ * before anything is sent upstream.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -114,7 +121,8 @@ function createRelayStub(initial: Partial<RelayState> = {}) {
     calls.push({
       url,
       headers: Object.fromEntries(new Headers(init?.headers).entries()),
-      body: JSON.parse(String(init?.body) ?? 'null'),
+      // GET status calls (#747) carry no body (null); quote calls carry JSON.
+      body: init?.body === undefined ? null : JSON.parse(String(init.body)),
     })
     if (state.rejectName) {
       throw Object.assign(new Error(state.rejectName === 'AbortError' ? 'aborted' : 'network down'), { name: state.rejectName })
@@ -361,4 +369,137 @@ test('requests rate limit per identity with the rpc pattern', async () => {
   const retryAfter = Number(second.headers.get('retry-after'))
   assert.ok(Number.isInteger(retryAfter) && retryAfter >= 1 && retryAfter <= 60, `retry-after must be seconds 1..60, was ${retryAfter}`)
   assert.equal(stub.calls.length, 1)
+})
+
+// #747: Relay status polling on the same factory. The payloads below are the
+// #724 spike's live shapes — only `status`, `txHashes` and `refundFailReason`
+// are read; nothing else in Relay's body reaches the response.
+
+function relayStatusFixture(status: string, extras: Record<string, unknown> = {}): Record<string, unknown> {
+  return { status, ...extras }
+}
+
+async function getStatus(app: InstanceType<typeof Hono>, requestId: string): Promise<Response> {
+  return app.request(`/wallet/move/status/${requestId}`)
+}
+
+test('each of the eight Relay statuses maps to the right shared state, finals and details', async () => {
+  const stub = createRelayStub()
+  const app = appFor(stub)
+  const cases: { name: string; status: string; extras: Record<string, unknown>; expected: Record<string, unknown> }[] = [
+    {
+      name: 'waiting (the spike live shape)', status: 'waiting', extras: { quoteCreatedAt: 1795268589460 },
+      expected: { requestId: REQUEST_ID, state: 'pending', relayStatus: 'waiting', final: false, txHashes: [] },
+    },
+    {
+      name: 'depositing', status: 'depositing', extras: {},
+      expected: { requestId: REQUEST_ID, state: 'pending', relayStatus: 'depositing', final: false, txHashes: [] },
+    },
+    {
+      name: 'pending', status: 'pending', extras: {},
+      expected: { requestId: REQUEST_ID, state: 'pending', relayStatus: 'pending', final: false, txHashes: [] },
+    },
+    {
+      name: 'submitted', status: 'submitted', extras: {},
+      expected: { requestId: REQUEST_ID, state: 'pending', relayStatus: 'submitted', final: false, txHashes: [] },
+    },
+    {
+      name: 'success carries the fill hashes', status: 'success', extras: { txHashes: ['0xdestinationfill747'] },
+      expected: { requestId: REQUEST_ID, state: 'done', relayStatus: 'success', final: true, txHashes: ['0xdestinationfill747'] },
+    },
+    {
+      name: 'failure stays pending', status: 'failure', extras: {},
+      expected: { requestId: REQUEST_ID, state: 'pending', relayStatus: 'failure', final: false, txHashes: [] },
+    },
+    {
+      name: 'failure with a failed refund is final', status: 'failure', extras: { refundFailReason: 'the refund transfer failed' },
+      expected: {
+        requestId: REQUEST_ID, state: 'failed', relayStatus: 'failure', final: true, txHashes: [],
+        refundFailReason: 'the refund transfer failed',
+      },
+    },
+    {
+      name: 'refund (the spike live shape)', status: 'refund', extras: { revertReason: null },
+      expected: { requestId: REQUEST_ID, state: 'failed', relayStatus: 'refund', final: true, txHashes: [] },
+    },
+  ]
+  for (const item of cases) {
+    stub.state.payload = relayStatusFixture(item.status, item.extras)
+    const response = await getStatus(app, REQUEST_ID)
+    assert.equal(response.status, 200, item.name)
+    assert.deepEqual(JSON.parse(await response.text()), item.expected, item.name)
+  }
+  // Upstream shape, checked on the first call of the run: GET the status URL
+  // with the id as the param, the key only in the header, no request body.
+  assert.equal(stub.calls.length, cases.length)
+  const call = stub.calls[0]!
+  assert.equal(String(call.url), `https://api.relay.link/intents/status/v3?requestId=${REQUEST_ID}`)
+  assert.equal(call.body, null)
+  assert.equal(call.headers['x-api-key'], KEY)
+  // A hashes line Relay does not report as an array of strings stays empty.
+  stub.state.payload = relayStatusFixture('success', { txHashes: 'not-an-array' })
+  const noHashesResponse = await getStatus(app, REQUEST_ID)
+  assert.equal(noHashesResponse.status, 200)
+  const noHashesBody = await noHashesResponse.json() as { txHashes: string[] }
+  assert.deepEqual(noHashesBody.txHashes, [])
+})
+
+test('an unknown id answers a pending-style "not found yet" with notFound, not an error', async () => {
+  const stub = createRelayStub({ payload: relayStatusFixture('unknown', { revertReason: null }) })
+  const response = await getStatus(appFor(stub), REQUEST_ID)
+  assert.equal(response.status, 200)
+  assert.deepEqual(JSON.parse(await response.text()), {
+    requestId: REQUEST_ID,
+    state: 'pending',
+    relayStatus: 'unknown',
+    final: false,
+    txHashes: [],
+    notFound: true,
+  })
+})
+
+test('a request id that is not a hex string gives 400 and never calls Relay', async () => {
+  const stub = createRelayStub({ payload: relayStatusFixture('pending') })
+  for (const requestId of ['not-hex', '0xzz', '0x', 'X123', '0x--']) {
+    const response = await getStatus(appFor(stub), requestId)
+    assert.equal(response.status, 400, requestId)
+    const json = await response.json() as { error: string; code: string }
+    assert.equal(json.code, 'INVALID_REQUEST_ID', requestId)
+    assert.equal(typeof json.error, 'string', requestId)
+  }
+  assert.equal(stub.calls.length, 0)
+})
+
+test('a Relay error, an unusable answer or a timeout gives 502 with nothing from Relay', async () => {
+  const cases: { name: string; initial: Partial<RelayState>; forbidden?: string; expectCode: string }[] = [
+    { name: '500', initial: { status: 500, payload: { message: 'relay-status-secret-747', error: 'boom' } }, forbidden: 'relay-status-secret-747', expectCode: 'UPSTREAM_FAILED' },
+    { name: 'not json', initial: { status: 200, rawBody: '<html>not json</html>' }, expectCode: 'UPSTREAM_INVALID' },
+    { name: 'no status word', initial: { status: 200, payload: { quoteCreatedAt: 1795268589460 } }, expectCode: 'UPSTREAM_INVALID' },
+    { name: 'a status outside the eight', initial: { status: 200, payload: { status: 'settled' } }, expectCode: 'UPSTREAM_INVALID' },
+    { name: 'timeout', initial: { rejectName: 'AbortError' }, expectCode: 'UPSTREAM_TIMEOUT' },
+    { name: 'unreachable', initial: { rejectName: 'TypeError' }, expectCode: 'UPSTREAM_UNAVAILABLE' },
+  ]
+  for (const item of cases) {
+    const stub = createRelayStub(item.initial)
+    const response = await getStatus(appFor(stub), REQUEST_ID)
+    const text = await response.text()
+    assert.equal(response.status, 502, item.name)
+    const json = JSON.parse(text) as { error: string; code: string }
+    assert.equal(json.code, item.expectCode, item.name)
+    assert.equal(typeof json.error, 'string', item.name)
+    assert.ok(!text.includes(KEY), `${item.name}: the Relay key leaked into the 502`)
+    if (item.forbidden) assert.ok(!text.includes(item.forbidden), `${item.name}: Relay's body leaked into the 502`)
+  }
+})
+
+test('a missing key returns 503 on the status route too and never calls Relay', async () => {
+  const stub = createRelayStub({ payload: relayStatusFixture('pending') })
+  const app = new Hono()
+  app.route('/wallet', createWalletMoveRoutes({ fetchImpl: stub.fetchImpl, timeoutMs: 20 }))
+  const response = await getStatus(app, REQUEST_ID)
+  assert.equal(response.status, 503)
+  const json = await response.json() as { error: string; code: string }
+  assert.equal(json.code, 'NOT_CONFIGURED')
+  assert.equal(typeof json.error, 'string')
+  assert.equal(stub.calls.length, 0)
 })

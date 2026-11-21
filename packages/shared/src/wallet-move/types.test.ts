@@ -80,7 +80,12 @@ const unknownButPending: WalletMoveStatus = {
   relayStatus: 'unknown',
   final: false,
   txHashes: [],
+  // Relay does not know this id yet; the app stops polling after its own cap.
+  notFound: true,
 }
+// @ts-expect-error `notFound` is boolean
+const numericNotFound: WalletMoveStatus = { ...unknownButPending, notFound: 1 }
+void numericNotFound
 
 // The eight Relay status values are exactly these.
 const relayStatuses: WalletMoveRelayStatus[] = [
@@ -145,6 +150,7 @@ function testSpikeFactsAreExpressible(): void {
   assert.equal(refunded.final, true)
   assert.equal(failedRefund.final, true)
   assert.equal(unknownButPending.final, false)
+  assert.equal(unknownButPending.notFound, true)
   // Quote results are the two tagged arms only.
   assert.deepEqual(quoted, { result: 'quoted', quote })
   assert.equal(notSupported.result, 'route_not_supported')

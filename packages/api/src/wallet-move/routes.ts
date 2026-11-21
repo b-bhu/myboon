@@ -16,6 +16,20 @@
  * timeout is 502 with a short message of our words and nothing from Relay's
  * body. A missing RELAY_API_KEY is 503.
  *
+ * GET /wallet/move/status/:requestId (#747): the app polls a Move it
+ * submitted. This API asks Relay's `GET /intents/status/v3?requestId` with
+ * the same key header and maps the answer onto the shared
+ * `WalletMoveState`: waiting, depositing, pending and submitted are
+ * `pending`; success is `done` and refund is `failed`, and those two are
+ * Relay's only finals; failure rides as `pending` — it can go back to
+ * pending — until it carries `refundFailReason` (Relay's last refund
+ * attempt failed), then it is `failed` and final. Relay's `unknown` answer
+ * is not an error: the mapped answer is `pending` with `notFound: true`,
+ * so the app can stop polling a wrong id after its own cap. A request id
+ * that is not a hex string is 400 before anything is sent upstream; a
+ * Relay error or an unmapped status word is 502, again with nothing from
+ * Relay's body. A missing key is 503.
+ *
  * The key is never logged and never returned: it is written to exactly one
  * place, the upstream `x-api-key` request header, and no upstream body or
  * message is ever echoed or logged.
@@ -31,9 +45,13 @@ import type {
   WalletMoveQuoteFees,
   WalletMoveQuoteLeg,
   WalletMoveQuoteResult,
+  WalletMoveRelayStatus,
+  WalletMoveState,
+  WalletMoveStatus,
 } from '@myboon/shared/wallet-move'
 
 const RELAY_QUOTE_URL = 'https://api.relay.link/quote/v2'
+const RELAY_STATUS_URL = 'https://api.relay.link/intents/status/v3'
 // Launch scope (#746, wiki Move findings): Move launches on Solana and Base.
 const SOLANA_CHAIN_ID = 792703809
 const LAUNCH_CHAIN_IDS = new Set([SOLANA_CHAIN_ID, 8453])
@@ -44,6 +62,19 @@ const DEFAULT_TIMEOUT_MS = 12_000
 // explicit recipientAddress on the chain it lands on.
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/
+
+// Relay's `requestId` is a hex string — the quote answers `0x` + hex digits
+// (#724 spike) — so status polling validates the same before anything is
+// sent upstream. A non-matching id is 400; an id Relay does not know comes
+// back `unknown` and polls as a pending-style "not found yet" (#747).
+const RELAY_REQUEST_ID_PATTERN = /^(0x)?[0-9a-fA-F]+$/
+// The eight Relay status words and Relay's two finals (#724 spike; the
+// contract lives in @myboon/shared/wallet-move). `failure` retries unless
+// it carries `refundFailReason` — the last refund attempt failed.
+const RELAY_STATUSES: readonly string[] = [
+  'waiting', 'depositing', 'pending', 'submitted', 'success', 'failure', 'refund', 'unknown',
+]
+const FINAL_RELAY_STATUSES = new Set(['success', 'refund'])
 
 export type WalletMoveRateLimiter = {
   consume: (identity: string, cost: number) => { ok: boolean; retryAfterSeconds: number }
@@ -284,6 +315,61 @@ export function mapRelayQuote(payload: unknown): WalletMoveQuoteResult | null {
   return { result: 'quoted', quote }
 }
 
+/**
+ * Maps Relay's `GET /intents/status/v3` answer onto the shared
+ * `WalletMoveStatus`, echoing the route's `requestId`. Returns null when the
+ * answer cannot be used — no `status` word, or one outside the eight — so
+ * the route answers 502 with nothing from Relay's body, the same contract
+ * as `mapRelayQuote`. The hashes and the refund-failure reason ride through
+ * only when Relay reports them as strings; everything else is ignored.
+ */
+export function mapRelayStatus(payload: unknown, requestId: string): WalletMoveStatus | null {
+  if (!isRecord(payload)) return null
+  const rawStatus = payload.status
+  if (typeof rawStatus !== 'string' || !RELAY_STATUSES.includes(rawStatus)) return null
+  const relayStatus = rawStatus as WalletMoveRelayStatus
+  const refundFailReason = typeof payload.refundFailReason === 'string' && payload.refundFailReason !== ''
+    ? payload.refundFailReason
+    : null
+  let state: WalletMoveState
+  let final: boolean
+  switch (rawStatus) {
+    case 'success':
+      state = 'done'
+      final = true
+      break
+    case 'refund':
+      // Funds went back to the source: nothing left to retry.
+      state = 'failed'
+      final = true
+      break
+    case 'failure':
+      // Relay's failure can go back to pending (retry). It ends the move
+      // only when the last refund attempt failed.
+      state = refundFailReason !== null ? 'failed' : 'pending'
+      final = refundFailReason !== null
+      break
+    default:
+      // waiting, depositing, pending, submitted and unknown: the move can
+      // still land. `unknown` polls as a pending-style "not found yet".
+      state = 'pending'
+      final = false
+  }
+  const txHashes = Array.isArray(payload.txHashes) && payload.txHashes.every((hash) => typeof hash === 'string')
+    ? (payload.txHashes as string[])
+    : []
+  const status: WalletMoveStatus = {
+    requestId,
+    state,
+    relayStatus,
+    final,
+    txHashes,
+  }
+  if (rawStatus === 'failure' && refundFailReason !== null) status.refundFailReason = refundFailReason
+  if (rawStatus === 'unknown') status.notFound = true
+  return status
+}
+
 export function createWalletMoveRoutes(options: {
   relayApiKey?: string
   fetchImpl?: WalletMoveFetch
@@ -296,6 +382,10 @@ export function createWalletMoveRoutes(options: {
   const identityFor = (c: Context) => identityFromContext(c, options.trustForwardedHeaders === true)
   const notConfigured: WalletMoveRoutesError = {
     error: 'Move quotes are not available: the server is not configured.',
+    code: 'NOT_CONFIGURED',
+  }
+  const statusNotConfigured: WalletMoveRoutesError = {
+    error: 'Move status is not available: the server is not configured.',
     code: 'NOT_CONFIGURED',
   }
 
@@ -375,6 +465,69 @@ export function createWalletMoveRoutes(options: {
       const timedOut = error instanceof Error && error.name === 'AbortError'
       return c.json({
         error: timedOut ? 'Relay took too long to price this move.' : 'Relay could not be reached.',
+        code: timedOut ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_UNAVAILABLE',
+      }, 502)
+    } finally {
+      timeout.cancel()
+    }
+  })
+
+  routes.get('/move/status/:requestId', async (c) => {
+    // The key's absence is degraded mode (#782), not an error of the request.
+    if (!options.relayApiKey) return c.json(statusNotConfigured, 503)
+
+    const requestId = c.req.param('requestId')
+    if (!RELAY_REQUEST_ID_PATTERN.test(requestId)) {
+      return c.json({ error: 'The request id must be a hex string.', code: 'INVALID_REQUEST_ID' }, 400)
+    }
+
+    const quota = limiter.consume(identityFor(c), 1)
+    if (!quota.ok) {
+      return c.json(
+        { error: 'Move status rate limit exceeded. Try again shortly.', code: 'RATE_LIMITED' },
+        429,
+        { 'Retry-After': String(quota.retryAfterSeconds) },
+      )
+    }
+
+    const timeout = abortAfter(options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    try {
+      const upstream = await (options.fetchImpl ?? fetch)(
+        `${RELAY_STATUS_URL}?requestId=${encodeURIComponent(requestId)}`,
+        {
+          method: 'GET',
+          headers: {
+            accept: 'application/json',
+            // The key lives in exactly this header and nowhere else (D55).
+            'x-api-key': options.relayApiKey,
+          },
+          signal: timeout.signal,
+        },
+      )
+      if (!upstream.ok) {
+        return c.json(
+          { error: 'Relay could not report this move right now. Try again shortly.', code: 'UPSTREAM_FAILED' },
+          502,
+        )
+      }
+      let statusPayload: unknown
+      try {
+        statusPayload = JSON.parse(await upstream.text())
+      } catch {
+        statusPayload = null
+      }
+      const mapped = statusPayload === null ? null : mapRelayStatus(statusPayload, requestId)
+      if (mapped === null) {
+        return c.json(
+          { error: 'Relay returned a status this API cannot use. Try again shortly.', code: 'UPSTREAM_INVALID' },
+          502,
+        )
+      }
+      return c.json(mapped)
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'AbortError'
+      return c.json({
+        error: timedOut ? 'Relay took too long to report this move.' : 'Relay could not be reached.',
         code: timedOut ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_UNAVAILABLE',
       }, 502)
     } finally {
