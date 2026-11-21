@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 import type { WalletSummary } from '@myboon/shared/wallet-summary'
-import type { WalletVenue } from './service.js'
+import { unavailableApp, type WalletVenue } from './service.js'
 
 // These modules read no env vars and make no upstream calls (every venue is
 // a stub this issue), so no env setup or globalThis.fetch mock is needed —
@@ -89,6 +89,87 @@ test('GET /wallet/summary still answers when one venue throws', async () => {
     // Rule: log detail carries the [api] prefix, wire stays short.
     assert.equal(consoleErrors.length, 1)
     assert.match(consoleErrors[0], /\[api\] wallet-summary phoenix failed:.*phoenix upstream 503/)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('a second call inside 15 seconds does not call upstream, and same-key calls share one fetch', async () => {
+  const clock = { ms: 0 }
+  const calls: string[] = []
+  const venues: WalletVenue[] = [{
+    id: 'spot',
+    fetch: async (ctx) => { calls.push(ctx.solana ?? ''); return unavailableApp() },
+  }]
+  const service = createWalletSummaryService({ venues, now: () => new Date(clock.ms) })
+
+  // Two requests for the same key at the same time share one fetch.
+  const [first, shared] = await Promise.all([
+    service.getSummary({ solana: SOL, evm: null }),
+    service.getSummary({ solana: SOL, evm: null }),
+  ])
+  assert.equal(calls.length, 1)
+  assert.equal(shared.fetchedAt, first.fetchedAt)
+  // The whole summary is cached: a repeat inside the 15s TTL is the stored
+  // response (same fetchedAt), not a refetch.
+  const second = await service.getSummary({ solana: SOL, evm: null })
+  assert.equal(calls.length, 1)
+  assert.equal(second.fetchedAt, first.fetchedAt)
+  // Keyed by both addresses: the other address pair is its own entry.
+  await service.getSummary({ solana: SOL, evm: EVM })
+  assert.equal(calls.length, 2)
+  // After 15 seconds the entry has expired and the upstream is called again.
+  clock.ms = 15_001
+  await service.getSummary({ solana: SOL, evm: null })
+  assert.equal(calls.length, 3)
+})
+
+test('the 501st key evicts the oldest cache entry', async () => {
+  const hits = new Map<string, number>()
+  const venues: WalletVenue[] = [{
+    id: 'spot',
+    fetch: async (ctx) => {
+      const key = ctx.solana ?? ''
+      hits.set(key, (hits.get(key) ?? 0) + 1)
+      return unavailableApp()
+    },
+  }]
+  const service = createWalletSummaryService({ venues, now: () => new Date(0) })
+  const key = (index: number) => `address-${index}`
+
+  for (let index = 1; index <= 500; index++) await service.getSummary({ solana: key(index), evm: null })
+  // The 501st key pushes the cache past its cap and drops the oldest entry.
+  await service.getSummary({ solana: key(501), evm: null })
+  // The next-oldest entry survived the eviction of key(1).
+  await service.getSummary({ solana: key(2), evm: null })
+  assert.equal(hits.get(key(2)), 1)
+  // The evicted oldest is recomputed on its next request (and re-inserted
+  // as the newest, which evicts key(2) — not asserted here).
+  await service.getSummary({ solana: key(1), evm: null })
+  assert.equal(hits.get(key(1)), 2)
+})
+
+test('a slow app becomes unavailable and the others return', async () => {
+  const consoleErrors: string[] = []
+  const originalConsoleError = console.error
+  console.error = (...parts: unknown[]) => { consoleErrors.push(parts.map(String).join(' ')) }
+  try {
+    const venues: WalletVenue[] = [
+      { id: 'phoenix', fetch: () => new Promise<never>(() => {}) }, // slower than any real deadline
+      { id: 'spot', fetch: async () => ({ status: 'unavailable', valueUsd: null, summary: null, error: 'spot answered' }) },
+    ]
+    const service = createWalletSummaryService({ venues, now: () => new Date(0), timeoutMs: 20 })
+    const response = await app(service).request(`/wallet/summary?solana=${SOL}&evm=${EVM}`)
+    assert.equal(response.status, 200)
+    const body = await response.json() as WalletSummary
+    // The timed-out app is the only `unavailable` slot; the others returned.
+    assert.deepEqual(body.apps.phoenix, unavailable)
+    assert.equal(body.apps.spot.error, 'spot answered')
+    // Apps absent from the injected registry list stay the seeded stub.
+    assert.deepEqual(body.apps.pacifica, unavailable)
+    // Rule: log detail carries the [api] prefix, wire stays short.
+    assert.equal(consoleErrors.length, 1)
+    assert.match(consoleErrors[0], /\[api\] wallet-summary phoenix failed:.*timed out/)
   } finally {
     console.error = originalConsoleError
   }
