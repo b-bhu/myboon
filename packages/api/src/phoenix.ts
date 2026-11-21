@@ -1548,6 +1548,70 @@ function safeJsonParse(input: string): unknown {
   }
 }
 
+export type PhoenixTraderStatePayload = {
+  venueId: 'phoenix'
+  action: 'get_trader_state'
+  authority: string
+  pdaIndex: number
+  slot: number | null
+  slotIndex: number | null
+  traders: unknown[]
+  triggerSource: 'v1' | 'legacy'
+  raw: { legacy: unknown; v1: unknown }
+}
+
+export type PhoenixTraderStateResponse =
+  | { status: 200; body: PhoenixTraderStatePayload }
+  | { status: 400 | 404 | 409 | 422 | 429 | 502 | 504; body: { error: string; code?: string; upstreamStatus?: number } }
+
+// Serves GET /perps/phoenix/trader/:authority/state?pdaIndex=0 and lets the wallet summary call the same
+// logic directly. Returns exactly the status + JSON body the route used to build inline, error mapping unchanged.
+export async function getPhoenixTraderState(
+  authority: string | null | undefined,
+  pdaIndexQuery: string | null | undefined,
+): Promise<PhoenixTraderStateResponse> {
+  if (!authority) return { status: 400, body: { error: 'Missing or invalid authority' } }
+
+  const pdaIndex = parseNonNegativeInteger(pdaIndexQuery ?? '0')
+  if (pdaIndex === null) {
+    return { status: 400, body: { error: 'Invalid pdaIndex', code: 'INVALID_PDA_INDEX' } }
+  }
+
+  const params = new URLSearchParams({ pdaIndex: String(pdaIndex) })
+  try {
+    const [raw, v1Raw] = await Promise.all([
+      phoenixFetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/state?${params.toString()}`),
+      getPhoenixTraderStateV1(authority, pdaIndex),
+    ])
+    const rawRecord = asRecord(raw)
+    const v1Record = asRecord(v1Raw)
+    const merged = mergePhoenixTraderState(raw, v1Raw)
+    return {
+      status: 200,
+      body: {
+        venueId: 'phoenix',
+        action: 'get_trader_state',
+        authority,
+        pdaIndex,
+        slot: parseNullableInt(v1Record?.slot) ?? parseNullableInt(rawRecord?.slot),
+        slotIndex: parseNullableInt(v1Record?.slotIndex) ?? parseNullableInt(rawRecord?.slotIndex),
+        traders: merged.traders,
+        triggerSource: merged.triggerSource,
+        raw: {
+          legacy: raw,
+          v1: v1Raw,
+        },
+      },
+    }
+  } catch (err) {
+    console.error(`[api] Phoenix trader state ${authority} unavailable:`, err instanceof Error ? err.message : err)
+    return {
+      status: upstreamProxyStatusCode(err),
+      body: upstreamErrorPayload(err, 'Phoenix trader state unavailable'),
+    }
+  }
+}
+
 export const phoenixRoutes = new Hono()
 
 // GET /perps/phoenix/health
@@ -1617,41 +1681,11 @@ phoenixRoutes.get('/markets/:symbol', async (c) => {
 
 // GET /perps/phoenix/trader/:authority/state?pdaIndex=0
 phoenixRoutes.get('/trader/:authority/state', async (c) => {
-  const authority = asNonEmptyString(c.req.param('authority'))
-  if (!authority) return c.json({ error: 'Missing or invalid authority' }, 400)
-
-  const pdaIndex = parseNonNegativeInteger(c.req.query('pdaIndex') ?? '0')
-  if (pdaIndex === null) {
-    return c.json({ error: 'Invalid pdaIndex', code: 'INVALID_PDA_INDEX' }, 400)
-  }
-
-  const params = new URLSearchParams({ pdaIndex: String(pdaIndex) })
-  try {
-    const [raw, v1Raw] = await Promise.all([
-      phoenixFetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/state?${params.toString()}`),
-      getPhoenixTraderStateV1(authority, pdaIndex),
-    ])
-    const rawRecord = asRecord(raw)
-    const v1Record = asRecord(v1Raw)
-    const merged = mergePhoenixTraderState(raw, v1Raw)
-    return c.json({
-      venueId: 'phoenix',
-      action: 'get_trader_state',
-      authority,
-      pdaIndex,
-      slot: parseNullableInt(v1Record?.slot) ?? parseNullableInt(rawRecord?.slot),
-      slotIndex: parseNullableInt(v1Record?.slotIndex) ?? parseNullableInt(rawRecord?.slotIndex),
-      traders: merged.traders,
-      triggerSource: merged.triggerSource,
-      raw: {
-        legacy: raw,
-        v1: v1Raw,
-      },
-    })
-  } catch (err) {
-    console.error(`[api] Phoenix trader state ${authority} unavailable:`, err instanceof Error ? err.message : err)
-    return c.json(upstreamErrorPayload(err, 'Phoenix trader state unavailable'), upstreamProxyStatusCode(err))
-  }
+  const result = await getPhoenixTraderState(
+    asNonEmptyString(c.req.param('authority')),
+    c.req.query('pdaIndex'),
+  )
+  return c.json(result.body, result.status)
 })
 
 // GET /perps/phoenix/trader/:authority/order-history?traderPdaIndex=0&limit=50
