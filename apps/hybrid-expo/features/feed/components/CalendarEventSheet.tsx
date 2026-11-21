@@ -25,6 +25,15 @@ export function eventFigureSummary(event: CalendarEvent): string {
   return `${figure.label === 'Consensus' ? 'Est' : figure.label} ${figure.value}`;
 }
 
+/**
+ * Reserved column widths of the Last-3-times table (#711): Date and Result
+ * get the width their values need — 50.58px for '12 Sept', 86.7px for
+ * '3.7% vs 3.6%' and '254k vs 180k' in 12px mono — and the market columns
+ * share the rest, so a Result cell never wraps or ellipsizes at 360.
+ */
+const TABLE_DATE_BASIS = 52;
+const TABLE_RESULT_BASIS = 90;
+
 interface CalendarEventSheetProps {
   event: CalendarEvent | null;
   onClose: () => void;
@@ -94,15 +103,24 @@ function EventHistoryTable({ history, unit }: { history: CalendarHistoryResponse
       <Text style={styles.reactionHeading}>LAST 3 TIMES · 24H MOVE</Text>
       <View style={styles.tableRow}>
         {historyTableColumns(history).map((head) => (
-          <Text key={head} style={[styles.tableHeadCell, head === 'Result' && styles.tableHeadCellWide]}>
+          <Text
+            key={head}
+            style={[
+              styles.tableHeadCell,
+              head === 'Date' && styles.tableColDate,
+              head === 'Result' && styles.tableColResult,
+            ]}
+          >
             {head}
           </Text>
         ))}
       </View>
       {rows.map((row) => (
         <View key={row.key} accessible accessibilityLabel={row.spoken} style={styles.tableRow}>
-          <Text style={styles.tableCell}>{row.date}</Text>
-          <Text style={[styles.tableCell, styles.tableHeadCellWide]}>{row.result}</Text>
+          <Text style={[styles.tableCell, styles.tableColDate]}>{row.date}</Text>
+          <Text numberOfLines={1} style={[styles.tableCell, styles.tableColResult]}>
+            {row.result}
+          </Text>
           {row.moves.map((move) => (
             <Text key={move.symbol} style={[styles.tableCell, historyMoveColor(move.dir)]}>
               {move.text}
@@ -201,8 +219,17 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     flex: 1,
   },
-  tableHeadCellWide: {
-    flex: 1.6,
+  // Date and Result reserve the width the row values need; the market cells
+  // keep flex: 1 and share the rest (#711; Table basis constants above).
+  tableColDate: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: TABLE_DATE_BASIS,
+  },
+  tableColResult: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: TABLE_RESULT_BASIS,
   },
   tableCell: {
     flex: 1,

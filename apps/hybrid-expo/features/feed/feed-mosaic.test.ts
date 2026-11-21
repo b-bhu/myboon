@@ -10,6 +10,7 @@ import {
   pricedMarkets,
   rankStories,
   shownMarket,
+  tileShowsArrow,
   topicMarket,
 } from './feed-mosaic';
 import type { StorySummary } from './feed.types';
@@ -178,6 +179,24 @@ test('formatTileMove colours one-decimal moves and dims a 0.0 move', () => {
   assert.deepEqual(formatTileMove(-0.61), { text: '-0.6%', tone: 'down' });
   assert.deepEqual(formatTileMove(0.04), { text: '0.0%', tone: 'dim' });
   assert.deepEqual(formatTileMove(-0.04), { text: '0.0%', tone: 'dim' });
+});
+
+test('tileShowsArrow gives the corner arrow to lead and wide tiles, never slim (#711)', () => {
+  const up = formatTileMove(2.84);
+  const down = formatTileMove(-0.61);
+  const dim = formatTileMove(0.04);
+  // Slim tiles: the colour and sign carry the direction alone.
+  assert.equal(tileShowsArrow(up, 'slim'), false);
+  assert.equal(tileShowsArrow(down, 'slim'), false);
+  assert.equal(tileShowsArrow(dim, 'slim'), false);
+  // Lead and wide tiles keep the corner arrow for a priced move.
+  assert.equal(tileShowsArrow(up, 'large'), true);
+  assert.equal(tileShowsArrow(down, 'tall'), true);
+  assert.equal(tileShowsArrow(up, 'wide'), true);
+  // A dim move shows no arrow on any tile, and no move means no arrow.
+  assert.equal(tileShowsArrow(dim, 'large'), false);
+  assert.equal(tileShowsArrow(null, 'wide'), false);
+  assert.equal(tileShowsArrow(null, 'slim'), false);
 });
 
 test('pickDetailMarket opens the market param tab, else rank 1', () => {

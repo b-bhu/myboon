@@ -11,6 +11,7 @@ import {
   formatTileMove,
   mosaicPages,
   shownMarket,
+  tileShowsArrow,
   type MosaicTileKind,
   type TileMove,
 } from '../feed-mosaic';
@@ -24,6 +25,13 @@ const GAP = 8;
 const ROTATE_MS = 4000;
 /** Crossfade of the market slot when the tile switches market. */
 const SLOT_FADE_MS = 250;
+
+/**
+ * Reserved width for a slim tile's move (#711): six mono glyphs ('-10.6%',
+ * '-9.42%') measure 39.75px at 11px, so 42 keeps every one-decimal move whole
+ * inside the tile's padding room at a 360-wide phone.
+ */
+const SLIM_MOVE_MIN_WIDTH = 42;
 
 interface TopicMosaicProps {
   stories: StorySummary[];
@@ -229,9 +237,9 @@ function TopicTile({
   const age = storyAge(story.updatedAt, now).replace(' ago', '');
   const move = shown && shown.change24hPct !== null ? formatTileMove(shown.change24hPct) : null;
   const arrow = move && move.tone !== 'dim' ? move.tone : null;
-  // Slim tiles already show the direction through the move's sign, and their
-  // corner space is claimed by the title (360×640 check).
-  const showArrow = arrow !== null && kind !== 'slim';
+  // Slim tiles show the direction through the move's sign and colour: their
+  // corner space is claimed by the title (360×640 check, #711).
+  const showArrow = tileShowsArrow(move, kind);
 
   // The market slot (label, sparkline, move, arrow) crossfades on rotation;
   // title, count and size never move.
@@ -311,14 +319,12 @@ function TopicTile({
                   {shown.displaySymbol} <Text style={[styles.moveText, tileMoveColour(move)]}>{move?.text}</Text>
                 </Text>
               ) : (
-                // Slim: one un-nested text in the move's own colour, with room
-                // beyond the padding and shrink-to-fit, so the move is never
-                // cut off on one grid cell (360×640 check).
+                // Slim: one un-nested text in the move's own colour inside a
+                // reserved minimum width — shrink-to-fit never fired on web
+                // and a 1px overflow ellipsized '-9.7%' to '-9. …' (#711).
                 <Text
                   style={[styles.moveLabel, styles.moveLabelSlim, tileMoveColour(move)]}
                   numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.85}
                 >
                   {move?.text}
                 </Text>
@@ -420,9 +426,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.4,
   },
-  // No letter spacing on the slim move, and a little room beyond the slim
-  // tile's padding, so the widest one-decimal move ("-10.7%") still fits.
-  moveLabelSlim: { letterSpacing: 0, marginHorizontal: -4 },
+  // No letter spacing on the slim move, a little room beyond the slim tile's
+  // 6px padding, and a reserved minimum width so the widest one-decimal move
+  // ('-10.6%') is never cut off at 360 (#711; SLIM_MOVE_MIN_WIDTH).
+  moveLabelSlim: { letterSpacing: 0, marginHorizontal: -4, minWidth: SLIM_MOVE_MIN_WIDTH },
   moveText: { fontWeight: '600' },
   meta: {
     color: FEED_TOKENS.colors.textDim,
