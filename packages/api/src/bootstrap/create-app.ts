@@ -25,6 +25,8 @@ import {
   UpDownPriceService,
 } from '../polymarket/read/updown-prices.js'
 import { spotRoutes } from '../spot.js'
+import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
+import { createWalletSummaryService } from '../wallet-summary/service.js'
 import { createHyperliquidPrices } from '../hyperliquid.js'
 import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
 import { createStoryRoutes } from '../stories.js'
@@ -166,6 +168,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)
+  app.route('/wallet', createWalletSummaryRoutes({ service: createWalletSummaryService() }))
   app.route('/rpc', createRpcRoutes({
     solanaRpcUrl: config.solanaRpcUrl ?? 'https://api.mainnet-beta.solana.com',
     solanaDevnetRpcUrl: config.solanaDevnetRpcUrl ?? 'https://api.devnet.solana.com',
