@@ -11,7 +11,8 @@
  * the same `redeemPosition` + `redeemErrors` path; cash-out through the
  * unchanged `CashOutConfirmModal` → `placeBet` SELL flow. A position tap opens
  * the market detail as before, with Cash out as the row's venue action.
- * No new execution path.
+ * No new execution path. Data, account-setup and cash-out state machines live
+ * in the hooks under `features/portfolio/polymarket/` (#738).
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -31,52 +32,38 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 
 import { AppTopBar, AppTopBarIconButton } from '@/components/AppTopBar';
 import { DepositModal } from '@/components/polymarket/DepositModal';
 import { CashOutConfirmModal } from '@/features/polymarket/components/CashOutConfirmModal';
 import { WithdrawModal } from '@/components/polymarket/WithdrawModal';
-import { cancelOrder, fetchClobBalance, fetchOpenOrders, fetchPortfolio, placeBet, redeemPosition } from '@/features/polymarket/polymarket.api';
-import type { PortfolioPosition } from '@/features/polymarket/polymarket.api';
 import { getPolymarketMarketHref } from '@/features/polymarket/polymarket.navigation';
 import { truncateUsd } from '@/features/polymarket/formatPolymarketMoney';
 import {
   buildPolymarketActivityItems,
 } from '@/features/polymarket/polymarketActivityState';
 import { usePositionSellQuotes } from '@/features/polymarket/positionSellQuotes';
-import { formatRedeemError, logRedeemError } from '@/features/polymarket/redeemErrors';
 import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
-import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
-import {
-  applyPolymarketUserEvent,
-  isPolymarketTradeEvent,
-  usePolymarketUserStream,
-} from '@/features/polymarket/usePolymarketUserStream';
 import { usePolymarketQuickAmounts } from '@/features/polymarket/usePolymarketQuickAmounts';
-import {
-  getPolymarketProfileAccountState,
-  getPolymarketProfileSetupCopy,
-} from '@/features/polymarket/portfolio/profile-state';
-import { APPROX_TOTAL_NOTE, formatApproxTotal } from '@/features/polymarket/portfolio/portfolio-totals';
-import { usePolymarketProfileStore } from '@/features/polymarket/portfolio/profile-store';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
-import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';
+import { APPROX_TOTAL_NOTE, formatApproxTotal } from '@/features/polymarket/portfolio/portfolio-totals';
 import {
   fetchUsdToInrRate,
   formatProfileCurrency,
   maskEmail,
   POLYMARKET_PROFILE_CURRENCY_KEY,
   POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
-  positionKey,
   truncate,
-  type ConnectionIntent,
   type PolymarketProfileCurrency,
   type PolymarketSettingsView,
 } from '@/features/portfolio/polymarket/polymarket.format';
+import { usePolymarketPortfolioData } from '@/features/portfolio/polymarket/usePolymarketPortfolioData';
+import { usePolymarketAccountSetup } from '@/features/portfolio/polymarket/usePolymarketAccountSetup';
+import { usePolymarketCashOut } from '@/features/portfolio/polymarket/usePolymarketCashOut';
 import { styles } from '@/features/portfolio/polymarket/polymarket.portfolio.styles';
 import { derivePolymarketTotals } from '@/features/portfolio/polymarket/polymarket.totals';
 import { PolymarketIdentityHeader } from '@/features/portfolio/polymarket/PolymarketIdentityHeader';
@@ -103,41 +90,11 @@ export function PolymarketPortfolioScreen() {
     ? `${poly.signer.descriptor.address.toLowerCase()}:${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}`
     : 'disconnected';
   const { format: oddsFormat, setFormat: setOddsFormat } = useOddsFormat();
-  // Polymarket settles on Polygon, so its requirement is EVM.
-  const connectSheet = useConnectionSheet('evm');
-  const [connectionIntent, setConnectionIntent] = useState<ConnectionIntent>(null);
   const [busy, setBusy] = useState(false);
-  // Set when the connection sheet is opened to reach Polymarket setup, so the
-  // effect below can finish the job once a signer resolves. Without it a user
-  // who signs in here lands back on a screen with a wallet and no next step —
-  // the detail screens already do this; profile was the one that did not.
-  const [setupAfterConnect, setSetupAfterConnect] = useState(false);
-  // Set by the sheet's `onConnected` so the close handler can tell a successful
-  // connection from a cancellation — the sheet closes itself in both cases.
-  const connectedViaSheetRef = useRef(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const openWithdrawModal = useCallback(() => setWithdrawOpen(true), []);
 
-  // Account data belongs to the Polymarket profile domain, not this route
-  // instance. The shared wallet-scoped store survives navigation while still
-  // resetting whenever the active signer/deposit wallet changes.
-  const {
-    portfolio,
-    cashBalance,
-    openOrders,
-    portfolioLoading,
-    polymarketUnavailable,
-    activityFreshness,
-    hasLoaded: profileHasLoaded,
-    setPortfolio,
-    setCashBalance,
-    setOpenOrders,
-    setPortfolioLoading,
-    setPolymarketUnavailable,
-    setActivityFreshness,
-    markLoaded: markProfileLoaded,
-    reset: resetProfileStore,
-  } = usePolymarketProfileStore(walletScopedKey);
   const [refreshing, setRefreshing] = useState(false);
   const [usdToInrRate, setUsdToInrRate] = useState(POLYMARKET_PROFILE_FALLBACK_USD_TO_INR);
   const [currencyFormat, setCurrencyFormat] = useState<PolymarketProfileCurrency>('INR');
@@ -149,51 +106,9 @@ export function PolymarketPortfolioScreen() {
   const [quickAmountSaving, setQuickAmountSaving] = useState(false);
   const [signOutBusy, setSignOutBusy] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
-  const [cashOutPosition, setCashOutPosition] = useState<PortfolioPosition | null>(null);
-  const [cashOutSubmitting, setCashOutSubmitting] = useState(false);
-
-  const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const portfolioRefreshInFlight = useRef(false);
-  const ordersRefreshInFlight = useRef(false);
 
   const isEnabled = Boolean(poly.isReady && poly.polygonAddress);
-  // Two different questions, and the screen must not confuse them:
-  //   walletAddress      — the EVM wallet exists and can sign. Local, from Privy,
-  //                        available at app load. This is "connected".
-  //   poly.polygonAddress — the mobile SecureClient is authenticated and its
-  //                        SDK-resolved account is ready.
-  // Gating connection UI on polygonAddress showed "Connect wallet" to a user who
-  // already had a working wallet, with no control that advanced them.
-  const accountState = getPolymarketProfileAccountState({
-    signerStatus: poly.signerStatus,
-    isPrivyUser: privy.isPrivyUser,
-    hasSigner: walletAddress !== null,
-    polymarketReady: isEnabled,
-    polymarketLoading: poly.isLoading || busy,
-    sessionExpired: poly.sessionExpired,
-  });
-  const setupCopy = getPolymarketProfileSetupCopy(accountState);
-  const displayName = privy.identityName ?? portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : 'MyBoon account');
-  const maskedIdentity = maskEmail(privy.identityEmail);
-  const authLabel = privyAuthMethod === 'google'
-    ? 'Google'
-    : privyAuthMethod === 'email'
-      ? 'Email'
-      : privyAuthMethod === 'wallet'
-        ? 'Wallet'
-        : null;
-  const identitySubtitle = maskedIdentity
-    ? `${maskedIdentity}${authLabel ? ` · ${authLabel}` : ''}`
-    : authLabel
-      ? `Signed in with ${authLabel}`
-      : walletAddress
-        ? truncate(walletAddress, 4, 4)
-        : 'Not connected';
-  const walletScopedKeyRef = useRef(walletScopedKey);
-  const formatProfileMoney = useCallback(
-    (value: number | null | undefined) => formatProfileCurrency(value, currencyFormat, usdToInrRate),
-    [currencyFormat, usdToInrRate],
-  );
+  const dismissSettings = useCallback(() => setSettingsOpen(false), []);
 
   useEffect(() => {
     AsyncStorage.getItem(POLYMARKET_PROFILE_CURRENCY_KEY)
@@ -265,12 +180,73 @@ export function PolymarketPortfolioScreen() {
     };
   }, []);
 
-  const resetWalletScopedState = useCallback(() => {
-    resetProfileStore();
-    setCashOutPosition(null);
-    portfolioRefreshInFlight.current = false;
-    ordersRefreshInFlight.current = false;
-  }, [resetProfileStore]);
+  // Data, setup and cash-out live in hooks under features/portfolio/polymarket/
+  // (#738). The wallet-scope reset must also clear cash-out state owned by
+  // usePolymarketCashOut, so the screen bridges the two via a ref the cash-out
+  // hook fills below.
+  const clearCashOutPositionRef = useRef<() => void>(() => {});
+  const {
+    portfolio,
+    cashBalance,
+    openOrders,
+    portfolioLoading,
+    polymarketUnavailable,
+    activityFreshness,
+    realtimeStatus,
+    loadPortfolio,
+    resetWalletScopedState,
+    setOpenOrders,
+    setActivityFreshness,
+    setPolymarketUnavailable,
+  } = usePolymarketPortfolioData({
+    poly,
+    walletScopedKey,
+    isEnabled,
+    onWalletReset: () => clearCashOutPositionRef.current(),
+  });
+  const {
+    accountState,
+    setupCopy,
+    connectSheet,
+    handleConnectPolymarketAccount,
+    handleReconnect,
+    handleWithdrawPress,
+    handleSheetConnected,
+    handleSheetClose,
+  } = usePolymarketAccountSetup({
+    poly,
+    walletAddress,
+    isEnabled,
+    busy,
+    isPrivyUser: privy.isPrivyUser,
+    setBusy,
+    loadPortfolio,
+    setPolymarketUnavailable,
+    solanaAddress,
+    dismissSettings,
+    openWithdrawModal,
+  });
+
+  const displayName = privy.identityName ?? portfolio?.profile?.name ?? (walletAddress ? truncate(walletAddress) : 'MyBoon account');
+  const maskedIdentity = maskEmail(privy.identityEmail);
+  const authLabel = privyAuthMethod === 'google'
+    ? 'Google'
+    : privyAuthMethod === 'email'
+      ? 'Email'
+      : privyAuthMethod === 'wallet'
+        ? 'Wallet'
+        : null;
+  const identitySubtitle = maskedIdentity
+    ? `${maskedIdentity}${authLabel ? ` · ${authLabel}` : ''}`
+    : authLabel
+      ? `Signed in with ${authLabel}`
+      : walletAddress
+        ? truncate(walletAddress, 4, 4)
+        : 'Not connected';
+  const formatProfileMoney = useCallback(
+    (value: number | null | undefined) => formatProfileCurrency(value, currencyFormat, usdToInrRate),
+    [currencyFormat, usdToInrRate],
+  );
 
   const handleDisconnectPolymarket = useCallback(() => {
     Alert.alert(
@@ -303,336 +279,15 @@ export function PolymarketPortfolioScreen() {
     );
   }, [closeSettings, poly, resetWalletScopedState]);
 
-  useEffect(() => {
-    if (walletScopedKeyRef.current === walletScopedKey) return;
-    walletScopedKeyRef.current = walletScopedKey;
-    resetWalletScopedState();
-  }, [walletScopedKey, resetWalletScopedState]);
-
-  const handleCancel = useCallback(async (orderId: string) => {
-    if (!poly.client) return;
-    setCancellingId(orderId);
-    try {
-      const result = await cancelOrder(poly.client, orderId);
-      if (result.ok) {
-        setOpenOrders((prev) => prev.map((order) =>
-          order.id === orderId ? { ...order, status: 'cancel_requested' } : order
-        ));
-        void fetchOpenOrders(poly.client)
-          .then(setOpenOrders)
-          .catch(() => {
-            setActivityFreshness((previous) => ({
-              ...previous,
-              stale: true,
-              error: 'Could not refresh',
-            }));
-          });
-      } else {
-        Alert.alert('Cancel failed', result.error ?? 'Unknown error');
-      }
-    } catch {
-      Alert.alert('Cancel failed', 'Network error');
-    } finally {
-      setCancellingId(null);
-    }
-  }, [poly.client, setActivityFreshness, setOpenOrders]);
-
-  const loadPortfolio = useCallback(async () => {
-    if (!poly.polygonAddress || !poly.client) return;
-    const requestKey = walletScopedKeyRef.current;
-    setActivityFreshness((prev) => ({ ...prev, loading: true, error: null }));
-    const [portfolioResult, balanceResult, ordersResult] = await Promise.allSettled([
-      fetchPortfolio(poly.client),
-      fetchClobBalance(poly.client),
-      fetchOpenOrders(poly.client),
-    ]);
-    const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
-    const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
-    const ordersData = ordersResult.status === 'fulfilled' ? ordersResult.value : null;
-    if (walletScopedKeyRef.current !== requestKey) return;
-    if (portfolioData) setPortfolio(portfolioData);
-    // A missing balance is the only failure signal exposed by this CLOB read.
-    // Preserve the last known orders with it: a 401 or transient CLOB failure
-    // must not make positions appear to have vanished while reconnecting.
-    if (ordersData && balanceData) setOpenOrders(ordersData);
-    if (balanceData) {
-      setCashBalance(balanceData.balance);
-      setPolymarketUnavailable(false);
-    } else {
-      setCashBalance(null);
-      setPolymarketUnavailable(true);
-    }
-    const failed = portfolioResult.status === 'rejected'
-      || balanceResult.status === 'rejected'
-      || balanceData === null
-      || ordersResult.status === 'rejected';
-    setActivityFreshness((previous) => ({
-      lastUpdatedAt: failed ? previous.lastUpdatedAt : Date.now(),
-      loading: false,
-      stale: failed,
-      error: failed ? 'Could not refresh' : null,
-    }));
-    markProfileLoaded();
-  }, [
-    markProfileLoaded,
-    poly.client,
-    poly.polygonAddress,
-    setActivityFreshness,
-    setCashBalance,
-    setOpenOrders,
-    setPortfolio,
-    setPolymarketUnavailable,
-  ]);
-
-  const refreshPortfolioQuietly = useCallback(async () => {
-    if (!poly.polygonAddress || !poly.client) return;
-    const requestKey = walletScopedKeyRef.current;
-    if (portfolioRefreshInFlight.current) return;
-    portfolioRefreshInFlight.current = true;
-    try {
-      const [portfolioResult, balanceResult] = await Promise.allSettled([
-        fetchPortfolio(poly.client),
-        fetchClobBalance(poly.client),
-      ]);
-      const portfolioData = portfolioResult.status === 'fulfilled' ? portfolioResult.value : null;
-      const balanceData = balanceResult.status === 'fulfilled' ? balanceResult.value : null;
-      if (walletScopedKeyRef.current !== requestKey) return;
-
-      if (portfolioData) setPortfolio(portfolioData);
-      if (balanceData) {
-        setCashBalance(balanceData.balance);
-        setPolymarketUnavailable(false);
-      }
-
-      const failed = portfolioResult.status === 'rejected'
-        || balanceResult.status === 'rejected'
-        || balanceData === null;
-      setActivityFreshness((prev) => ({
-        lastUpdatedAt: failed ? prev.lastUpdatedAt : Date.now(),
-        loading: false,
-        stale: failed,
-        error: failed ? 'Could not refresh' : null,
-      }));
-    } finally {
-      portfolioRefreshInFlight.current = false;
-    }
-  }, [
-    poly.client,
-    poly.polygonAddress,
-    setActivityFreshness,
-    setCashBalance,
-    setPortfolio,
-    setPolymarketUnavailable,
-  ]);
-
-  const refreshOpenOrdersQuietly = useCallback(async () => {
-    if (!poly.client) return;
-    const requestKey = walletScopedKeyRef.current;
-    if (ordersRefreshInFlight.current) return;
-    ordersRefreshInFlight.current = true;
-    try {
-      const orders = await fetchOpenOrders(poly.client);
-      if (walletScopedKeyRef.current !== requestKey) return;
-      setOpenOrders(orders);
-    } catch {
-      setActivityFreshness((prev) => ({ ...prev, stale: true, error: 'Could not refresh' }));
-    } finally {
-      ordersRefreshInFlight.current = false;
-    }
-  }, [poly.client, setActivityFreshness, setOpenOrders]);
-
-  const realtimeStatus = usePolymarketUserStream(
-    isEnabled ? poly.client : null,
-    (event) => {
-      setOpenOrders((orders) => applyPolymarketUserEvent(orders, event));
-      if (isPolymarketTradeEvent(event)) void refreshPortfolioQuietly();
-    },
-    loadPortfolio,
-  );
-
-  const handleConfirmCashOut = useCallback(async (size: number, limitPrice: number) => {
-    const position = cashOutPosition;
-    if (!position || cashOutSubmitting) return;
-
-    if (!position.asset) {
-      Alert.alert('Cash out failed', 'Missing token ID for this position.');
-      return;
-    }
-
-    if (!poly.canSignLocally) {
-      try {
-        await poly.enable();
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : 'Failed to enable Polymarket account';
-        Alert.alert('Wallet', msg);
-        return;
-      }
-    }
-
-    if (!poly.client) {
-      Alert.alert('Cash out failed', 'Polymarket account not ready.');
-      return;
-    }
-
-    setCashOutSubmitting(true);
-    try {
-      const result = await placeBet(poly.client, {
-        tokenID: position.asset,
-        price: limitPrice,
-        size,
-        side: 'SELL',
-        orderType: 'FOK',
-      });
-      if (!result.success) throw new Error(result.error || 'Cash out failed');
-
-      setCashOutPosition(null);
-      await loadPortfolio();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      Alert.alert('Cash out failed', msg);
-    } finally {
-      setCashOutSubmitting(false);
-    }
-  }, [cashOutPosition, cashOutSubmitting, loadPortfolio, poly]);
-
-  // Fetch portfolio when enabled
-  useEffect(() => {
-    const requestKey = walletScopedKeyRef.current;
-    if (!isEnabled || !poly.polygonAddress) {
-      resetWalletScopedState();
-      setPortfolioLoading(false);
-      return;
-    }
-    // Keep a previously loaded wallet snapshot visible while its fresh data is
-    // requested. Full-page loading is reserved for the first load only.
-    if (!profileHasLoaded) setPortfolioLoading(true);
-    loadPortfolio().finally(() => {
-      if (walletScopedKeyRef.current === requestKey) setPortfolioLoading(false);
-    });
-    // `profileHasLoaded` is intentionally a point-in-time decision for this
-    // wallet activation. Adding it below would trigger a duplicate request when
-    // the first load marks the shared snapshot ready.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isEnabled,
-    loadPortfolio,
-    poly.polygonAddress,
-    resetWalletScopedState,
-    setPortfolioLoading,
-  ]);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadPortfolio();
     setRefreshing(false);
   }, [loadPortfolio]);
 
-  // Refresh when screen regains focus (e.g. returning from position detail after sell)
-  const hasMounted = useRef(false);
-  useFocusEffect(
-    useCallback(() => {
-      if (hasMounted.current && isEnabled && poly.polygonAddress) {
-        void loadPortfolio();
-      }
-      hasMounted.current = true;
-    }, [isEnabled, loadPortfolio, poly.polygonAddress]),
-  );
-
-  useFocusedAppStateInterval(() => void refreshPortfolioQuietly(), 15_000, {
-    enabled: Boolean(isEnabled && poly.polygonAddress),
-    resetKey: `${poly.polygonAddress ?? ''}:${poly.tradingAddress ?? ''}`,
-  });
-
-  useFocusedAppStateInterval(() => void refreshOpenOrdersQuietly(), 7_000, {
-    enabled: Boolean(isEnabled && poly.polygonAddress),
-    resetKey: poly.polygonAddress,
-  });
-
-  const connectPolymarketAccount = useCallback(async () => {
-    setBusy(true);
-    try {
-      await poly.enable();
-      setPolymarketUnavailable(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect Polymarket account';
-      Alert.alert('Error', msg);
-    } finally {
-      setBusy(false);
-    }
-  }, [poly, setPolymarketUnavailable]);
-
-  const handleConnectPolymarketAccount = useCallback(() => {
-    // Polymarket signs on Polygon, so the requirement is EVM. When the resolver
-    // has no signer yet, the shared connection sheet is the entry point and the
-    // effect below resumes setup once the signer lands — signing in and setting
-    // up Polymarket is one user action, not two.
-    if (!poly.signer) {
-      setConnectionIntent('polymarket');
-      setSetupAfterConnect(true);
-      connectSheet.open('evm');
-      return;
-    }
-
-    void connectPolymarketAccount();
-  }, [connectPolymarketAccount, connectSheet, poly.signer]);
-
-  const handleWithdrawPress = useCallback(() => {
-    if (accountState !== 'ready') return;
-    setSettingsOpen(false);
-    if (!solanaAddress) {
-      setConnectionIntent('withdrawal');
-      connectSheet.open('solana');
-      return;
-    }
-    setWithdrawOpen(true);
-  }, [accountState, connectSheet, solanaAddress]);
-
-  useEffect(() => {
-    if (connectionIntent !== 'withdrawal' || !solanaAddress) return;
-    setConnectionIntent(null);
-    setWithdrawOpen(true);
-  }, [connectionIntent, solanaAddress]);
-
-  // Resume setup after the connection sheet resolves a signer. Mirrors
-  // PolymarketMarketDetailScreen / PolymarketSportDetailScreen.
-  //
-  // `connectPolymarketAccount` is deliberately not a dependency: it closes over
-  // `poly`, which is a new object every render, so including it would re-run
-  // this effect continuously. The ref guard is what makes the resume fire once
-  // per connection rather than on every render while setup is in flight.
-  const setupResumeRef = useRef(false);
-  useEffect(() => {
-    if (!setupAfterConnect || !poly.signer || poly.isReady) return;
-    if (setupResumeRef.current) return;
-    setupResumeRef.current = true;
-    setSetupAfterConnect(false);
-    void connectPolymarketAccount().finally(() => {
-      setupResumeRef.current = false;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setupAfterConnect, poly.signer, poly.isReady]);
-
-  const handleReconnect = useCallback(async () => {
-    setBusy(true);
-    try {
-      await poly.enable();
-      // Re-fetch after re-auth
-      await loadPortfolio();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Refresh failed';
-      Alert.alert('Error', msg);
-    } finally {
-      setBusy(false);
-    }
-  }, [loadPortfolio, poly]);
-
   const handleOpenMarket = useCallback((slug: string) => {
     router.push(getPolymarketMarketHref(slug));
   }, [router]);
-
-  const handleCashOut = useCallback((position: PortfolioPosition) => {
-    setCashOutPosition(position);
-  }, []);
 
   const {
     positions,
@@ -658,9 +313,16 @@ export function PolymarketPortfolioScreen() {
     booksByAsset: sellQuoteBooks,
   } = usePositionSellQuotes(positions);
 
-  // Redeem flow state, lifted from the retired ProfilePortfolioTabs component.
-  const [redeemingId, setRedeemingId] = useState<string | null>(null);
-  const [redeemError, setRedeemError] = useState<{ id: string; message: string } | null>(null);
+  const cashOut = usePolymarketCashOut({
+    poly,
+    loadPortfolio,
+    actionsDisabled,
+    setOpenOrders,
+    setActivityFreshness,
+  });
+  // Filled after usePolymarketCashOut so the data hook's wallet-scope reset can
+  // clear the cash-out position (see the onWalletReset bridge above).
+  clearCashOutPositionRef.current = cashOut.clearCashOutPosition;
 
   const sortedOrders = useMemo(
     () => [...openOrders].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0)),
@@ -684,20 +346,20 @@ export function PolymarketPortfolioScreen() {
     redeemablePositions,
     positions,
     sellQuotes,
-    redeemingId,
-    redeemError,
+    redeemingId: cashOut.redeemingId,
+    redeemError: cashOut.redeemError,
     actionsDisabled,
     polyClient: poly.client,
-    onCollect: collect,
-    onCashOut: handleCashOut,
+    onCollect: cashOut.collect,
+    onCashOut: cashOut.handleCashOut,
     onOpenMarket: handleOpenMarket,
   });
 
   const { orderRows, reservedNote } = buildPolymarketOrdersTab({
     sortedOrders,
-    cancellingId,
+    cancellingId: cashOut.cancellingId,
     actionsDisabled,
-    onCancel: handleCancel,
+    onCancel: cashOut.handleCancel,
   });
 
   const moneyCard = (
@@ -726,26 +388,6 @@ export function PolymarketPortfolioScreen() {
       setSettingsOpen={setSettingsOpen}
     />
   );
-
-    async function collect(position: PortfolioPosition) {
-      const id = positionKey(position);
-      if (actionsDisabled || !poly.client || redeemingId) return;
-      setRedeemingId(id);
-      setRedeemError(null);
-      try {
-        const result = await redeemPosition(poly.client, {
-          conditionId: position.conditionId,
-        });
-        if (!result.ok) throw new Error(result.error || 'Collect failed');
-        await loadPortfolio();
-      } catch (error) {
-        logRedeemError('profile-positions-tab', error, position);
-        setRedeemError({ id, message: formatRedeemError(error) });
-      } finally {
-        setRedeemingId(null);
-      }
-    }
-
 
   const tabs = useMemo(() => {
     const ready = portfolioVisible && !portfolioLoading;
@@ -1165,18 +807,8 @@ export function PolymarketPortfolioScreen() {
                 // first — so this flag distinguishes "connected, keep the pending setup"
                 // from "user cancelled, drop it". Without it, closing on success would
                 // clear `setupAfterConnect` and the resume would never run.
-                onConnected={() => { connectedViaSheetRef.current = true; }}
-                onClose={() => {
-                  const completed = connectedViaSheetRef.current;
-                  connectedViaSheetRef.current = false;
-                  if (!completed) {
-                    setSetupAfterConnect(false);
-                    setConnectionIntent(null);
-                  } else if (connectionIntent === 'polymarket') {
-                    setConnectionIntent(null);
-                  }
-                  connectSheet.close();
-                }}
+                onConnected={handleSheetConnected}
+                onClose={handleSheetClose}
               />
       </View>
     );
@@ -1230,14 +862,14 @@ export function PolymarketPortfolioScreen() {
               )}
 
               <CashOutConfirmModal
-                visible={cashOutPosition !== null}
-                position={cashOutPosition}
-                submitting={cashOutSubmitting}
-                orderbook={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.book ?? null : null}
-                quoteLoading={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.loading ?? false : false}
-                quoteError={cashOutPosition?.asset ? sellQuoteBooks[cashOutPosition.asset]?.error ?? null : null}
-                onClose={() => setCashOutPosition(null)}
-                onConfirm={handleConfirmCashOut}
+                visible={cashOut.cashOutPosition !== null}
+                position={cashOut.cashOutPosition}
+                submitting={cashOut.cashOutSubmitting}
+                orderbook={cashOut.cashOutPosition?.asset ? sellQuoteBooks[cashOut.cashOutPosition.asset]?.book ?? null : null}
+                quoteLoading={cashOut.cashOutPosition?.asset ? sellQuoteBooks[cashOut.cashOutPosition.asset]?.loading ?? false : false}
+                quoteError={cashOut.cashOutPosition?.asset ? sellQuoteBooks[cashOut.cashOutPosition.asset]?.error ?? null : null}
+                onClose={cashOut.clearCashOutPosition}
+                onConfirm={cashOut.handleConfirmCashOut}
                 formatMoney={formatProfileMoney}
               />
 
@@ -1558,18 +1190,8 @@ export function PolymarketPortfolioScreen() {
                 // first — so this flag distinguishes "connected, keep the pending setup"
                 // from "user cancelled, drop it". Without it, closing on success would
                 // clear `setupAfterConnect` and the resume would never run.
-                onConnected={() => { connectedViaSheetRef.current = true; }}
-                onClose={() => {
-                  const completed = connectedViaSheetRef.current;
-                  connectedViaSheetRef.current = false;
-                  if (!completed) {
-                    setSetupAfterConnect(false);
-                    setConnectionIntent(null);
-                  } else if (connectionIntent === 'polymarket') {
-                    setConnectionIntent(null);
-                  }
-                  connectSheet.close();
-                }}
+                onConnected={handleSheetConnected}
+                onClose={handleSheetClose}
               />
     </>
   );
