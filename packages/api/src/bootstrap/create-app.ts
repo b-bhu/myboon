@@ -168,7 +168,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/perps/pacifica', pacificaRoutes)
   app.route('/perps/phoenix', phoenixRoutes)
   app.route('/spot', spotRoutes)
-  app.route('/wallet', createWalletSummaryRoutes({ service: createWalletSummaryService() }))
+  app.route('/wallet', createWalletSummaryRoutes({
+    service: createWalletSummaryService(),
+    // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
+    trustForwardedHeaders: config.trustProxyHeaders,
+  }))
   app.route('/rpc', createRpcRoutes({
     solanaRpcUrl: config.solanaRpcUrl ?? 'https://api.mainnet-beta.solana.com',
     solanaDevnetRpcUrl: config.solanaDevnetRpcUrl ?? 'https://api.devnet.solana.com',
