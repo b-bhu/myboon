@@ -15,7 +15,7 @@ import { fetchPhoenixTraderState } from '@/features/perps/phoenix.api';
 import { fetchPerpsAccount, fetchPerpsPositions } from '@/features/perps/perps.public-api';
 import { getActivePolymarketClient } from '@/features/polymarket/polymarket.client';
 import { fetchPortfolio } from '@/features/polymarket/polymarket.api';
-import { resolveCashOutNow } from '@/features/polymarket/portfolio/portfolio-totals';
+import { resolveCashOutNow, sumPhoenixPortfolioValue, toNumber, toUsd } from '@myboon/shared/wallet-summary';
 import type {
   MeteoraRowDetail,
   PerpsRowDetail,
@@ -171,30 +171,6 @@ export async function fetchPacificaValueUsd(walletAddress: string): Promise<Wall
 }
 
 /**
- * Phoenix equity (collateral + unrealized PnL) is reported per-trader-PDA as
- * `portfolioValue` on each record in `traders`. Mirrors the same field name
- * and USD-lots convention PhoenixProfileScreen's own (unexported) summary
- * uses, summed across every trader record for this authority.
- *
- * A wallet with zero trader-PDA records (never traded on Phoenix) is a
- * legitimate $0, not a failure — mirrors the same `records.length > 0` check
- * PhoenixProfileScreen's own `worstRiskLabel` uses for the same reason.
- * `null` is reserved for the genuinely ambiguous case: trader records exist
- * but none of them had a parseable `portfolioValue`, which PhoenixProfileScreen
- * itself has never had to disambiguate (it only renders once an account is
- * known to exist), but Wallet's row must, since it represents any connected
- * wallet including ones that have never touched Phoenix at all.
- */
-function sumPhoenixPortfolioValue(traders: unknown[]): number | null {
-  if (traders.length === 0) return 0;
-  const values = traders
-    .map((trader) => toUsd(asRecord(trader)?.portfolioValue))
-    .filter((value): value is number => value !== null);
-  if (values.length === 0) return null;
-  return values.reduce((sum, value) => sum + value, 0);
-}
-
-/**
  * One pill per open Phoenix position, mirroring PhoenixProfileScreen's own
  * `normalizePositions`: each trader record's `positions[]` array holds raw
  * records keyed by `symbol` / `positionSize` (sign gives side) /
@@ -232,37 +208,6 @@ function asRecord(input: unknown): Record<string, unknown> | null {
   return input && typeof input === 'object' && !Array.isArray(input)
     ? (input as Record<string, unknown>)
     : null;
-}
-
-function toNumber(input: unknown): number | null {
-  if (typeof input === 'number') return Number.isFinite(input) ? input : null;
-  const record = asRecord(input);
-  if (record) {
-    const ui = toNumber(record.ui);
-    if (ui !== null) return ui;
-
-    const rawValue = toNumber(record.value);
-    const decimals = toNumber(record.decimals);
-    if (rawValue !== null && decimals !== null) {
-      const scaled = rawValue / (10 ** decimals);
-      return Number.isFinite(scaled) ? scaled : null;
-    }
-  }
-  if (typeof input !== 'string' || input.trim() === '') return null;
-  const parsed = Number.parseFloat(input);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function toUsd(input: unknown): number | null {
-  const value = toNumber(input);
-  if (value === null) return null;
-  if (
-    ((typeof input === 'string' && !input.includes('.')) || typeof input === 'number')
-    && Math.abs(value) >= 1_000_000
-  ) {
-    return value / 1_000_000;
-  }
-  return value;
 }
 
 /**

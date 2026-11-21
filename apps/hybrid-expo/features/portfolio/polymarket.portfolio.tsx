@@ -65,7 +65,8 @@ import {
   getPolymarketProfileSetupCopy,
 } from '@/features/polymarket/portfolio/profile-state';
 import { remainingOrderCost } from '@/features/polymarket/portfolio/profile-portfolio-state';
-import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel, resolveCashOutNow } from '@/features/polymarket/portfolio/portfolio-totals';
+import { APPROX_TOTAL_NOTE, formatApproxTotal, formatShowingLabel } from '@/features/polymarket/portfolio/portfolio-totals';
+import { resolveCashOutNow } from '@myboon/shared/wallet-summary';
 import { usePolymarketProfileStore } from '@/features/polymarket/portfolio/profile-store';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { useConnectionSheet } from '@/features/wallet/components/useConnectionSheet';

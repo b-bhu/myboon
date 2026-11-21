@@ -11,7 +11,8 @@
  * - portfolio-426-v2-redeemable.json    v2 {data:[...]} envelope (subset)
  *
  * The v2 rows are parsed with the SDK's own PositionSchema before running the
- * merge -> map -> summarize pipeline from portfolio-summary.ts.
+ * merge -> map -> summarize pipeline from the shared wallet-summary helpers
+ * (issue #723 moved it here from the Expo app).
  */
 
 import assert from 'node:assert/strict';
@@ -19,9 +20,8 @@ import test from 'node:test';
 import { realpathSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import type { Position } from '@polymarket/client';
-import { mapSdkPosition, mergeHeldPositions, summarizeHeldPositions, sumReadyToCollect, walkAllPages } from './portfolio-summary';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { type SdkPosition, mapSdkPosition, mergeHeldPositions, summarizeHeldPositions, sumReadyToCollect, walkAllPages } from './polymarket-helpers.js';
 
 // '@polymarket/client' re-exports the bindings *types* (its index.d.ts does
 // `export * from '@polymarket/bindings/data'`) but its runtime bundle does not
@@ -58,8 +58,10 @@ interface V1PositionRow {
   currentValue: number;
 }
 
+const HERE = dirname(fileURLToPath(import.meta.url));
+
 function readFixture(name: string): unknown {
-  return JSON.parse(readFileSync(join(__dirname, '__fixtures__', name), 'utf8')) as unknown;
+  return JSON.parse(readFileSync(join(HERE, '__fixtures__', name), 'utf8')) as unknown;
 }
 
 const V1_ROWS = readFixture('portfolio-426-v1-positions.json') as V1PositionRow[];
@@ -91,7 +93,7 @@ function assertAssetIdsMatchOld(positions: PortfolioPositionLike[]): void {
 
 test('v2 OPEN + REDEEMABLE union reproduces the v1 held-position totals', async () => {
   const positionSchema = await getPositionSchema();
-  const parseRow = (row: unknown): Position => positionSchema.parse(row);
+  const parseRow = (row: unknown): SdkPosition => positionSchema.parse(row);
 
   const open = OPEN_DATA.map(parseRow);
   const redeemable = REDEEMABLE_DATA.map(parseRow);
@@ -108,7 +110,7 @@ test('v2 OPEN + REDEEMABLE union reproduces the v1 held-position totals', async 
 
 test('redeemable rows fold back in if the OPEN page stops listing them', async () => {
   const positionSchema = await getPositionSchema();
-  const parseRow = (row: unknown): Position => positionSchema.parse(row);
+  const parseRow = (row: unknown): SdkPosition => positionSchema.parse(row);
 
   const openWithoutRedeemable = OPEN_DATA.filter((row) => {
     const wire = row as { status?: string; redeemable?: boolean };
@@ -135,14 +137,14 @@ interface SdkPage<T> {
   hasMore: boolean;
 }
 
-function syntheticPosition(base: Position, assetId: string): Position {
+function syntheticPosition(base: SdkPosition, assetId: string): SdkPosition {
   // The SDK brands assetId (TokenId | PositionId); synthetic rows only feed
   // the dedupe/map/summarize helpers, which treat it as an opaque string.
-  return { ...base, assetId: assetId as Position['assetId'] };
+  return { ...base, assetId };
 }
 
 /** Cycle the parsed fixture rows into clones with distinct assetIds. */
-function syntheticRows(parsed: Position[], count: number, suffix: string): Position[] {
+function syntheticRows(parsed: SdkPosition[], count: number, suffix: string): SdkPosition[] {
   return Array.from({ length: count }, (_, i) =>
     syntheticPosition(parsed[i % parsed.length], `${parsed[i % parsed.length].assetId}${suffix}-${i}`),
   );
@@ -176,7 +178,7 @@ test('over-cap wallet: summary totals cover every page while the returned list s
   // Two redeemable pages of 20, each mixing duplicates of open assetIds with
   // redeem-only rows (the deduped union grows by 20 new rows).
   const redeemOnly = syntheticRows(parsed, 20, '-redeemable-only');
-  const redeemableRows: Position[] = [
+  const redeemableRows: SdkPosition[] = [
     ...openRows.slice(0, 10).map((row) => syntheticPosition(row, row.assetId)),
     ...redeemOnly.slice(0, 10),
     ...openRows.slice(10, 20).map((row) => syntheticPosition(row, row.assetId)),
@@ -192,7 +194,7 @@ test('over-cap wallet: summary totals cover every page while the returned list s
 
   // Independent dedupe (contract: assetId union, open rows win) the summary
   // numbers are checked against.
-  const expected = new Map<string, Position>();
+  const expected = new Map<string, SdkPosition>();
   for (const row of [...openRows, ...redeemableRows]) {
     if (!expected.has(row.assetId)) expected.set(row.assetId, row);
   }
@@ -268,9 +270,9 @@ test('readyToCollect sums collectible redeemable value over every page, past the
   // 1.00 .. 55.00 USDC, then 5 dust rows below the 0.01 threshold.
   const rows = syntheticRows(parsed, 60, '-ready').map((row, i) => ({
     ...row,
-    // DecimalString is a tagged string on the SDK Position (same reason
-    // syntheticPosition casts assetId); mapSdkPosition() re-parses it.
-    currentValue: (i < 55 ? `${i + 1}.00` : '0.005') as Position['currentValue'],
+    // The wire sends currentValue as a decimal STRING (DecimalString is a
+    // tagged string on the SDK Position); mapSdkPosition() re-parses it.
+    currentValue: (i < 55 ? `${i + 1}.00` : '0.005'),
   }));
 
   const pulled = { count: 0 };

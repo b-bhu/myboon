@@ -2,7 +2,8 @@ import bs58 from 'bs58';
 import type { PerpsOrder, RawMarketInfo, RawPriceInfo } from '@/features/perps/perps.types';
 import { fetchWithTimeout } from '@/lib/api';
 import { PACIFIC_REST } from '@/features/perps/pacific.config';
-import { pacificGet, safeNum } from '@/features/perps/perps.public-api';
+import { pacificGet } from '@/features/perps/perps.public-api';
+import { safeNum } from '@myboon/shared/wallet-summary';
 
 export type SignMessageFn = ((message: Uint8Array) => Promise<Uint8Array>) | null;
 
