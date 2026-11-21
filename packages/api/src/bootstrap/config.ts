@@ -24,6 +24,8 @@ export type ApiConfig = {
   tokensApiKey?: string
   jupApiKey?: string
   jupApiBase?: string
+  /** Relay's wallet Move key, read from RELAY_API_KEY; optional so a missing key degrades instead of stopping the API. */
+  relayApiKey?: string
   swapPriorityFeeMaxLamports?: string
   swapSqlitePath?: string
   swapTradingEnabled?: boolean
@@ -49,6 +51,16 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   if (missing.length > 0) {
     console.error(`[api] Missing required env vars: ${missing.join(', ')}`)
     process.exit(1)
+  }
+
+  // Relay's wallet Move key (Decision Log D55: server-side, never in the app).
+  // Its absence is a degraded mode, not a startup failure: the API still
+  // serves every other route.
+  const relayApiKey = env.RELAY_API_KEY?.trim() || undefined
+  if (!relayApiKey) {
+    console.warn(
+      '[api] RELAY_API_KEY is not set; wallet Move quote/status routes will return 503 until it is configured',
+    )
   }
 
   const aiExplanationProvider = env.AI_EXPLANATION_PROVIDER
@@ -114,6 +126,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     tokensApiKey: env.TOKENS_API_KEY,
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,
+    relayApiKey,
     swapPriorityFeeMaxLamports: priorityFee,
     swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',
     swapTradingEnabled: env.SWAP_TRADING_KILL_SWITCH !== '1' && env.SWAP_TRADING_KILL_SWITCH !== 'true',
