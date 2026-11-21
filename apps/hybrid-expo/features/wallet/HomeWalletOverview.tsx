@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -24,6 +24,11 @@ import {
   type WalletActionMode,
 } from '@/features/wallet/wallet-mode';
 import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
+import { AppView } from '@/features/wallet/app-view/AppView';
+import {
+  initialWalletAppView,
+  walletAppViewReducer,
+} from '@/features/wallet/app-view.state';
 import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
@@ -222,6 +227,9 @@ export function HomeWalletOverview({
 }) {
   const [accountTab, setAccountTab] = useState<AccountTab>('spot');
   const [mode, setMode] = useState<WalletActionMode>('swap');
+  // The app view state (#771): no app is open until something dispatches
+  // `select`, so the shell below never shows on screen for now.
+  const [appView, appViewDispatch] = useReducer(walletAppViewReducer, initialWalletAppView);
   const [surfaceKey, setSurfaceKey] = useState(0);
   const [tradeBusy, setTradeBusy] = useState(false);
   const [upperHeight, setUpperHeight] = useState(0);
@@ -258,6 +266,15 @@ export function HomeWalletOverview({
     wasActive.current = active;
     previousSurfaceVersion.current = surfaceVersion;
   }, [active, surfaceVersion, scrollY]);
+
+  // "Wallet change resets it" (#771): the app view belongs to the wallet it
+  // was opened from, and the Wallet's two embedded wallets are the two
+  // chain addresses this surface already shows. The reducer bails out while
+  // the id is unchanged, so repeated syncs never loop or reset.
+  const walletId = `${chainAddress('solana') ?? ''}|${chainAddress('evm') ?? ''}`;
+  useEffect(() => {
+    appViewDispatch({ type: 'wallet-change', walletId });
+  }, [walletId]);
 
   const panelRest = Math.max(0, upperHeight - color.panelOverlap);
   const selectAccountTab = useCallback((id: AccountTab) => {
@@ -417,6 +434,15 @@ export function HomeWalletOverview({
             />
           </Animated.View>
         </Animated.ScrollView>
+        {/* App view shell (#771) covers the Portfolio until back is pressed.
+            Nothing selects an app yet, so this never renders for now. */}
+        {appView.selectedApp ? (
+          <AppView
+            app={appView.selectedApp}
+            onBack={() => appViewDispatch({ type: 'back' })}
+            style={styles.appViewOverlay}
+          />
+        ) : null}
       </Animated.View>
     </View>
   );
@@ -480,4 +506,6 @@ const styles = StyleSheet.create({
     backgroundColor: color.gold,
   },
   connectLabel: { color: color.navy, fontSize: 14, fontWeight: '700' },
+  // App view shell (#771): fills the Portfolio panel while an app is open.
+  appViewOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
 });
