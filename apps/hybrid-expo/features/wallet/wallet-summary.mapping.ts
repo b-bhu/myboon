@@ -40,7 +40,8 @@ export interface WalletAppSourceState<S> {
   summary: S | null;
   /** Server `fetchedAt` of the value shown; null when there is none. */
   asOf: string | null;
-  /** Human-readable reason while `unavailable`; null otherwise. */
+  /** Human-readable reason while `unavailable`, and kept while `stale` so the
+   *  row can say why its held value is stale (#769); null otherwise. */
   error: string | null;
 }
 
@@ -78,7 +79,9 @@ export function mapWalletAppSource<S>(
       valueUsd: previous.valueUsd,
       summary: previous.summary,
       asOf: previous.asOf,
-      error: null,
+      // #769: the venue's own reason stays on a stale row so it can say why
+      // its last good value is stale instead of pretending all is well.
+      error: app.error ?? null,
     };
   }
   return { status: 'unavailable', valueUsd: null, summary: null, asOf: null, error: app.error ?? null };

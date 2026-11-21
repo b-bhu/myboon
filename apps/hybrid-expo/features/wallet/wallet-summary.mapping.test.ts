@@ -105,7 +105,9 @@ describe('mapWalletSummaryApps', () => {
     // The age keeps pointing at the last good fetch, not the failed one.
     assert.equal(mapped.spot.asOf, first.spot.asOf);
     assert.equal(mapped.spot.asOf, FETCHED_AT);
-    assert.equal(mapped.spot.error, null);
+    // The venue's own reason is kept on a stale row (#769) so it can say why
+    // its held value is stale.
+    assert.equal(mapped.spot.error, 'HTTP_502');
     // A failing app never blocks or pollutes an app that answered.
     assert.equal(mapped.phoenix.status, 'ok');
     assert.equal(mapped.phoenix.valueUsd, 43100.1);
