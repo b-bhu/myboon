@@ -12,23 +12,19 @@
  * unchanged `CashOutConfirmModal` → `placeBet` SELL flow. A position tap opens
  * the market detail as before, with Cash out as the row's venue action.
  * No new execution path. Data, account-setup and cash-out state machines live
- * in the hooks under `features/portfolio/polymarket/` (#738).
+ * in the hooks under `features/portfolio/polymarket/` (#738), and the settings
+ * sheet is one copy in `PolymarketSettingsSheet` with its state machine in
+ * `usePolymarketSettings`; the connection sheet mounts once (#740).
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,22 +44,18 @@ import { useWallet } from '@/hooks/useWallet';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useOddsFormat } from '@/hooks/useOddsFormat';
-import { usePolymarketQuickAmounts } from '@/features/polymarket/usePolymarketQuickAmounts';
 import { ConnectionSheet } from '@/features/wallet/components/ConnectionSheet';
 import { APPROX_TOTAL_NOTE, formatApproxTotal } from '@/features/polymarket/portfolio/portfolio-totals';
 import {
-  fetchUsdToInrRate,
   formatProfileCurrency,
   maskEmail,
-  POLYMARKET_PROFILE_CURRENCY_KEY,
-  POLYMARKET_PROFILE_FALLBACK_USD_TO_INR,
   truncate,
-  type PolymarketProfileCurrency,
-  type PolymarketSettingsView,
 } from '@/features/portfolio/polymarket/polymarket.format';
 import { usePolymarketPortfolioData } from '@/features/portfolio/polymarket/usePolymarketPortfolioData';
 import { usePolymarketAccountSetup } from '@/features/portfolio/polymarket/usePolymarketAccountSetup';
 import { usePolymarketCashOut } from '@/features/portfolio/polymarket/usePolymarketCashOut';
+import { usePolymarketSettings } from '@/features/portfolio/polymarket/usePolymarketSettings';
+import { PolymarketSettingsSheet } from '@/features/portfolio/polymarket/PolymarketSettingsSheet';
 import { styles } from '@/features/portfolio/polymarket/polymarket.portfolio.styles';
 import { derivePolymarketTotals } from '@/features/portfolio/polymarket/polymarket.totals';
 import { PolymarketIdentityHeader } from '@/features/portfolio/polymarket/PolymarketIdentityHeader';
@@ -73,7 +65,7 @@ import { buildPolymarketOrdersTab } from '@/features/portfolio/polymarket/Polyma
 import { buildPolymarketPositionsTab } from '@/features/portfolio/polymarket/PolymarketPositionsTab';
 import { VenuePortfolioScreen } from '@/features/portfolio/VenuePortfolioScreen';
 import type { VenuePortfolioScreenTab } from '@/features/portfolio/VenuePortfolioScreen';
-import { semantic, tokens } from '@/theme';
+import { tokens } from '@/theme';
 
 export function PolymarketPortfolioScreen() {
   const insets = useSafeAreaInsets();
@@ -96,89 +88,11 @@ export function PolymarketPortfolioScreen() {
   const openWithdrawModal = useCallback(() => setWithdrawOpen(true), []);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [usdToInrRate, setUsdToInrRate] = useState(POLYMARKET_PROFILE_FALLBACK_USD_TO_INR);
-  const [currencyFormat, setCurrencyFormat] = useState<PolymarketProfileCurrency>('INR');
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsView, setSettingsView] = useState<PolymarketSettingsView>('menu');
-  const { quickAmounts, setQuickAmounts } = usePolymarketQuickAmounts();
-  const [quickAmountDraft, setQuickAmountDraft] = useState(() => quickAmounts.map(String));
-  const [quickAmountError, setQuickAmountError] = useState<string | null>(null);
-  const [quickAmountSaving, setQuickAmountSaving] = useState(false);
-  const [signOutBusy, setSignOutBusy] = useState(false);
-  const [signOutError, setSignOutError] = useState<string | null>(null);
-
   const isEnabled = Boolean(poly.isReady && poly.polygonAddress);
-  const dismissSettings = useCallback(() => setSettingsOpen(false), []);
 
-  useEffect(() => {
-    AsyncStorage.getItem(POLYMARKET_PROFILE_CURRENCY_KEY)
-      .then((stored) => {
-        if (stored === 'USD' || stored === 'INR') setCurrencyFormat(stored);
-      })
-      .catch(() => {});
-  }, []);
-
-  const selectCurrencyFormat = useCallback((next: PolymarketProfileCurrency) => {
-    setCurrencyFormat(next);
-    setSettingsOpen(false);
-    setSettingsView('menu');
-    AsyncStorage.setItem(POLYMARKET_PROFILE_CURRENCY_KEY, next).catch(() => {});
-  }, []);
-
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
-    setSettingsView('menu');
-    setQuickAmountError(null);
-    setSignOutError(null);
-  }, []);
-
-  const handleSignOut = useCallback(async () => {
-    if (signOutBusy) return;
-    setSignOutBusy(true);
-    setSignOutError(null);
-    try {
-      await privyDisconnect();
-      closeSettings();
-    } catch (error) {
-      setSignOutError(error instanceof Error ? error.message : 'Could not sign out. Try again.');
-    } finally {
-      setSignOutBusy(false);
-    }
-  }, [closeSettings, privyDisconnect, signOutBusy]);
-
-  useEffect(() => {
-    if (settingsOpen && settingsView === 'amounts') {
-      setQuickAmountDraft(quickAmounts.map(String));
-      setQuickAmountError(null);
-    }
-  }, [quickAmounts, settingsOpen, settingsView]);
-
-  const saveQuickAmounts = useCallback(async () => {
-    setQuickAmountSaving(true);
-    setQuickAmountError(null);
-    try {
-      await setQuickAmounts(quickAmountDraft.map((value) => Number.parseFloat(value)));
-      setSettingsView('menu');
-    } catch (error) {
-      setQuickAmountError(error instanceof Error ? error.message : 'Could not save quick amounts.');
-    } finally {
-      setQuickAmountSaving(false);
-    }
-  }, [quickAmountDraft, setQuickAmounts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function refreshRate() {
-      const rate = await fetchUsdToInrRate();
-      if (!cancelled && rate !== null) setUsdToInrRate(rate);
-    }
-    void refreshRate();
-    const interval = setInterval(() => void refreshRate(), 6 * 60 * 60 * 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
+  // Settings-sheet state machine (#740): open/view, currency, quick amounts
+  // and sign-out, extracted from this screen so the sheet JSX is one copy.
+  const settings = usePolymarketSettings({ privyDisconnect });
 
   // Data, setup and cash-out live in hooks under features/portfolio/polymarket/
   // (#738). The wallet-scope reset must also clear cash-out state owned by
@@ -223,7 +137,7 @@ export function PolymarketPortfolioScreen() {
     loadPortfolio,
     setPolymarketUnavailable,
     solanaAddress,
-    dismissSettings,
+    dismissSettings: settings.dismissSettings,
     openWithdrawModal,
   });
 
@@ -244,8 +158,8 @@ export function PolymarketPortfolioScreen() {
         ? truncate(walletAddress, 4, 4)
         : 'Not connected';
   const formatProfileMoney = useCallback(
-    (value: number | null | undefined) => formatProfileCurrency(value, currencyFormat, usdToInrRate),
-    [currencyFormat, usdToInrRate],
+    (value: number | null | undefined) => formatProfileCurrency(value, settings.currencyFormat, settings.usdToInrRate),
+    [settings.currencyFormat, settings.usdToInrRate],
   );
 
   const handleDisconnectPolymarket = useCallback(() => {
@@ -261,7 +175,7 @@ export function PolymarketPortfolioScreen() {
             setBusy(true);
             poly.disable()
               .then(() => {
-                closeSettings();
+                settings.closeSettings();
                 resetWalletScopedState();
               })
               .catch((error: unknown) => {
@@ -277,7 +191,7 @@ export function PolymarketPortfolioScreen() {
         },
       ],
     );
-  }, [closeSettings, poly, resetWalletScopedState]);
+  }, [poly, resetWalletScopedState, settings.closeSettings]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -384,8 +298,8 @@ export function PolymarketPortfolioScreen() {
       portfolioLoading={portfolioLoading}
       onConnectAccount={handleConnectPolymarketAccount}
       onReconnect={handleReconnect}
-      setSettingsView={setSettingsView}
-      setSettingsOpen={setSettingsOpen}
+      setSettingsView={settings.setSettingsView}
+      setSettingsOpen={settings.setSettingsOpen}
     />
   );
 
@@ -459,12 +373,64 @@ export function PolymarketPortfolioScreen() {
     realtimeStatus, showingLabel, reservedNote, handleOpenMarket,
   ]);
 
+  // The one copy of the sheet overlays (#740): the settings sheet JSX lives
+  // only in PolymarketSettingsSheet and the connection sheet hangs off the
+  // account-setup hook. Both returns mount this same pair where each of the
+  // two pasted copies used to render. On the connection sheet a successful
+  // connect closes it and `onConnected` fires first — so that flag
+  // distinguishes "connected, keep the pending setup" from "user cancelled,
+  // drop it"; without it closing on success would clear `setupAfterConnect`
+  // and the resume would never run.
+  const sheetOverlay = (
+    <>
+      <PolymarketSettingsSheet
+        visible={settings.open}
+        settingsView={settings.view}
+        setSettingsView={settings.setSettingsView}
+        setSettingsOpen={settings.setSettingsOpen}
+        closeSettings={settings.closeSettings}
+        solanaAddress={solanaAddress}
+        currencyFormat={settings.currencyFormat}
+        usdToInrRate={settings.usdToInrRate}
+        selectCurrencyFormat={settings.selectCurrencyFormat}
+        oddsFormat={oddsFormat}
+        setOddsFormat={setOddsFormat}
+        quickAmounts={settings.quickAmounts}
+        quickAmountDraft={settings.quickAmountDraft}
+        setQuickAmountDraft={settings.setQuickAmountDraft}
+        quickAmountError={settings.quickAmountError}
+        quickAmountSaving={settings.quickAmountSaving}
+        saveQuickAmounts={settings.saveQuickAmounts}
+        signOutBusy={settings.signOutBusy}
+        signOutError={settings.signOutError}
+        handleSignOut={settings.handleSignOut}
+        handleWithdrawPress={handleWithdrawPress}
+        handleDisconnectPolymarket={handleDisconnectPolymarket}
+        authLabel={authLabel}
+        maskedIdentity={maskedIdentity}
+        privyAuthMethod={privyAuthMethod}
+        walletAddress={walletAddress}
+        tradingAddress={poly.tradingAddress ?? null}
+        polyReady={poly.isReady}
+        isEnabled={isEnabled}
+        busy={busy}
+        insetsBottom={insets.bottom}
+      />
+      <ConnectionSheet
+        visible={connectSheet.visible}
+        chain={connectSheet.chain}
+        onConnected={handleSheetConnected}
+        onClose={handleSheetClose}
+      />
+    </>
+  );
+
   if (!portfolioVisible) {
     return (
       <View style={[styles.screen, { paddingTop: insets.top }]}>
         <AppTopBar
           left={<AppTopBarIconButton icon="arrow-back" onPress={() => router.back()} accessibilityLabel="Go back" />}
-          right={(          <AppTopBarIconButton icon="settings" onPress={() => { setSettingsView('menu'); setSettingsOpen(true); }} accessibilityLabel="Open Polymarket settings" />)}
+          right={<AppTopBarIconButton icon="settings" onPress={settings.openSettings} accessibilityLabel="Open Polymarket settings" />}
         />
         <ScrollView contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
           {pageAbove}
@@ -491,325 +457,7 @@ export function PolymarketPortfolioScreen() {
                     </View>
                   ) : null}
         </ScrollView>
-              <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
-                <KeyboardAvoidingView
-                  style={styles.settingsBackdrop}
-                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Close Polymarket profile settings"
-                    style={StyleSheet.absoluteFill}
-                    onPress={closeSettings}
-                  />
-                  <ScrollView
-                    style={styles.settingsCard}
-                    contentContainerStyle={[styles.settingsCardContent, { paddingBottom: Math.max(insets.bottom, 20) + 8 }]}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                    accessibilityViewIsModal
-                    accessibilityLabel="Polymarket settings dialog">
-                    <View style={styles.sheetGrabber} />
-                    <View style={styles.sheetTop}>
-                      <Text style={styles.settingsEyebrow}>{settingsView === 'security' ? 'Account & security' : 'Polymarket settings'}</Text>
-                      <Pressable accessibilityRole="button" accessibilityLabel="Close settings" style={styles.sheetClose} onPress={closeSettings}>
-                        <MaterialIcons name="close" size={18} color={semantic.text.dim} />
-                      </Pressable>
-                    </View>
-                    {settingsView !== 'menu' && (
-                      <Pressable style={styles.settingsBackRow} onPress={() => setSettingsView('menu')} accessibilityRole="button" accessibilityLabel="Back to Polymarket settings">
-                        <MaterialIcons name="chevron-left" size={16} color={semantic.text.dim} />
-                        <Text style={styles.settingsBackText}>Back</Text>
-                      </Pressable>
-                    )}
-
-                    {settingsView === 'menu' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Polymarket settings</Text>
-                        <Text style={styles.settingsCopy}>Preferences follow you across every market.</Text>
-                        <Text style={styles.sheetSectionLabel}>Trading display</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open currency display settings"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('currency')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="payments" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Currency display</Text>
-                            <Text style={styles.settingsOptionSub}>{currencyFormat} selected</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open odds format settings"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('odds')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="percent" size={15} color={tokens.colors.accent} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Odds format</Text>
-                            <Text style={styles.settingsOptionSub}>
-                              {oddsFormat === 'probability' ? 'Probability' : oddsFormat === 'decimal' ? 'Decimal' : 'Points'} selected
-                            </Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Edit quick amounts"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('amounts')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="calculate" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Quick amounts</Text>
-                            <Text style={styles.settingsOptionSub}>{quickAmounts.map((amount) => `$${amount}`).join(' · ')}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Text style={styles.sheetSectionLabel}>Account</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open account and security"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('security')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="vpn-key" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Account &amp; Security</Text>
-                            <Text style={styles.settingsOptionSub}>{privyAuthMethod ? `Signed in with ${privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'email' : 'wallet'}` : 'Not signed in'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Text style={styles.sheetSectionLabel}>Safety</Text>
-                        <View style={styles.settingsOption}>
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="verified-user" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Order review</Text>
-                            <Text style={styles.settingsOptionSub}>Payout and maximum loss are always shown</Text>
-                          </View>
-                          <Text style={styles.alwaysOnText}>Always on</Text>
-                        </View>
-                      </>
-                    )}
-
-                    {settingsView === 'security' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Account &amp; Security</Text>
-                        <Text style={styles.settingsCopy}>Manage how you sign in and where funds can move.</Text>
-                        <Text style={styles.sheetSectionLabel}>Login</Text>
-                        <View style={styles.settingsOption}>
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name={privyAuthMethod === 'google' ? 'account-circle' : 'email'} size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>{authLabel ?? 'MyBoon login'}</Text>
-                            <Text style={styles.settingsOptionSub}>{maskedIdentity ?? (walletAddress ? truncate(walletAddress) : 'Not connected')}</Text>
-                          </View>
-                          <Text style={styles.settingsValue}>{authLabel ?? '—'}</Text>
-                        </View>
-                        <Text style={styles.sheetSectionLabel}>Connected wallets</Text>
-                        <Pressable style={styles.settingsOption} onPress={() => setSettingsView('wallet')} accessibilityRole="button" accessibilityLabel="View Polymarket wallet">
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="account-balance-wallet" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Polymarket wallet</Text>
-                            <Text style={styles.settingsOptionSub}>{walletAddress ? `${truncate(walletAddress)} · ${isEnabled ? 'Connected' : 'Setup needed'}` : 'Not created'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable style={styles.settingsOption} onPress={handleWithdrawPress} accessibilityRole="button" accessibilityLabel="Manage Solana withdrawal destination">
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="north-east" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Withdrawal destination</Text>
-                            <Text style={styles.settingsOptionSub}>{solanaAddress ? `${truncate(solanaAddress)} · Solana` : 'Connect a Solana wallet'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Sign out of MyBoon"
-                          style={styles.signOutBtn}
-                          onPress={() => setSettingsView('signout')}>
-                          <MaterialIcons name="logout" size={15} color={tokens.colors.vermillion} />
-                          <Text style={styles.signOutText}>Sign out</Text>
-                        </Pressable>
-                      </>
-                    )}
-
-                    {settingsView === 'odds' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Odds format</Text>
-                        <Text style={styles.settingsCopy}>How prices show across Polymarket. Books and limit prices always stay in cents.</Text>
-                        {([
-                          { key: 'probability', title: 'Probability', sub: '57% — the chance' },
-                          { key: 'decimal', title: 'Decimal', sub: '1.75 — total return per $1' },
-                          { key: 'points', title: 'Points', sub: '+75 — profit per $1' },
-                        ] as const).map((option) => {
-                          const selected = oddsFormat === option.key;
-                          return (
-                            <Pressable
-                              key={option.key}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Show odds in ${option.title} format`}
-                              accessibilityState={{ selected }}
-                              style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
-                              onPress={() => {
-                                setOddsFormat(option.key);
-                                setSettingsOpen(false);
-                                setSettingsView('menu');
-                              }}
-                            >
-                              <View>
-                                <Text style={styles.currencyOptionTitle}>{option.title}</Text>
-                                <Text style={styles.currencyOptionSub}>{option.sub}</Text>
-                              </View>
-                              {selected && <MaterialIcons name="check-circle" size={20} color={tokens.colors.primary} />}
-                            </Pressable>
-                          );
-                        })}
-                      </>
-                    )}
-
-                    {settingsView === 'currency' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Currency display</Text>
-                        <Text style={styles.settingsCopy}>Choose how money shows on your Polymarket profile.</Text>
-                        {(['USD', 'INR'] as const).map((currency) => {
-                          const selected = currencyFormat === currency;
-                          return (
-                            <Pressable
-                              key={currency}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Show Polymarket profile values in ${currency}`}
-                              accessibilityState={{ selected }}
-                              style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
-                              onPress={() => selectCurrencyFormat(currency)}
-                            >
-                              <View>
-                                <Text style={styles.currencyOptionTitle}>{currency}</Text>
-                                <Text style={styles.currencyOptionSub}>
-                                  {currency === 'USD' ? '$ US dollars' : `₹ Indian rupees · live rate ${usdToInrRate.toFixed(2)}`}
-                                </Text>
-                              </View>
-                              {selected && <MaterialIcons name="check-circle" size={20} color={tokens.colors.primary} />}
-                            </Pressable>
-                          );
-                        })}
-                      </>
-                    )}
-
-                    {settingsView === 'wallet' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Polymarket wallet</Text>
-                        <Text style={styles.settingsCopy}>
-                          The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
-                        </Text>
-                        <View style={styles.walletInfoBox}>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Polymarket signer</Text>
-                            <Text selectable style={styles.walletInfoValue}>{walletAddress ? truncate(walletAddress) : '--'}</Text>
-                          </View>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Deposit wallet</Text>
-                            <Text selectable style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
-                          </View>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Network</Text>
-                            <Text style={styles.walletInfoValue}>Polygon</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.settingsFinePrint}>
-                          Your Polymarket wallet is managed through your MyBoon login. Private keys are never displayed here.
-                        </Text>
-                        {poly.isReady && (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Disconnect Polymarket"
-                            disabled={busy}
-                            onPress={handleDisconnectPolymarket}
-                            style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
-                          >
-                            <Text style={styles.settingsDisconnectText}>
-                              {busy ? 'Disconnecting…' : 'Disconnect Polymarket'}
-                            </Text>
-                          </Pressable>
-                        )}
-                      </>
-                    )}
-
-                    {settingsView === 'amounts' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Quick amounts</Text>
-                        <Text style={styles.settingsCopy}>Choose the three shortcuts shown in the order composer.</Text>
-                        <View style={styles.quickAmountRow}>
-                          {quickAmountDraft.map((value, index) => (
-                            <View key={`quick-${index}`} style={styles.quickAmountInputWrap}>
-                              <Text style={styles.quickAmountCurrency}>$</Text>
-                              <TextInput
-                                value={value}
-                                onChangeText={(next) => setQuickAmountDraft((current) => current.map((entry, entryIndex) => entryIndex === index ? next : entry))}
-                                keyboardType="decimal-pad"
-                                placeholder="0"
-                                placeholderTextColor={semantic.text.faint}
-                                style={styles.quickAmountInput}
-                                accessibilityLabel={`Quick amount ${index + 1}`}
-                              />
-                            </View>
-                          ))}
-                        </View>
-                        {quickAmountError ? <Text selectable style={styles.quickAmountError}>{quickAmountError}</Text> : null}
-                        <Pressable style={[styles.saveSettingsBtn, quickAmountSaving && styles.btnDisabled]} disabled={quickAmountSaving} onPress={() => void saveQuickAmounts()}>
-                          <Text style={styles.saveSettingsText}>{quickAmountSaving ? 'Saving…' : 'Save amounts'}</Text>
-                        </Pressable>
-                      </>
-                    )}
-
-                    {settingsView === 'signout' && (
-                      <View style={styles.signOutConfirm}>
-                        <View style={styles.signOutConfirmIcon}>
-                          <MaterialIcons name="logout" size={22} color={tokens.colors.vermillion} />
-                        </View>
-                        <Text style={styles.settingsTitle}>Sign out of MyBoon?</Text>
-                        <Text style={styles.settingsCopy}>Your Polymarket positions and pUSD stay with your account. Sign in again to trade, withdraw, or collect.</Text>
-                        {signOutError ? <Text selectable style={styles.quickAmountError}>{signOutError}</Text> : null}
-                        <View style={styles.signOutActions}>
-                          <Pressable style={[styles.staySignedInBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => setSettingsView('security')}>
-                            <Text style={styles.staySignedInText}>Stay signed in</Text>
-                          </Pressable>
-                          <Pressable style={[styles.confirmSignOutBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => void handleSignOut()}>
-                            <Text style={styles.confirmSignOutText}>{signOutBusy ? 'Signing out…' : 'Sign out'}</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    )}
-                  </ScrollView>
-                </KeyboardAvoidingView>
-              </Modal>
-              <ConnectionSheet
-                visible={connectSheet.visible}
-                chain={connectSheet.chain}
-                // A successful connect also closes the sheet, and `onConnected` fires
-                // first — so this flag distinguishes "connected, keep the pending setup"
-                // from "user cancelled, drop it". Without it, closing on success would
-                // clear `setupAfterConnect` and the resume would never run.
-                onConnected={handleSheetConnected}
-                onClose={handleSheetClose}
-              />
+        {sheetOverlay}
       </View>
     );
   }
@@ -824,12 +472,12 @@ export function PolymarketPortfolioScreen() {
           note:
             polymarketValue === null
               ? 'Waiting for current balance and position quotes'
-              : currencyFormat === 'INR'
-                ? `Approximately ${formatProfileCurrency(polymarketValue, 'INR', usdToInrRate)} across your Polymarket account`
+              : settings.currencyFormat === 'INR'
+                ? `Approximately ${formatProfileCurrency(polymarketValue, 'INR', settings.usdToInrRate)} across your Polymarket account`
                 : 'Available cash, positions and ready payouts',
         }}
         right={(
-          <AppTopBarIconButton icon="settings" onPress={() => { setSettingsView('menu'); setSettingsOpen(true); }} accessibilityLabel="Open Polymarket settings" />
+          <AppTopBarIconButton icon="settings" onPress={settings.openSettings} accessibilityLabel="Open Polymarket settings" />
         )}
         onDeposit={accountState === 'ready' ? () => setDepositOpen(true) : undefined}
         onWithdraw={accountState === 'ready' ? handleWithdrawPress : undefined}
@@ -873,326 +521,7 @@ export function PolymarketPortfolioScreen() {
                 formatMoney={formatProfileMoney}
               />
 
-              <Modal visible={settingsOpen} transparent animationType="slide" onRequestClose={closeSettings}>
-                <KeyboardAvoidingView
-                  style={styles.settingsBackdrop}
-                  behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Close Polymarket profile settings"
-                    style={StyleSheet.absoluteFill}
-                    onPress={closeSettings}
-                  />
-                  <ScrollView
-                    style={styles.settingsCard}
-                    contentContainerStyle={[styles.settingsCardContent, { paddingBottom: Math.max(insets.bottom, 20) + 8 }]}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                    accessibilityViewIsModal
-                    accessibilityLabel="Polymarket settings dialog">
-                    <View style={styles.sheetGrabber} />
-                    <View style={styles.sheetTop}>
-                      <Text style={styles.settingsEyebrow}>{settingsView === 'security' ? 'Account & security' : 'Polymarket settings'}</Text>
-                      <Pressable accessibilityRole="button" accessibilityLabel="Close settings" style={styles.sheetClose} onPress={closeSettings}>
-                        <MaterialIcons name="close" size={18} color={semantic.text.dim} />
-                      </Pressable>
-                    </View>
-                    {settingsView !== 'menu' && (
-                      <Pressable style={styles.settingsBackRow} onPress={() => setSettingsView('menu')} accessibilityRole="button" accessibilityLabel="Back to Polymarket settings">
-                        <MaterialIcons name="chevron-left" size={16} color={semantic.text.dim} />
-                        <Text style={styles.settingsBackText}>Back</Text>
-                      </Pressable>
-                    )}
-
-                    {settingsView === 'menu' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Polymarket settings</Text>
-                        <Text style={styles.settingsCopy}>Preferences follow you across every market.</Text>
-                        <Text style={styles.sheetSectionLabel}>Trading display</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open currency display settings"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('currency')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="payments" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Currency display</Text>
-                            <Text style={styles.settingsOptionSub}>{currencyFormat} selected</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open odds format settings"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('odds')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="percent" size={15} color={tokens.colors.accent} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Odds format</Text>
-                            <Text style={styles.settingsOptionSub}>
-                              {oddsFormat === 'probability' ? 'Probability' : oddsFormat === 'decimal' ? 'Decimal' : 'Points'} selected
-                            </Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Edit quick amounts"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('amounts')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="calculate" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Quick amounts</Text>
-                            <Text style={styles.settingsOptionSub}>{quickAmounts.map((amount) => `$${amount}`).join(' · ')}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Text style={styles.sheetSectionLabel}>Account</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Open account and security"
-                          style={styles.settingsOption}
-                          onPress={() => setSettingsView('security')}
-                        >
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="vpn-key" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Account &amp; Security</Text>
-                            <Text style={styles.settingsOptionSub}>{privyAuthMethod ? `Signed in with ${privyAuthMethod === 'google' ? 'Google' : privyAuthMethod === 'email' ? 'email' : 'wallet'}` : 'Not signed in'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Text style={styles.sheetSectionLabel}>Safety</Text>
-                        <View style={styles.settingsOption}>
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="verified-user" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Order review</Text>
-                            <Text style={styles.settingsOptionSub}>Payout and maximum loss are always shown</Text>
-                          </View>
-                          <Text style={styles.alwaysOnText}>Always on</Text>
-                        </View>
-                      </>
-                    )}
-
-                    {settingsView === 'security' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Account &amp; Security</Text>
-                        <Text style={styles.settingsCopy}>Manage how you sign in and where funds can move.</Text>
-                        <Text style={styles.sheetSectionLabel}>Login</Text>
-                        <View style={styles.settingsOption}>
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name={privyAuthMethod === 'google' ? 'account-circle' : 'email'} size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>{authLabel ?? 'MyBoon login'}</Text>
-                            <Text style={styles.settingsOptionSub}>{maskedIdentity ?? (walletAddress ? truncate(walletAddress) : 'Not connected')}</Text>
-                          </View>
-                          <Text style={styles.settingsValue}>{authLabel ?? '—'}</Text>
-                        </View>
-                        <Text style={styles.sheetSectionLabel}>Connected wallets</Text>
-                        <Pressable style={styles.settingsOption} onPress={() => setSettingsView('wallet')} accessibilityRole="button" accessibilityLabel="View Polymarket wallet">
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="account-balance-wallet" size={15} color={tokens.colors.viridian} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Polymarket wallet</Text>
-                            <Text style={styles.settingsOptionSub}>{walletAddress ? `${truncate(walletAddress)} · ${isEnabled ? 'Connected' : 'Setup needed'}` : 'Not created'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable style={styles.settingsOption} onPress={handleWithdrawPress} accessibilityRole="button" accessibilityLabel="Manage Solana withdrawal destination">
-                          <View style={styles.settingsOptionIcon}>
-                            <MaterialIcons name="north-east" size={15} color={tokens.colors.primary} />
-                          </View>
-                          <View style={styles.settingsOptionCopy}>
-                            <Text style={styles.settingsOptionTitle}>Withdrawal destination</Text>
-                            <Text style={styles.settingsOptionSub}>{solanaAddress ? `${truncate(solanaAddress)} · Solana` : 'Connect a Solana wallet'}</Text>
-                          </View>
-                          <MaterialIcons name="chevron-right" size={18} color={semantic.text.faint} />
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Sign out of MyBoon"
-                          style={styles.signOutBtn}
-                          onPress={() => setSettingsView('signout')}>
-                          <MaterialIcons name="logout" size={15} color={tokens.colors.vermillion} />
-                          <Text style={styles.signOutText}>Sign out</Text>
-                        </Pressable>
-                      </>
-                    )}
-
-                    {settingsView === 'odds' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Odds format</Text>
-                        <Text style={styles.settingsCopy}>How prices show across Polymarket. Books and limit prices always stay in cents.</Text>
-                        {([
-                          { key: 'probability', title: 'Probability', sub: '57% — the chance' },
-                          { key: 'decimal', title: 'Decimal', sub: '1.75 — total return per $1' },
-                          { key: 'points', title: 'Points', sub: '+75 — profit per $1' },
-                        ] as const).map((option) => {
-                          const selected = oddsFormat === option.key;
-                          return (
-                            <Pressable
-                              key={option.key}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Show odds in ${option.title} format`}
-                              accessibilityState={{ selected }}
-                              style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
-                              onPress={() => {
-                                setOddsFormat(option.key);
-                                setSettingsOpen(false);
-                                setSettingsView('menu');
-                              }}
-                            >
-                              <View>
-                                <Text style={styles.currencyOptionTitle}>{option.title}</Text>
-                                <Text style={styles.currencyOptionSub}>{option.sub}</Text>
-                              </View>
-                              {selected && <MaterialIcons name="check-circle" size={20} color={tokens.colors.primary} />}
-                            </Pressable>
-                          );
-                        })}
-                      </>
-                    )}
-
-                    {settingsView === 'currency' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Currency display</Text>
-                        <Text style={styles.settingsCopy}>Choose how money shows on your Polymarket profile.</Text>
-                        {(['USD', 'INR'] as const).map((currency) => {
-                          const selected = currencyFormat === currency;
-                          return (
-                            <Pressable
-                              key={currency}
-                              accessibilityRole="button"
-                              accessibilityLabel={`Show Polymarket profile values in ${currency}`}
-                              accessibilityState={{ selected }}
-                              style={[styles.currencyOption, selected && styles.currencyOptionSelected]}
-                              onPress={() => selectCurrencyFormat(currency)}
-                            >
-                              <View>
-                                <Text style={styles.currencyOptionTitle}>{currency}</Text>
-                                <Text style={styles.currencyOptionSub}>
-                                  {currency === 'USD' ? '$ US dollars' : `₹ Indian rupees · live rate ${usdToInrRate.toFixed(2)}`}
-                                </Text>
-                              </View>
-                              {selected && <MaterialIcons name="check-circle" size={20} color={tokens.colors.primary} />}
-                            </Pressable>
-                          );
-                        })}
-                      </>
-                    )}
-
-                    {settingsView === 'wallet' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Polymarket wallet</Text>
-                        <Text style={styles.settingsCopy}>
-                          The active mobile SDK account owns authentication, approvals, orders, transfers, and redemption for this deposit wallet.
-                        </Text>
-                        <View style={styles.walletInfoBox}>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Polymarket signer</Text>
-                            <Text selectable style={styles.walletInfoValue}>{walletAddress ? truncate(walletAddress) : '--'}</Text>
-                          </View>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Deposit wallet</Text>
-                            <Text selectable style={styles.walletInfoValue}>{poly.tradingAddress ? truncate(poly.tradingAddress) : '--'}</Text>
-                          </View>
-                          <View style={styles.walletInfoRow}>
-                            <Text style={styles.walletInfoLabel}>Network</Text>
-                            <Text style={styles.walletInfoValue}>Polygon</Text>
-                          </View>
-                        </View>
-                        <Text style={styles.settingsFinePrint}>
-                          Your Polymarket wallet is managed through your MyBoon login. Private keys are never displayed here.
-                        </Text>
-                        {poly.isReady && (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="Disconnect Polymarket"
-                            disabled={busy}
-                            onPress={handleDisconnectPolymarket}
-                            style={[styles.settingsDisconnectBtn, busy && { opacity: 0.5 }]}
-                          >
-                            <Text style={styles.settingsDisconnectText}>
-                              {busy ? 'Disconnecting…' : 'Disconnect Polymarket'}
-                            </Text>
-                          </Pressable>
-                        )}
-                      </>
-                    )}
-
-                    {settingsView === 'amounts' && (
-                      <>
-                        <Text style={styles.settingsTitle}>Quick amounts</Text>
-                        <Text style={styles.settingsCopy}>Choose the three shortcuts shown in the order composer.</Text>
-                        <View style={styles.quickAmountRow}>
-                          {quickAmountDraft.map((value, index) => (
-                            <View key={`quick-${index}`} style={styles.quickAmountInputWrap}>
-                              <Text style={styles.quickAmountCurrency}>$</Text>
-                              <TextInput
-                                value={value}
-                                onChangeText={(next) => setQuickAmountDraft((current) => current.map((entry, entryIndex) => entryIndex === index ? next : entry))}
-                                keyboardType="decimal-pad"
-                                placeholder="0"
-                                placeholderTextColor={semantic.text.faint}
-                                style={styles.quickAmountInput}
-                                accessibilityLabel={`Quick amount ${index + 1}`}
-                              />
-                            </View>
-                          ))}
-                        </View>
-                        {quickAmountError ? <Text selectable style={styles.quickAmountError}>{quickAmountError}</Text> : null}
-                        <Pressable style={[styles.saveSettingsBtn, quickAmountSaving && styles.btnDisabled]} disabled={quickAmountSaving} onPress={() => void saveQuickAmounts()}>
-                          <Text style={styles.saveSettingsText}>{quickAmountSaving ? 'Saving…' : 'Save amounts'}</Text>
-                        </Pressable>
-                      </>
-                    )}
-
-                    {settingsView === 'signout' && (
-                      <View style={styles.signOutConfirm}>
-                        <View style={styles.signOutConfirmIcon}>
-                          <MaterialIcons name="logout" size={22} color={tokens.colors.vermillion} />
-                        </View>
-                        <Text style={styles.settingsTitle}>Sign out of MyBoon?</Text>
-                        <Text style={styles.settingsCopy}>Your Polymarket positions and pUSD stay with your account. Sign in again to trade, withdraw, or collect.</Text>
-                        {signOutError ? <Text selectable style={styles.quickAmountError}>{signOutError}</Text> : null}
-                        <View style={styles.signOutActions}>
-                          <Pressable style={[styles.staySignedInBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => setSettingsView('security')}>
-                            <Text style={styles.staySignedInText}>Stay signed in</Text>
-                          </Pressable>
-                          <Pressable style={[styles.confirmSignOutBtn, signOutBusy && styles.btnDisabled]} disabled={signOutBusy} onPress={() => void handleSignOut()}>
-                            <Text style={styles.confirmSignOutText}>{signOutBusy ? 'Signing out…' : 'Sign out'}</Text>
-                          </Pressable>
-                        </View>
-                      </View>
-                    )}
-                  </ScrollView>
-                </KeyboardAvoidingView>
-              </Modal>
-
-              <ConnectionSheet
-                visible={connectSheet.visible}
-                chain={connectSheet.chain}
-                // A successful connect also closes the sheet, and `onConnected` fires
-                // first — so this flag distinguishes "connected, keep the pending setup"
-                // from "user cancelled, drop it". Without it, closing on success would
-                // clear `setupAfterConnect` and the resume would never run.
-                onConnected={handleSheetConnected}
-                onClose={handleSheetClose}
-              />
+              {sheetOverlay}
     </>
   );
 }
