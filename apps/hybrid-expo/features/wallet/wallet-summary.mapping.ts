@@ -104,3 +104,19 @@ export function mapWalletSummaryApps(
     spot: mapWalletAppSource(summary.apps.spot, summary.fetchedAt, previous?.spot ?? null),
   };
 }
+
+/**
+ * Whether the Portfolio's sample balances show for this hook state (#780).
+ * Sample data is a "not deployed yet" placeholder only: it stands in exactly
+ * when the server answered HTTP 404 for `GET /wallet/summary` and no real
+ * summary is held. Every other failure — offline, timeout, 429, 5xx, a bad
+ * payload — and any held real summary shows no sample numbers: unknown is
+ * unknown, never a number.
+ */
+export function shouldShowDemo(
+  summary: WalletSummary | null,
+  loading: boolean,
+  errorStatus: number | null,
+): boolean {
+  return summary === null && loading === false && errorStatus === 404;
+}

@@ -15,10 +15,12 @@
  * — note (2); its Retry refetches the whole summary in one server call and
  * only the failed rows spin while that runs — note (3).
  *
- * While `/wallet/summary` has nothing to answer with yet, the section falls
- * back to `walletSummaryFixture` as clearly-marked demo data; the first
- * real response takes over. No addresses at all renders nothing (the hook
- * makes no call).
+ * Sample balances (`walletSummaryFixture`) are a "not deployed yet"
+ * placeholder only (#780): they stand in when the server answered HTTP 404
+ * for `/wallet/summary` and nothing real is held. Any other first-load
+ * failure shows no numbers — a short "Couldn't load your portfolio" line
+ * with one Retry in the Portfolio area. No addresses at all renders nothing
+ * (the hook makes no call).
  *
  * Table view only; Map and Cards views come later. Spot rows open `/spot`
  * (the venue's current profile route); app rows open theirs via callbacks,
@@ -34,6 +36,7 @@ import { walletSummaryFixture, type WalletSummary } from '@myboon/shared/wallet-
 import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import {
   mapWalletSummaryApps,
+  shouldShowDemo,
   type WalletAppSourceStates,
 } from '@/features/wallet/wallet-summary.mapping';
 import {
@@ -102,7 +105,7 @@ export const PortfolioSection = memo(function PortfolioSection({
   onOpenMeteora: () => void;
   onOpenSpot: () => void;
 }) {
-  const { summary, loading, error, retry } = useWalletSummary(solana, evm);
+  const { summary, loading, error, errorStatus, retry } = useWalletSummary(solana, evm);
   const [seg, setSeg] = useState<'apps' | 'spot'>('apps');
   const [showAll, setShowAll] = useState(false);
   // Freshness labels tick like WalletHero's so ages never read frozen.
@@ -113,9 +116,9 @@ export const PortfolioSection = memo(function PortfolioSection({
   }, []);
 
   const identityKey = `${solana ?? ''}|${evm ?? ''}`;
-  // While the server has no wallet apps to serve, the fixture stands in as
-  // clearly-marked demo data; the hook's first real summary replaces it.
-  const isMock = summary === null && error !== null && loading === false;
+  // Sample data stands in only while the endpoint is not deployed yet (404;
+  // #780) and nothing real is held; the first real summary replaces it.
+  const isMock = shouldShowDemo(summary, loading, errorStatus);
   const display: WalletSummary | null = summary ?? (isMock ? walletSummaryFixture : null);
   const currentIdentity = `${summary ? 'live' : isMock ? 'mock' : 'none'}:${identityKey}`;
 
@@ -150,6 +153,31 @@ export const PortfolioSection = memo(function PortfolioSection({
     setShowAll(false);
     setSeg(next);
   }, []);
+
+  // A first load that failed with anything but a "not deployed" 404 shows no
+  // numbers (#780): unknown is unknown, never a number — one Retry instead,
+  // in the existing Portfolio area.
+  if (!display && !loading && error !== null) {
+    return (
+      <View style={styles.section}>
+        <View style={styles.headerRow}>
+          <Text accessibilityRole="header" style={styles.title}>Portfolio</Text>
+        </View>
+        <View style={styles.failRow}>
+          <Text style={styles.failNote}>{"Couldn't load your portfolio"}</Text>
+          <Pressable
+            onPress={retry}
+            accessibilityRole="button"
+            accessibilityLabel="Retry your portfolio"
+            hitSlop={8}
+            style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
+          >
+            <Text style={styles.retryLabel}>Retry</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   // No addresses at all: the hook made no call, nothing to show.
   if (!display && !loading) return null;
@@ -552,4 +580,5 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 10.5,
   },
+  failRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
 });
