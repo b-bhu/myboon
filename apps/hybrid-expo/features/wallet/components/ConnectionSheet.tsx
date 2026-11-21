@@ -18,7 +18,6 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
-  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -79,6 +78,7 @@ import {
   WaitBlock,
   WalletMark,
 } from '@/features/wallet/components/ConnectionSheetParts';
+import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
 
 function useConnectFlow(
   visible: boolean,
@@ -175,46 +175,7 @@ export function ConnectionSheet({
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const emailField = useRef<TextInput>(null);
   const otpInput = useRef<TextInput>(null);
-  const keyboardLift = useRef(new Animated.Value(0)).current;
-  const [lifted, setLifted] = useState(false);
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-
-    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
-      setLifted(true);
-      Animated.timing(keyboardLift, {
-        toValue: event.endCoordinates.height,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start();
-    });
-
-    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
-      Animated.timing(keyboardLift, {
-        toValue: 0,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) setLifted(false);
-      });
-    });
-
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, [keyboardLift]);
-
-  useEffect(() => {
-    if (Platform.OS === 'ios') return;
-    const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
-    const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, []);
+  const { keyboardLift, lifted, setLifted } = useKeyboardLift();
 
   useEffect(() => () => {
     if (copyTimer.current) clearTimeout(copyTimer.current);
