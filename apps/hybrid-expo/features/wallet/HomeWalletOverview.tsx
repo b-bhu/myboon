@@ -24,6 +24,7 @@ import {
   type WalletActionMode,
 } from '@/features/wallet/wallet-mode';
 import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
+import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
@@ -346,12 +347,22 @@ export function HomeWalletOverview({
               const height = event.nativeEvent.layout.height;
               setComposerContentHeight((current) => rememberHeight(current, height));
             }}>
-              <MemoActionPanel
-                active={actionActive}
-                controllerActive={active}
-                surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
-                onBusyChange={setTradeBusy}
-              />
+              {/* Receive (#719) renders its QR card in the same fixed frame;
+                  anything signed stays on the swap composer. */}
+              {mode === 'receive' ? (
+                <ReceivePanel
+                  solanaAddress={chainAddress('solana')}
+                  evmAddress={chainAddress('evm')}
+                  chains={chains}
+                />
+              ) : (
+                <MemoActionPanel
+                  active={actionActive}
+                  controllerActive={active}
+                  surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
+                  onBusyChange={setTradeBusy}
+                />
+              )}
             </View>
           </ScrollView>
         </View>
