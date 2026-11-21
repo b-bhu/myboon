@@ -1,10 +1,11 @@
 /**
  * #746 tests: POST /wallet/move/quote with injected fetch, as the issue's
  * Tests section names them — a valid quote mapped · unsupported chain gives
- * `route_not_supported` · bad input gives 400 · Relay 500 gives 502 · the
- * key is sent in the header and appears in no response and no log line —
- * plus the quote-adjacent Done-means cases: a missing key gives 503 and a
- * Relay timeout or unusable answer gives 502.
+ * `route_not_supported` · bad input gives 400, including a Solana→Base
+ * request whose recipient is not an EVM address · the recipient is sent
+ * upstream · Relay 500 gives 502 · the key is sent in the header and appears
+ * in no response and no log line — plus the quote-adjacent Done-means cases:
+ * a missing key gives 503 and a Relay timeout or unusable answer gives 502.
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -20,6 +21,9 @@ const KEY = 'test-relay-key-746'
 const SOL = '9WzDXwBbmkg8ZtS64B7gndLU7pvkP8nJEvF5mxqcYWBm'
 const USDC_SOL = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
+// An explicit, valid EVM recipient on Base: what the body's recipientAddress
+// carries for a Solana -> Base move (#746).
+const BASE_RECIPIENT = '0x000000000000000000000000000000000000beef'
 const REQUEST_ID = '0x1795268589d262510c06f679d578b648cd110270c84894c3e7017cb3755fa4bd'
 
 function quoteBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -182,6 +186,7 @@ test('a valid quote is mapped and Relay is asked with POST and the key in the he
     assert.equal(call.headers['x-api-key'], KEY)
     assert.deepEqual(call.body, {
       user: SOL,
+      recipient: SOL,
       originChainId: 792703809,
       originCurrency: USDC_SOL,
       destinationChainId: 8453,
@@ -195,6 +200,17 @@ test('a valid quote is mapped and Relay is asked with POST and the key in the he
     capture.restore()
   }
   assertKeyInNoList([...capture.lines])
+})
+
+test('an explicit recipientAddress is sent upstream as recipient', async () => {
+  const stub = createRelayStub({ payload: relayQuoteFixture() })
+  const response = await post(appFor(stub), quoteBody({ recipientAddress: BASE_RECIPIENT }))
+  assert.equal(response.status, 200)
+  assert.deepEqual(JSON.parse(await response.text()), expectedQuote())
+  assert.equal(stub.calls.length, 1)
+  const upstream = stub.calls[0]!.body as Record<string, unknown>
+  assert.equal(upstream.recipient, BASE_RECIPIENT)
+  assert.equal(upstream.user, SOL)
 })
 
 test('a quote Relay prices without an app fee maps without appUsd', async () => {
@@ -248,6 +264,7 @@ test('bad input gives 400 with { error, code } and never calls Relay', async () 
     ['negative amount', quoteBody({ amount: '-5' })],
     ['missing userAddress', quoteBody({ userAddress: undefined })],
     ['evm address on a solana source', quoteBody({ userAddress: USDC_BASE })],
+    ['solana recipient on a base destination', quoteBody({ recipientAddress: SOL })],
   ]
   for (const [name, body] of badBodies) {
     const raw = typeof body === 'string' ? body : JSON.stringify(body)

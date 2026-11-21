@@ -6,7 +6,9 @@
  * review and sign.
  *
  * Request body `{ source: { chainId, currency }, destination: { chainId,
- * currency }, amount, userAddress }`; the mapped answer is the shared
+ * currency }, amount, userAddress, recipientAddress? }` — the optional
+ * `recipientAddress` is the user's address on the destination chain, sent to
+ * Relay as `recipient` (#746); the mapped answer is the shared
  * `WalletMoveQuoteResult` from `@myboon/shared/wallet-move`. Launch scope is
  * Solana (792703809) and Base (8453): chains outside it come back as
  * `route_not_supported` with a plain reason, not an error. Bad input is
@@ -38,7 +40,8 @@ const LAUNCH_CHAIN_IDS = new Set([SOLANA_CHAIN_ID, 8453])
 const DEFAULT_TIMEOUT_MS = 12_000
 
 // Same base58 and EVM patterns as /wallet/summary (src/wallet-summary/routes.ts),
-// applied to the user's address on the chain it deposits from.
+// applied to the user's address on the chain it deposits from and to an
+// explicit recipientAddress on the chain it lands on.
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/
 
@@ -118,6 +121,13 @@ export type ParsedQuoteRequest = {
   amount: string
   /** The user's address on the source chain. */
   userAddress: string
+  /**
+   * The user's address on the destination chain: the explicit
+   * `recipientAddress` when the body carries one, else `userAddress`. Sent
+   * to Relay as `recipient`, whose own default (`user`) is wrong for
+   * Solana <-> Base because a Solana address is invalid on Base (#746).
+   */
+  recipientAddress: string
 }
 
 /**
@@ -157,6 +167,29 @@ export function parseQuoteRequest(body: unknown):
     && !EVM_ADDRESS_PATTERN.test(userAddress)) {
     return { ok: false, error: 'The user address is not a valid EVM address.', code: 'INVALID_ADDRESS' }
   }
+  // The optional recipientAddress is the user's address on the destination
+  // chain (#746): Relay defaults `recipient` to `user`, and that default is
+  // wrong for Solana <-> Base because a Solana address is invalid on Base, so
+  // the app sends the explicit recipient and this API checks that it fits the
+  // destination chain's format. An explicit value must be a string; when the
+  // body omits the field, `user` flows through as Relay's own default, and a
+  // destination chain outside the launch scope has no format rule here — the
+  // scope check answers those below.
+  let recipientAddress = userAddress
+  if (body.recipientAddress !== undefined) {
+    const given = body.recipientAddress
+    if (typeof given !== 'string' || given.trim() === '') {
+      return { ok: false, error: 'The recipient address must be a non-empty string.', code: 'INVALID_ADDRESS' }
+    }
+    if (destination.chainId === SOLANA_CHAIN_ID && !SOLANA_ADDRESS_PATTERN.test(given)) {
+      return { ok: false, error: 'The recipient address is not a valid Solana address.', code: 'INVALID_ADDRESS' }
+    }
+    if (destination.chainId !== SOLANA_CHAIN_ID && LAUNCH_CHAIN_IDS.has(destination.chainId)
+      && !EVM_ADDRESS_PATTERN.test(given)) {
+      return { ok: false, error: 'The recipient address is not a valid EVM address.', code: 'INVALID_ADDRESS' }
+    }
+    recipientAddress = given
+  }
   return {
     ok: true,
     request: {
@@ -164,6 +197,7 @@ export function parseQuoteRequest(body: unknown):
       destination: { chainId: destination.chainId, currency: destination.currency },
       amount: body.amount,
       userAddress,
+      recipientAddress,
     },
   }
 }
@@ -293,6 +327,10 @@ export function createWalletMoveRoutes(options: {
 
     const upstreamBody = {
       user: request.userAddress,
+      // The user's address on the destination chain (#746): the explicit
+      // recipientAddress when the body carries one, else userAddress — Relay
+      // otherwise defaults recipient to user, which is invalid on Base.
+      recipient: request.recipientAddress,
       originChainId: request.source.chainId,
       originCurrency: request.source.currency,
       destinationChainId: request.destination.chainId,
