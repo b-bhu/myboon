@@ -12,7 +12,8 @@
  * flow via row.onPress — the shell never interprets venue actions.
  *
  * Execution lives in the venue adapters, moved from the four retired profile
- * screens; this shell signs nothing and moves nothing.
+ * screens; this shell signs nothing and moves nothing. The tab bar and tab
+ * body are shared with the Wallet's Polymarket app view (#773).
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -110,13 +111,6 @@ export function VenuePortfolioScreen({
   const [activeTab, setActiveTab] = useState<PortfolioTabKey>('positions');
 
   const tab = tabs[activeTab];
-  const counts = useMemo(
-    () =>
-      Object.fromEntries(
-        PORTFOLIO_TAB_KEYS.map((key) => [key, countPortfolioRows(tabs[key])]),
-      ) as Record<PortfolioTabKey, number>,
-    [tabs],
-  );
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]} testID={testID}>
@@ -198,23 +192,53 @@ export function VenuePortfolioScreen({
         ) : null}
 
         {/* The three tabs are fixed: rendered for every venue, always in this order. */}
-        <View style={styles.tabRow} accessibilityRole="tablist">
-          {PORTFOLIO_TAB_KEYS.map((key) => (
-            <TabButton
-              key={key}
-              label={key === 'positions' ? 'Positions' : key === 'orders' ? 'Orders' : 'History'}
-              count={counts[key]}
-              active={activeTab === key}
-              onPress={() => {
-                setActiveTab(key);
-                onTabChange?.(key);
-              }}
-            />
-          ))}
-        </View>
+        <PortfolioTabBar
+          tabs={tabs}
+          activeTab={activeTab}
+          onChange={(key) => {
+            setActiveTab(key);
+            onTabChange?.(key);
+          }}
+        />
 
         <PortfolioTabBody tabKey={activeTab} tab={tab} />
       </ScrollView>
+    </View>
+  );
+}
+
+/**
+ * The three-tab bar (Positions · Orders · History) with row-count badges,
+ * shared by the venue screens and the Wallet's Polymarket app view (#773).
+ */
+export function PortfolioTabBar({
+  tabs,
+  activeTab,
+  onChange,
+}: {
+  tabs: Record<PortfolioTabKey, VenuePortfolioScreenTab>;
+  activeTab: PortfolioTabKey;
+  onChange: (tab: PortfolioTabKey) => void;
+}) {
+  const counts = useMemo(
+    () =>
+      Object.fromEntries(
+        PORTFOLIO_TAB_KEYS.map((key) => [key, countPortfolioRows(tabs[key])]),
+      ) as Record<PortfolioTabKey, number>,
+    [tabs],
+  );
+
+  return (
+    <View style={styles.tabRow} accessibilityRole="tablist">
+      {PORTFOLIO_TAB_KEYS.map((key) => (
+        <TabButton
+          key={key}
+          label={key === 'positions' ? 'Positions' : key === 'orders' ? 'Orders' : 'History'}
+          count={counts[key]}
+          active={activeTab === key}
+          onPress={() => onChange(key)}
+        />
+      ))}
     </View>
   );
 }
@@ -255,7 +279,7 @@ function valueToneStyle(tone?: PortfolioRowTone) {
   }
 }
 
-function PortfolioTabBody({
+export function PortfolioTabBody({
   tabKey,
   tab,
 }: {
