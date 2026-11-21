@@ -19,6 +19,9 @@
  *    cron_restart '0 21 * * *' and autorestart false, and it declares
  *    CALENDAR_RELEASES_ENABLED (default 'false' when the shell is silent,
  *    follows the shell when it sets it).
+ *  - #707: the calendar releases entry reads its Supabase TLS CA from
+ *    packages/api/certs/supabase-prod-ca-2021.crt (a byte-for-byte copy of the
+ *    entity-manager CA): the file exists and run-releases.ts references it.
  *
  * Run:  pnpm exec tsx scripts/check-ecosystem.ts
  *
@@ -62,6 +65,11 @@ const STORIES_SOURCE_KEY = 'STORIES_SOURCE';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
 const ANALYST_CONFIG_PATH = path.join(here(), '..', 'packages', 'analyst', 'src', 'config.ts');
+// #707 the calendar releases entry must read its Supabase TLS CA from
+// packages/api/certs/ (a byte-for-byte copy of the entity-manager CA): a
+// missing CA file would ENOENT every non-localhost run before it connected.
+const CALENDAR_CERT_PATH = path.join(here(), '..', 'packages', 'api', 'certs', 'supabase-prod-ca-2021.crt');
+const RUN_RELEASES_PATH = path.join(here(), '..', 'packages', 'api', 'src', 'calendar', 'run-releases.ts');
 
 function here(): string {
   const entry = process.argv[1];
@@ -203,6 +211,16 @@ function main(): void {
     if (calendarReleasesApp.env?.[CALENDAR_RELEASES_FLAG_KEY] === undefined) {
       failures.push(`${CALENDAR_RELEASES_NAME} env: missing ${CALENDAR_RELEASES_FLAG_KEY}`);
     }
+  }
+
+  // #707: the CA file and the entry's reference to it are checkout checks, so
+  // they run regardless of the PM2 registration above.
+  if (!fs.existsSync(CALENDAR_CERT_PATH)) {
+    failures.push(`${CALENDAR_RELEASES_NAME}: Supabase TLS CA missing: packages/api/certs/supabase-prod-ca-2021.crt`);
+  }
+  const runReleasesSource = fs.existsSync(RUN_RELEASES_PATH) ? fs.readFileSync(RUN_RELEASES_PATH, 'utf8') : '';
+  if (!runReleasesSource.includes('certs/supabase-prod-ca-2021.crt')) {
+    failures.push(`${CALENDAR_RELEASES_NAME}: src/calendar/run-releases.ts must reference certs/supabase-prod-ca-2021.crt`);
   }
 
   delete process.env[MARKETS_FLAG_KEY];

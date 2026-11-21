@@ -18,7 +18,7 @@ import { runReleases } from './releases.js'
 
 // Same trust split as packages/entity-manager/src/worker.ts: clear host ->
 // verify, localhost -> no TLS (CreatePool-style, #701's calendar_worker role).
-const CA_PATH = fileURLToPath(new URL('../../supabase-prod-ca-2021.crt', import.meta.url))
+const CA_PATH = fileURLToPath(new URL('../../certs/supabase-prod-ca-2021.crt', import.meta.url))
 const LOCAL_HOSTS = new Set(['', 'localhost', '127.0.0.1', '::1'])
 
 export function createPool(databaseUrl: string): pg.Pool {
