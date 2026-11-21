@@ -166,6 +166,16 @@ export function formatTileMove(move: number): TileMove {
   return move > 0 ? { text: `+${text}`, tone: 'up' } : { text: `-${text}`, tone: 'down' };
 }
 
+/**
+ * Corner arrow on a story tile (#711): a priced, non-dim move gets the arrow
+ * on lead and wide tiles, but never on slim — a slim tile's one cell claims
+ * the corner for the title and shows the direction through the move's sign
+ * and colour.
+ */
+export function tileShowsArrow(move: TileMove | null, kind: MosaicTileKind): boolean {
+  return move !== null && move.tone !== 'dim' && kind !== 'slim';
+}
+
 /** The details tab to open: the `market` param's symbol when linked, else rank 1. */
 export function pickDetailMarket(
   markets: readonly StoryMarket[],

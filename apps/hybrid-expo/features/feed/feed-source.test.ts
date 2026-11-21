@@ -124,6 +124,8 @@ test('tiles keep the pager re-snap effect and a visible inactive page dot', () =
   // The inactive dot is dim but visible: textDim reads >= 3:1 on the Feed
   // background; the old border token did not.
   assert.match(source, /dot: \{ width: 8, height: 3, backgroundColor: FEED_TOKENS\.colors\.textDim \}/);
-  // Slim tiles keep the move visible on one grid cell.
-  assert.match(source, /moveLabelSlim: \{ letterSpacing: 0, marginHorizontal: -4 \}/);
+  // Slim tiles keep the move visible on one grid cell: a reserved minimum
+  // width, never shrink-to-fit (#711).
+  assert.match(source, /moveLabelSlim: \{ letterSpacing: 0, marginHorizontal: -4, minWidth: SLIM_MOVE_MIN_WIDTH \}/);
+  assert.equal(source.includes('adjustsFontSizeToFit'), false);
 });
