@@ -11,10 +11,13 @@
 
 import { useRef } from 'react';
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   CONNECT_COPY,
+  EXPORT_INSTRUCTIONS,
+  type ConnectFlowEvent,
   type ConnectFlowState,
+  type ConnectStep,
 } from '@/features/wallet/components/connect.flow';
 import {
   canRequestOtp,
@@ -22,11 +25,15 @@ import {
   type OtpCodeSession,
 } from '@/features/wallet/components/otp-resend';
 import { pasteCode } from '@/features/wallet/components/useEmailOtp';
-import { semantic } from '@/theme';
+import { semantic, tokens } from '@/theme';
 import { styles } from '@/features/wallet/components/ConnectionSheet.styles';
 import {
+  DangerButton,
   EmailMark,
+  FailBlock,
   PrimaryButton,
+  SecondaryButton,
+  WaitBlock,
   WalletMark,
 } from '@/features/wallet/components/ConnectionSheetParts';
 
@@ -222,5 +229,169 @@ export function OtpStep({
         onPress={() => void handleVerifyOTP()}
       />
     </View>
+  );
+}
+
+export function ConnectedStep({
+  flow,
+  privyLabel,
+  chainRows,
+  copiedKey,
+  handleCopy,
+  busy,
+  dispatch,
+}: {
+  flow: ConnectFlowState;
+  privyLabel: string;
+  chainRows: { key: string; label: string; address: string }[];
+  copiedKey: string | null;
+  handleCopy: (key: string, address: string) => Promise<void>;
+  busy: boolean;
+  dispatch: (event: ConnectFlowEvent) => void;
+}) {
+  return (
+    <View style={styles.stack}>
+      <View style={styles.ident}>
+        {flow.linked === 'privy' ? (
+          <View style={[styles.identMark, styles.markEmail]}>
+            <EmailMark color={tokens.colors.viridian} size={22} />
+          </View>
+        ) : (
+          <View style={styles.identMark}>
+            <WalletMark color={semantic.text.primary} size={22} />
+          </View>
+        )}
+        <View style={styles.identText}>
+          <Text style={styles.identName}>
+            {flow.linked === 'privy' ? privyLabel : CONNECT_COPY.externalWallet}
+          </Text>
+          <Text style={styles.identDetail}>
+            {flow.linked === 'privy' ? CONNECT_COPY.emailDetail : CONNECT_COPY.externalDetail}
+          </Text>
+        </View>
+      </View>
+      {chainRows.map((row) => (
+        <View key={row.key} style={styles.chainCard}>
+          <View style={styles.labRow}>
+            <Text style={styles.lab}>{row.label}</Text>
+            <Pressable
+              onPress={() => void handleCopy(row.key, row.address)}
+              accessibilityRole="button"
+              accessibilityLabel={`Copy ${row.label} address`}
+            >
+              <Text style={styles.copyText}>
+                {copiedKey === row.key ? CONNECT_COPY.copied : CONNECT_COPY.copy}
+              </Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            <Text selectable style={styles.addressValue}>{row.address}</Text>
+          </ScrollView>
+        </View>
+      ))}
+      <View style={styles.stack}>
+        {flow.linked === 'privy' ? (
+          <SecondaryButton
+            label={CONNECT_COPY.export}
+            onPress={() => dispatch({ type: 'open_export' })}
+          />
+        ) : null}
+        <DangerButton
+          label={CONNECT_COPY.disconnect}
+          disabled={busy}
+          onPress={() => dispatch({ type: 'request_disconnect' })}
+        />
+      </View>
+    </View>
+  );
+}
+
+export function ExportSteps({
+  step,
+  dispatch,
+  onContinue,
+}: {
+  step: Extract<ConnectStep, { kind: 'export' } | { kind: 'export_opening' } | { kind: 'export_failed' }>;
+  dispatch: (event: ConnectFlowEvent) => void;
+  onContinue: () => void;
+}) {
+  if (step.kind === 'export') {
+    return (
+      <View style={styles.exportStack}>
+        <View accessibilityRole="list" style={styles.exportSteps}>
+          {EXPORT_INSTRUCTIONS.map((parts, index) => (
+            <Text key={index} style={styles.exportStepText}>
+              <Text style={styles.exportIndex}>{index + 1}. </Text>
+              {parts.map((part, partIndex) => (
+                <Text key={partIndex} style={part.emphasis ? styles.exportStrong : undefined}>
+                  {part.text}
+                </Text>
+              ))}
+            </Text>
+          ))}
+        </View>
+        <Text style={styles.exportWarning}>{CONNECT_COPY.exportWarning}</Text>
+        <View style={styles.exportActions}>
+          <PrimaryButton compact label={CONNECT_COPY.continuePrivy} onPress={onContinue} />
+          <SecondaryButton
+            compact
+            label={CONNECT_COPY.notNow}
+            onPress={() => dispatch({ type: 'export_not_now' })}
+          />
+        </View>
+      </View>
+    );
+  }
+
+  if (step.kind === 'export_opening') {
+    return <WaitBlock title={CONNECT_COPY.openingPrivyTitle} body={CONNECT_COPY.openingPrivyBody} />;
+  }
+
+  return (
+    <View style={styles.stack}>
+      <Text style={styles.plain}>{CONNECT_COPY.exportFailed}</Text>
+      <PrimaryButton
+        label={CONNECT_COPY.exportTryAgain}
+        onPress={() => dispatch({ type: 'export_retry' })}
+      />
+      <SecondaryButton
+        label={CONNECT_COPY.backToWallet}
+        onPress={() => dispatch({ type: 'back' })}
+      />
+    </View>
+  );
+}
+
+export function ConfirmDisconnectStep({
+  flow,
+  actionError,
+  busy,
+  confirmDisconnect,
+  dispatch,
+}: {
+  flow: ConnectFlowState;
+  actionError: string | null;
+  busy: boolean;
+  confirmDisconnect: () => Promise<void>;
+  dispatch: (event: ConnectFlowEvent) => void;
+}) {
+  return (
+    <FailBlock
+      icon={false}
+      title={CONNECT_COPY.disconnectTitle}
+      body={flow.linked === 'privy' ? CONNECT_COPY.privyDisconnectBody : CONNECT_COPY.disconnectBody}
+    >
+      {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+      <DangerButton
+        label={busy ? 'Disconnecting...' : CONNECT_COPY.disconnect}
+        disabled={busy}
+        onPress={() => void confirmDisconnect()}
+      />
+      <SecondaryButton
+        label={CONNECT_COPY.cancel}
+        disabled={busy}
+        onPress={() => dispatch({ type: 'cancel_disconnect' })}
+      />
+    </FailBlock>
   );
 }

@@ -12,6 +12,9 @@
  * calls, not the mock's timers.
  *
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
+ *
+ * The step screens live in ConnectionSheetSteps.tsx (#739); this file keeps the
+ * Modal, the header and the step switch.
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -32,7 +35,6 @@ import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
-  EXPORT_INSTRUCTIONS,
   canGoBack,
   connectedChainLabel,
   sheetChrome,
@@ -41,16 +43,12 @@ import {
 } from '@/features/wallet/components/connect.flow';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
-import { semantic, tokens } from '@/theme';
+import { semantic } from '@/theme';
 import { styles } from '@/features/wallet/components/ConnectionSheet.styles';
 import {
-  DangerButton,
-  EmailMark,
   FailBlock,
   PrimaryButton,
-  SecondaryButton,
   WaitBlock,
-  WalletMark,
 } from '@/features/wallet/components/ConnectionSheetParts';
 import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
 import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
@@ -59,7 +57,13 @@ import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
 import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
 import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
 import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
-import { EntryStep, OtpStep } from '@/features/wallet/components/ConnectionSheetSteps';
+import {
+  ConnectedStep,
+  ConfirmDisconnectStep,
+  EntryStep,
+  ExportSteps,
+  OtpStep,
+} from '@/features/wallet/components/ConnectionSheetSteps';
 
 export function ConnectionSheet({
   visible,
@@ -324,123 +328,35 @@ export function ConnectionSheet({
             ) : null}
 
             {flow.step.kind === 'connected' ? (
-              <View style={styles.stack}>
-                <View style={styles.ident}>
-                  {flow.linked === 'privy' ? (
-                    <View style={[styles.identMark, styles.markEmail]}>
-                      <EmailMark color={tokens.colors.viridian} size={22} />
-                    </View>
-                  ) : (
-                    <View style={styles.identMark}>
-                      <WalletMark color={semantic.text.primary} size={22} />
-                    </View>
-                  )}
-                  <View style={styles.identText}>
-                    <Text style={styles.identName}>
-                      {flow.linked === 'privy' ? privyLabel : CONNECT_COPY.externalWallet}
-                    </Text>
-                    <Text style={styles.identDetail}>
-                      {flow.linked === 'privy' ? CONNECT_COPY.emailDetail : CONNECT_COPY.externalDetail}
-                    </Text>
-                  </View>
-                </View>
-                {chainRows.map((row) => (
-                  <View key={row.key} style={styles.chainCard}>
-                    <View style={styles.labRow}>
-                      <Text style={styles.lab}>{row.label}</Text>
-                      <Pressable
-                        onPress={() => void handleCopy(row.key, row.address)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Copy ${row.label} address`}
-                      >
-                        <Text style={styles.copyText}>
-                          {copiedKey === row.key ? CONNECT_COPY.copied : CONNECT_COPY.copy}
-                        </Text>
-                      </Pressable>
-                    </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <Text selectable style={styles.addressValue}>{row.address}</Text>
-                    </ScrollView>
-                  </View>
-                ))}
-                <View style={styles.stack}>
-                  {flow.linked === 'privy' ? (
-                    <SecondaryButton
-                      label={CONNECT_COPY.export}
-                      onPress={() => dispatch({ type: 'open_export' })}
-                    />
-                  ) : null}
-                  <DangerButton
-                    label={CONNECT_COPY.disconnect}
-                    disabled={busy}
-                    onPress={() => dispatch({ type: 'request_disconnect' })}
-                  />
-                </View>
-              </View>
+              <ConnectedStep
+                busy={busy}
+                chainRows={chainRows}
+                copiedKey={copiedKey}
+                dispatch={dispatch}
+                flow={flow}
+                handleCopy={handleCopy}
+                privyLabel={privyLabel}
+              />
             ) : null}
 
-            {flow.step.kind === 'export' ? (
-              <View style={styles.exportStack}>
-                <View accessibilityRole="list" style={styles.exportSteps}>
-                  {EXPORT_INSTRUCTIONS.map((parts, index) => (
-                    <Text key={index} style={styles.exportStepText}>
-                      <Text style={styles.exportIndex}>{index + 1}. </Text>
-                      {parts.map((part, partIndex) => (
-                        <Text key={partIndex} style={part.emphasis ? styles.exportStrong : undefined}>
-                          {part.text}
-                        </Text>
-                      ))}
-                    </Text>
-                  ))}
-                </View>
-                <Text style={styles.exportWarning}>{CONNECT_COPY.exportWarning}</Text>
-                <View style={styles.exportActions}>
-                  <PrimaryButton compact label={CONNECT_COPY.continuePrivy} onPress={handleExportContinue} />
-                  <SecondaryButton
-                    compact
-                    label={CONNECT_COPY.notNow}
-                    onPress={() => dispatch({ type: 'export_not_now' })}
-                  />
-                </View>
-              </View>
-            ) : null}
-
-            {flow.step.kind === 'export_opening' ? (
-              <WaitBlock title={CONNECT_COPY.openingPrivyTitle} body={CONNECT_COPY.openingPrivyBody} />
-            ) : null}
-
-            {flow.step.kind === 'export_failed' ? (
-              <View style={styles.stack}>
-                <Text style={styles.plain}>{CONNECT_COPY.exportFailed}</Text>
-                <PrimaryButton
-                  label={CONNECT_COPY.exportTryAgain}
-                  onPress={() => dispatch({ type: 'export_retry' })}
-                />
-                <SecondaryButton
-                  label={CONNECT_COPY.backToWallet}
-                  onPress={() => dispatch({ type: 'back' })}
-                />
-              </View>
+            {flow.step.kind === 'export'
+              || flow.step.kind === 'export_opening'
+              || flow.step.kind === 'export_failed' ? (
+              <ExportSteps
+                dispatch={dispatch}
+                onContinue={handleExportContinue}
+                step={flow.step}
+              />
             ) : null}
 
             {flow.step.kind === 'confirm_disconnect' ? (
-              <FailBlock
-                icon={false}
-                title={CONNECT_COPY.disconnectTitle}
-                body={flow.linked === 'privy' ? CONNECT_COPY.privyDisconnectBody : CONNECT_COPY.disconnectBody}
-              >
-                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-                <DangerButton
-                  label={busy ? 'Disconnecting...' : CONNECT_COPY.disconnect}
-                  disabled={busy}
-                  onPress={() => void confirmDisconnect()}
-                />
-                <SecondaryButton
-                  label={CONNECT_COPY.cancel}
-                  disabled={busy}
-                  onPress={() => dispatch({ type: 'cancel_disconnect' })}
-                />
-              </FailBlock>
+              <ConfirmDisconnectStep
+                actionError={actionError}
+                busy={busy}
+                confirmDisconnect={confirmDisconnect}
+                dispatch={dispatch}
+                flow={flow}
+              />
             ) : null}
           </ScrollView>
         </Animated.View>
