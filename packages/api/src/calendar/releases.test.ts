@@ -34,6 +34,7 @@ function economicEvent(over: Partial<EconomicEvent> = {}): EconomicEvent {
     timePrecision: 'time',
     source: 'backpack',
     sourceUrl: 'https://backpack.exchange/stocks/calendar',
+    entitySlug: 'us-cpi',
     country: 'US',
     currency: null,
     impact: null,

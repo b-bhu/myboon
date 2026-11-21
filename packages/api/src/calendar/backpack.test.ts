@@ -65,6 +65,31 @@ test('reports malformed rows and rejects incompatible payloads instead of report
   assert.deepEqual(normalizeBackpackCalendar('economic', [], range), { events: [], invalidEvents: 0 })
 })
 
+test('tags economic events with the entity from the fixed series list, else null, and earnings always null', () => {
+  const result = normalizeBackpackCalendar('economic', [
+    { date: '2026-10-06 13:30:00', event: 'Inflation Rate YoY (Oct)', country: 'US' },
+    { date: '2026-10-06 13:00:00', event: 'Core Inflation Rate YoY (Oct)', country: 'US' },
+    { date: '2026-10-06 13:00:00', event: 'Inflation Rate YoY (Oct)', country: 'JP' },
+  ], range)
+  assert.equal(result.invalidEvents, 0)
+  assert.equal(result.events.length, 3)
+  const byCountryAndTitle = (country: string, title: string) => {
+    const event = result.events.find(
+      (candidate) => candidate.type === 'economic' && candidate.country === country && candidate.title === title,
+    )
+    if (!event || event.type !== 'economic') throw new Error(`Missing event ${country} ${title}`)
+    return event
+  }
+  assert.equal(byCountryAndTitle('US', 'Inflation Rate YoY (Oct)').entitySlug, 'us-cpi')
+  // A variant of the same release time is deliberately not on the list.
+  assert.equal(byCountryAndTitle('US', 'Core Inflation Rate YoY (Oct)').entitySlug, null)
+  // The series list is US-only.
+  assert.equal(byCountryAndTitle('JP', 'Inflation Rate YoY (Oct)').entitySlug, null)
+  // Earnings events have no series link.
+  const dal = normalizeBackpackCalendar('earnings', [{ date: '2026-10-06', symbol: 'DAL' }], range).events[0]!
+  assert.equal(dal.entitySlug, null)
+})
+
 test('calls the fixed anonymous read endpoint with the inclusive date bounds', async () => {
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = new URL(String(input))

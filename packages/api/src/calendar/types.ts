@@ -16,6 +16,12 @@ interface CalendarEventBase {
   timePrecision: 'date' | 'time'
   source: 'backpack'
   sourceUrl: string
+  /**
+   * The entity this event belongs to, from the fixed series list in
+   * `series.ts` (#702/#703). Null for earnings and for titles that match no
+   * series — the calendar history route only serves matched economic events.
+   */
+  entitySlug: string | null
 }
 
 export interface EarningsEvent extends CalendarEventBase {
