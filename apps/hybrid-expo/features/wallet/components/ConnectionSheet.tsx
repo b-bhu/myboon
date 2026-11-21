@@ -15,11 +15,9 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
-  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -29,10 +27,6 @@ import {
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
-import Svg, { Circle, Path } from 'react-native-svg';
 import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
@@ -40,84 +34,36 @@ import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
   EXPORT_INSTRUCTIONS,
-  INITIAL_CONNECT_FLOW,
-  assertPrivyHomeUrl,
-  beginPrivyExport,
   canGoBack,
-  interpretPrivyExportSession,
-  classifyWalletSetupError,
   connectedChainLabel,
-  emailEntryError,
-  isUserCancelled,
-  otpFailureMessage,
-  reduceConnectFlow,
   sheetChrome,
   showsLogout,
-  type ConnectFlowEvent,
-  type ConnectFlowState,
   type LinkedKind,
 } from '@/features/wallet/components/connect.flow';
 import {
-  beginOtpSend,
   canRequestOtp,
-  emptyOtpSession,
-  finishOtpSend,
-  isPrivyRateLimit,
   resendButtonLabel,
-  sessionForEmail,
-  type OtpCodeSession,
 } from '@/features/wallet/components/otp-resend';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
-import { selectMwaDisconnect } from '@/features/wallet/signOut';
 import { semantic, tokens } from '@/theme';
 import { styles } from '@/features/wallet/components/ConnectionSheet.styles';
-
-function useConnectFlow(
-  visible: boolean,
-  session: {
-    linked: LinkedKind | null;
-    privyAuthenticated: boolean;
-    hasEmbeddedWallet: boolean;
-    privyReady: boolean;
-  },
-) {
-  const [flow, setFlow] = useState<ConnectFlowState>(INITIAL_CONNECT_FLOW);
-  const decided = useRef(false);
-  let display = flow;
-
-  const openEvent: ConnectFlowEvent = {
-    type: 'open',
-    linked: session.linked,
-    privyAuthenticated: session.privyAuthenticated,
-    hasEmbeddedWallet: session.hasEmbeddedWallet,
-  };
-
-  if (!visible) {
-    decided.current = false;
-  } else if (!decided.current && session.privyReady) {
-    decided.current = true;
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  } else if (
-    visible
-    && decided.current
-    && session.linked
-    && flow.linked !== session.linked
-    && (flow.step.kind === 'entry' || flow.step.kind === 'fail_setup')
-  ) {
-    // The session can land a moment after the sheet opens. Show the connected
-    // sheet once it does, instead of leaving the user on the email form.
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  }
-
-  const dispatch = useCallback((event: ConnectFlowEvent) => {
-    setFlow((current) => reduceConnectFlow(current, event));
-  }, []);
-
-  return { flow: display, dispatch, deciding: visible && !session.privyReady };
-}
+import {
+  DangerButton,
+  EmailMark,
+  FailBlock,
+  PrimaryButton,
+  SecondaryButton,
+  WaitBlock,
+  WalletMark,
+} from '@/features/wallet/components/ConnectionSheetParts';
+import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
+import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
+import { pasteCode, useEmailOtp } from '@/features/wallet/components/useEmailOtp';
+import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
+import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
+import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
+import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
 
 export function ConnectionSheet({
   visible,
@@ -152,80 +98,10 @@ export function ConnectionSheet({
     privyReady: privy.isReady,
   });
 
-  const [emailInput, setEmailInput] = useState('');
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [sentEmail, setSentEmail] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpError, setOtpError] = useState<string | null>(null);
-  const [otpSession, setOtpSession] = useState<OtpCodeSession>(emptyOtpSession);
-  const [otpClock, setOtpClock] = useState(() => Date.now());
-  const otpSendLock = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const exportInFlight = useRef(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const emailField = useRef<TextInput>(null);
   const otpInput = useRef<TextInput>(null);
-  const keyboardLift = useRef(new Animated.Value(0)).current;
-  const [lifted, setLifted] = useState(false);
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-
-    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
-      setLifted(true);
-      Animated.timing(keyboardLift, {
-        toValue: event.endCoordinates.height,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start();
-    });
-
-    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
-      Animated.timing(keyboardLift, {
-        toValue: 0,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) setLifted(false);
-      });
-    });
-
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, [keyboardLift]);
-
-  useEffect(() => {
-    if (Platform.OS === 'ios') return;
-    const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
-    const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, []);
-
-  useEffect(() => () => {
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-  }, []);
-
-  useEffect(() => {
-    if (flow.step.kind !== 'otp') return;
-    setOtpClock(Date.now());
-    const waiting = otpSession.phase === 'sending' || otpSession.availableAt > Date.now();
-    if (!waiting) return;
-    const timer = setInterval(() => setOtpClock(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [flow.step.kind, otpSession.availableAt, otpSession.phase]);
-
-  const options = availableOptions(chain);
-  const emailAvailable = options.includes('email');
-  const externalAvailable = options.includes('external_wallet');
-  const chrome = sheetChrome(flow, { email: sentEmail });
+  const { keyboardLift, lifted, setLifted } = useKeyboardLift();
 
   const requestClose = useCallback(() => {
     // The typed email stays. Closing and reopening, or backing out of the
@@ -236,220 +112,64 @@ export function ConnectionSheet({
     onClose();
   }, [keyboardLift, onClose]);
 
-  const finishActivated = useCallback((kind: LinkedKind) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    onConnected?.();
-    dispatch({ type: 'wallet_setup_succeeded', linked: kind });
-    onClose();
-  }, [dispatch, onClose, onConnected]);
+  const { runWalletSetup, handleExternalWallet, handleRetryWallet } = useWalletSetup({
+    chain,
+    dispatch,
+    privy,
+    evm,
+    activate,
+    onClose,
+    onConnected,
+    solana,
+    busy,
+    setBusy,
+    setActionError,
+  });
 
-  /**
-   * Wallet step only. The caller has already signed in. A throw here is a
-   * setup failure, never an "Invalid code".
-   */
-  const runWalletSetup = useCallback(async () => {
-    if (chain === 'solana') await privy.waitForWallet();
-    else if (!evm.isProvisioned) await evm.provision();
-    await activate(chain);
-    finishActivated('privy');
-  }, [activate, chain, evm, finishActivated, privy]);
+  const {
+    emailInput,
+    setEmailInput,
+    emailError,
+    setEmailError,
+    emailFocused,
+    setEmailFocused,
+    emailField,
+    sentEmail,
+    otpCode,
+    setOtpCode,
+    otpError,
+    setOtpError,
+    otpSession,
+    setOtpSession,
+    otpClock,
+    handleContinue,
+    handleResend,
+    handleVerifyOTP,
+  } = useEmailOtp({ flow, dispatch, privy, busy, setBusy, setActionError, runWalletSetup });
 
-  const requestEmailCode = useCallback(async (email: string, resend: boolean) => {
-    if (busy || otpSendLock.current) return;
-    const now = Date.now();
-    const current = sessionForEmail(otpSession, email);
-    if (current !== otpSession) setOtpCode('');
-    // Continue returns to the code already sent. Resend is the only new send.
-    if (!resend && current.delivered) {
-      setOtpSession(current);
-      setSentEmail(email);
-      setOtpError(null);
-      dispatch({ type: 'code_sent' });
-      return;
-    }
-    if (!canRequestOtp(current, now)) {
-      setOtpSession(current);
-      setSentEmail(email);
-      if (!resend) dispatch({ type: 'code_sent' });
-      return;
-    }
-    const sending = beginOtpSend(current, email, now);
-    if (!sending) return;
-    otpSendLock.current = true;
-    setOtpSession(sending);
-    setOtpClock(now);
-    setOtpError(null);
-    setEmailError(null);
-    setBusy(true);
-    setActionError(null);
-    try {
-      await privy.sendEmailOTP(email);
-      setOtpSession((session) => finishOtpSend(session, Date.now(), { ok: true }));
-      setOtpClock(Date.now());
-      setSentEmail(email);
-      dispatch({ type: 'code_sent' });
-    } catch (error: unknown) {
-      const failedAt = Date.now();
-      setOtpSession((session) => finishOtpSend(session, failedAt, { ok: false, error }));
-      setOtpClock(failedAt);
-      if (isPrivyRateLimit(error) || resend) {
-        setSentEmail(email);
-        if (!resend) dispatch({ type: 'code_sent' });
-      } else {
-        dispatch({ type: 'login_failed' });
-      }
-    } finally {
-      otpSendLock.current = false;
-      setBusy(false);
-    }
-  }, [busy, dispatch, otpSession, privy]);
+  const options = availableOptions(chain);
+  const emailAvailable = options.includes('email');
+  const externalAvailable = options.includes('external_wallet');
+  const chrome = sheetChrome(flow, { email: sentEmail });
 
-  const handleExternalWallet = useCallback(async () => {
-    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet.
-    // connectExternal is that call. This path does not sign in or create a wallet.
-    if (busy || chain !== 'solana') return;
-    setActionError(null);
-    dispatch({ type: 'choose_external' });
-    setBusy(true);
-    try {
-      await solana.connectExternal();
-      await activate('solana');
-      finishActivated('external');
-    } catch (error: unknown) {
-      if (isUserCancelled(error)) {
-        dispatch({ type: 'external_cancelled' });
-      } else {
-        const message = error instanceof Error && error.message
-          ? error.message
-          : 'Could not connect that wallet.';
-        dispatch({ type: 'external_failed', message });
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, [activate, busy, chain, dispatch, finishActivated, solana]);
-
-  const handleContinue = useCallback(async () => {
-    const email = emailInput.trim();
-    const invalid = emailEntryError(email);
-    if (invalid) {
-      setEmailInput(email);
-      setEmailError(invalid);
-      emailField.current?.focus();
-      return;
-    }
-    if (busy) return;
-    setEmailInput(email);
-    setEmailError(null);
-    await requestEmailCode(email, false);
-  }, [busy, emailInput, requestEmailCode]);
-
-  const handleResend = useCallback(async () => {
-    if (!sentEmail || busy || otpSendLock.current) return;
-    await requestEmailCode(sentEmail, true);
-  }, [busy, requestEmailCode, sentEmail]);
-
-  const handleVerifyOTP = useCallback(async () => {
-    if (!otpCode.trim() || busy) return;
-    setBusy(true);
-    setOtpError(null);
-    try {
-      await privy.loginWithEmailOTP(otpCode.trim(), sentEmail);
-    } catch (error: unknown) {
-      setOtpError(otpFailureMessage(error));
-      dispatch({ type: 'otp_rejected' });
-      setBusy(false);
-      return;
-    }
-    dispatch({ type: 'login_succeeded' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, otpCode, privy, runWalletSetup, sentEmail]);
-
-  const handleRetryWallet = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    dispatch({ type: 'retry_wallet' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, runWalletSetup]);
-
-  const handleLogout = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      await privy.disconnect(selectMwaDisconnect(solana));
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      setEmailError(null);
-      dispatch({ type: 'logout' });
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not log out.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, privy, solana]);
-
-  const handleCopy = useCallback(async (key: string, address: string) => {
-    await Clipboard.setStringAsync(address);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    setCopiedKey(key);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopiedKey(null), 900);
-  }, []);
-
-  const handleExportContinue = useCallback(() => {
-    if (flow.linked !== 'privy' || exportInFlight.current) return;
-    const handoff = beginPrivyExport();
-    exportInFlight.current = true;
-    dispatch({ type: 'export_continue' });
-    void openPrivyExportPage(handoff.url)
-      .then((outcome) => {
-        dispatch(outcome === 'handed_off' ? { type: 'export_handed_off' } : { type: 'export_failed' });
-      })
-      .finally(() => {
-        exportInFlight.current = false;
-      });
-  }, [dispatch, flow.linked]);
-
-  const confirmDisconnect = useCallback(async () => {
-    if (busy || !flow.linked) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      if (flow.linked === 'external') {
-        if (solana.disconnect) await solana.disconnect();
-        await deactivate('solana');
-      } else if (privy.isPrivyUser) {
-        await privy.disconnect(selectMwaDisconnect(solana));
-      } else if (solana.disconnect) {
-        await solana.disconnect();
-        await deactivate(chain);
-      }
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      dispatch({ type: 'disconnected' });
-      onClose();
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not disconnect.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, chain, deactivate, dispatch, flow.linked, onClose, privy, solana]);
+  const { handleLogout, confirmDisconnect } = useSheetDisconnect({
+    flow,
+    dispatch,
+    privy,
+    solana,
+    chain,
+    deactivate,
+    onClose,
+    busy,
+    setBusy,
+    setActionError,
+    setOtpCode,
+    setOtpError,
+    setOtpSession,
+    setEmailError,
+  });
+  const { copiedKey, handleCopy } = useCopyAddress();
+  const { handleExportContinue } = usePrivyExport({ flow, dispatch });
 
   const goBack = useCallback(() => {
     setOtpError(null);
@@ -838,197 +558,4 @@ export function ConnectionSheet({
       </KeyboardAvoidingView>
     </Modal>
   );
-}
-
-async function pasteCode(setOtpCode: (value: string) => void) {
-  const text = (await Clipboard.getStringAsync()) ?? '';
-  const digits = text.replace(/\D/g, '').slice(0, 6);
-  if (digits) setOtpCode(digits);
-}
-
-function WaitBlock({ title, body }: { title: string; body: string }) {
-  return (
-    <View style={styles.wait}>
-      <ActivityIndicator size="small" color={tokens.colors.viridian} />
-      <Text style={styles.waitTitle}>{title}</Text>
-      {body ? <Text style={styles.waitBody}>{body}</Text> : null}
-    </View>
-  );
-}
-
-function FailBlock({
-  title,
-  body,
-  icon = true,
-  children,
-}: {
-  title: string;
-  body: string;
-  icon?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.fail}>
-      {icon ? (
-        <View style={styles.failIcon}>
-          <MaterialIcons name="error-outline" size={22} color={tokens.colors.vermillion} />
-        </View>
-      ) : null}
-      <Text style={styles.waitTitle}>{title}</Text>
-      <Text style={styles.waitBody}>{body}</Text>
-      {children}
-    </View>
-  );
-}
-
-function PrimaryButton({
-  label,
-  onPress,
-  disabled,
-  busy,
-  compact = false,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-  compact?: boolean;
-}) {
-  const off = disabled || busy;
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.primaryBtn,
-        compact && styles.primaryBtnCompact,
-        off && styles.disabled,
-        pressed && !off && styles.pressed,
-      ]}
-      disabled={off}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      {busy ? (
-        <ActivityIndicator size="small" color={tokens.colors.walletCore} />
-      ) : (
-        <Text style={styles.primaryText}>{label}</Text>
-      )}
-    </Pressable>
-  );
-}
-
-function SecondaryButton({
-  label,
-  onPress,
-  disabled,
-  compact = false,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  compact?: boolean;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.secondaryBtn,
-        compact && styles.secondaryBtnCompact,
-        disabled && styles.disabled,
-        pressed && !disabled && styles.pressed,
-      ]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      <Text style={styles.secondaryText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function DangerButton({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.dangerBtn, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Text style={styles.dangerText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function EmailMark({ color, size = 20 }: { color: string; size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"
-        stroke={color}
-        strokeWidth={1.75}
-      />
-      <Path
-        d="m4.5 8 6.7 5.1a1.5 1.5 0 0 0 1.8 0L19.5 8"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-function WalletMark({ color, size = 20 }: { color: string; size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M19 7V5a2 2 0 0 0-2-2H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H6a1 1 0 0 1 0-2"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <Path
-        d="M21 12h-5v5h5"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinejoin="round"
-      />
-      <Circle cx={17.5} cy={14.5} r={0.75} fill={color} />
-    </Svg>
-  );
-}
-
-/**
- * Open Privy Home in the system browser (Safari view on iOS, Custom Tab on
- * Android). The page stays in that browser. This function returns only whether
- * the handoff started, and it does not read the page, the result URL, or a key.
- */
-async function openPrivyExportPage(url: string): Promise<'handed_off' | 'failed'> {
-  let safeUrl: string;
-  try {
-    safeUrl = assertPrivyHomeUrl(url);
-  } catch {
-    return 'failed';
-  }
-  try {
-    const result = await WebBrowser.openBrowserAsync(safeUrl, {
-      dismissButtonStyle: 'close',
-      readerMode: false,
-      showTitle: true,
-      createTask: false,
-      showInRecents: false,
-      enableDefaultShareMenuItem: false,
-    });
-    return interpretPrivyExportSession(result);
-  } catch {
-    return 'failed';
-  }
 }
