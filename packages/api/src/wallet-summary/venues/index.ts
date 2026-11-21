@@ -6,6 +6,7 @@
  * add one file and one list entry per app — nothing else changes.
  */
 import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
+import { spotVenue } from './spot.js'
 
 export function walletVenues(): WalletVenue[] {
   return [
@@ -18,7 +19,7 @@ export function walletVenues(): WalletVenue[] {
     { id: 'pacifica', fetch: async () => unavailableApp() },
     // Meteora LP positions: Solana side.
     { id: 'meteora', fetch: async () => unavailableApp() },
-    // Spot token holdings: the same Solana address /spot prices.
-    { id: 'spot', fetch: async () => unavailableApp() },
+    // Spot token holdings: the same Solana address /spot prices (#742).
+    spotVenue,
   ]
 }
