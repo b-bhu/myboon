@@ -13,6 +13,10 @@
  * screen can show it as stale instead of empty. When both addresses are
  * absent there is nothing to fetch: no call, no error.
  *
+ * #780: a failing answer also carries `errorStatus` — the HTTP status when
+ * the server answered, null for a network failure or timeout. Only 404
+ * (endpoint not deployed) lets the screen stand in sample data.
+ *
  * The API base URL is read the way features/spot does it
  * (resolveApiBaseUrl from @/lib/api).
  */
@@ -27,8 +31,22 @@ export interface UseWalletSummaryResult {
   summary: WalletSummary | null;
   loading: boolean;
   error: string | null;
+  /** HTTP status when the server answered the failing request (#780): only
+   *  404 means the endpoint isn't deployed yet; null for a network failure
+   *  or timeout. Set with `error`, cleared with it. */
+  errorStatus: number | null;
   /** Refetch the summary; the held summary stays visible while this runs. */
   retry: () => void;
+}
+
+/** A failed HTTP answer: the only failure that carries the server's status. */
+class WalletSummaryHttpError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'WalletSummaryHttpError';
+    this.status = status;
+  }
 }
 
 function readErrorMessage(payload: unknown, status: number): string {
@@ -48,6 +66,7 @@ export function useWalletSummary(solana: string | null, evm: string | null): Use
   const [summary, setSummary] = useState<WalletSummary | null>(null);
   const [loading, setLoading] = useState<boolean>(solana !== null || evm !== null);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
   const [nonce, setNonce] = useState(0);
 
   const retry = useCallback(() => setNonce((n) => n + 1), []);
@@ -65,6 +84,7 @@ export function useWalletSummary(solana: string | null, evm: string | null): Use
     if (!solana && !evm) {
       setSummary(null);
       setError(null);
+      setErrorStatus(null);
       setLoading(false);
       return;
     }
@@ -74,6 +94,7 @@ export function useWalletSummary(solana: string | null, evm: string | null): Use
     if (identityChanged) {
       setSummary(null);
       setError(null);
+      setErrorStatus(null);
     }
     setLoading(true);
 
@@ -88,19 +109,28 @@ export function useWalletSummary(solana: string | null, evm: string | null): Use
       .then(async (response) => {
         const payload = await response.json().catch(() => null) as unknown;
         if (!response.ok || !payload || typeof payload !== 'object') {
-          throw new Error(response.ok ? 'Wallet summary returned no data.' : readErrorMessage(payload, response.status));
+          const message = response.ok
+            ? 'Wallet summary returned no data.'
+            : readErrorMessage(payload, response.status);
+          // The server answered, so its status travels with the failure
+          // (#780): only 404 may enable the sample-data fallback.
+          throw new WalletSummaryHttpError(message, response.status);
         }
         // The identity clear above already replaced any older address's
         // summary; a success always becomes the current one.
         if (cancelled) return;
         setSummary(payload as WalletSummary);
         setError(null);
+        setErrorStatus(null);
       })
       .catch((err: unknown) => {
         // The previously held summary is deliberately NOT cleared here: a
         // failed refresh never blanks a value the screen is already showing.
         if (cancelled) return;
         setError(err instanceof Error && err.message ? err.message : 'Wallet summary request failed.');
+        // The status only when the server answered (#780): offline, timeout
+        // and aborted calls stay null.
+        setErrorStatus(err instanceof WalletSummaryHttpError ? err.status : null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -112,5 +142,5 @@ export function useWalletSummary(solana: string | null, evm: string | null): Use
     };
   }, [identityKey, nonce, solana, evm]);
 
-  return { summary, loading, error, retry };
+  return { summary, loading, error, errorStatus, retry };
 }

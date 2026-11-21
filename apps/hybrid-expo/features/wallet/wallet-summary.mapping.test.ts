@@ -2,6 +2,7 @@
  * Pure tests for the wallet source-state mapping (issue #767): ok,
  * unavailable, not connected, and the rule that a failed refresh never blanks
  * the value a previous response delivered — it becomes stale and keeps it.
+ * The sample-data gate `shouldShowDemo` (issue #780) is covered too.
  *
  * Only the mapping is tested here; the hook and the screens are verified by
  * review and on device, per the issue. Never blanked also means a stale state
@@ -17,7 +18,7 @@ import assert from 'node:assert/strict';
 import { walletSummaryFixture } from '@myboon/shared/wallet-summary';
 import type { WalletSummary } from '@myboon/shared/wallet-summary';
 
-import { mapWalletSummaryApps } from './wallet-summary.mapping';
+import { mapWalletSummaryApps, shouldShowDemo } from './wallet-summary.mapping';
 import type { WalletAppSourceStates } from './wallet-summary.mapping';
 
 function cloneWith(mutate: (summary: WalletSummary) => void): WalletSummary {
@@ -137,5 +138,31 @@ describe('mapWalletSummaryApps', () => {
     assert.equal(fresh.meteora.valueUsd, 10600);
     assert.equal(fresh.meteora.asOf, recovered.fetchedAt);
     assert.equal(fresh.meteora.error, null);
+  });
+});
+
+describe('shouldShowDemo (#780)', () => {
+  // Sample data is a "not deployed yet" placeholder only: every other first
+  // load failure and any held real summary shows no sample numbers.
+  it('is true exactly for a 404 errorStatus with no summary held', () => {
+    assert.equal(shouldShowDemo(null, false, 404), true);
+  });
+
+  it('is false when the server never answered (offline, timeout)', () => {
+    assert.equal(shouldShowDemo(null, false, null), false);
+  });
+
+  it('is false for other HTTP answers: 500 and 429', () => {
+    assert.equal(shouldShowDemo(null, false, 500), false);
+    assert.equal(shouldShowDemo(null, false, 429), false);
+  });
+
+  it('is false whenever a real summary is held, whatever the status', () => {
+    assert.equal(shouldShowDemo(walletSummaryFixture, false, 404), false);
+    assert.equal(shouldShowDemo(walletSummaryFixture, false, null), false);
+  });
+
+  it('is false while the call is still loading', () => {
+    assert.equal(shouldShowDemo(null, true, 404), false);
   });
 });
