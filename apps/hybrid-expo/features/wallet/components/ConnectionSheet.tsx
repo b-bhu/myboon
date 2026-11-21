@@ -15,7 +15,7 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -23,7 +23,6 @@ import {
   Pressable,
   ScrollView,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
@@ -40,10 +39,6 @@ import {
   showsLogout,
   type LinkedKind,
 } from '@/features/wallet/components/connect.flow';
-import {
-  canRequestOtp,
-  resendButtonLabel,
-} from '@/features/wallet/components/otp-resend';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
@@ -59,11 +54,12 @@ import {
 } from '@/features/wallet/components/ConnectionSheetParts';
 import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
 import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
-import { pasteCode, useEmailOtp } from '@/features/wallet/components/useEmailOtp';
+import { useEmailOtp } from '@/features/wallet/components/useEmailOtp';
 import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
 import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
 import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
 import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
+import { EntryStep, OtpStep } from '@/features/wallet/components/ConnectionSheetSteps';
 
 export function ConnectionSheet({
   visible,
@@ -100,7 +96,6 @@ export function ConnectionSheet({
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const otpInput = useRef<TextInput>(null);
   const { keyboardLift, lifted, setLifted } = useKeyboardLift();
 
   const requestClose = useCallback(() => {
@@ -191,8 +186,6 @@ export function ConnectionSheet({
     ];
 
   const privyLabel = privy.identityEmail ?? privy.identityName ?? CONNECT_COPY.emailDetail;
-  const resendLabel = resendButtonLabel(otpSession.availableAt, otpClock);
-  const resendDisabled = busy || otpSession.phase === 'sending' || !canRequestOtp(otpSession, otpClock);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose} statusBarTranslucent navigationBarTranslucent>
@@ -253,140 +246,36 @@ export function ConnectionSheet({
             ) : null}
 
             {flow.step.kind === 'entry' ? (
-              <View style={styles.stack}>
-                {emailAvailable ? (
-                  <View>
-                    <Text style={styles.fieldLabel}>{CONNECT_COPY.emailLabel}</Text>
-                    <View
-                      style={[
-                        styles.emailField,
-                        emailFocused && !emailError && styles.emailFieldFocused,
-                        emailError && styles.emailFieldInvalid,
-                      ]}
-                    >
-                      <EmailMark color={semantic.text.dim} />
-                      <TextInput
-                        ref={emailField}
-                        style={styles.emailInput}
-                        placeholder={CONNECT_COPY.emailPlaceholder}
-                        placeholderTextColor={semantic.text.dim}
-                        value={emailInput}
-                        onChangeText={(value) => {
-                          setEmailInput(value);
-                          if (emailError) setEmailError(null);
-                        }}
-                        onFocus={() => setEmailFocused(true)}
-                        onBlur={() => setEmailFocused(false)}
-                        onSubmitEditing={() => void handleContinue()}
-                        keyboardType="email-address"
-                        inputMode="email"
-                        autoCapitalize="none"
-                        autoComplete="email"
-                        autoCorrect={false}
-                        spellCheck={false}
-                        textContentType="emailAddress"
-                        enterKeyHint="go"
-                        returnKeyType="go"
-                        accessibilityLabel={CONNECT_COPY.emailLabel}
-                      />
-                    </View>
-                    {emailError ? (
-                      <Text style={styles.emailError} accessibilityLiveRegion="polite">{emailError}</Text>
-                    ) : null}
-                    <View style={styles.continueGap}>
-                      <PrimaryButton
-                        label={CONNECT_COPY.continue}
-                        busy={busy}
-                        onPress={() => void handleContinue()}
-                      />
-                    </View>
-                    {otpSession.phase === 'sending' ? (
-                      <Text accessibilityLiveRegion="polite" style={styles.otpStatus}>{otpSession.status}</Text>
-                    ) : null}
-                  </View>
-                ) : null}
-                {externalAvailable ? (
-                  <View style={styles.externalWrap}>
-                    {flow.externalError ? <Text style={styles.errorText}>{flow.externalError}</Text> : null}
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.externalEntry,
-                        busy && styles.disabled,
-                        pressed && !busy && styles.pressed,
-                      ]}
-                      disabled={busy}
-                      onPress={() => void handleExternalWallet()}
-                      accessibilityRole="button"
-                      accessibilityLabel={CONNECT_COPY.connectExternal}
-                    >
-                      <WalletMark color={semantic.text.dim} />
-                      <Text style={styles.externalEntryText}>{CONNECT_COPY.connectExternal}</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </View>
+              <EntryStep
+                flow={flow}
+                emailAvailable={emailAvailable}
+                externalAvailable={externalAvailable}
+                busy={busy}
+                emailField={emailField}
+                emailInput={emailInput}
+                emailError={emailError}
+                emailFocused={emailFocused}
+                otpSession={otpSession}
+                handleContinue={handleContinue}
+                handleExternalWallet={handleExternalWallet}
+                setEmailInput={setEmailInput}
+                setEmailError={setEmailError}
+                setEmailFocused={setEmailFocused}
+              />
             ) : null}
 
             {flow.step.kind === 'otp' ? (
-              <View style={styles.stack}>
-                <Text
-                  accessibilityLiveRegion="polite"
-                  accessibilityRole="text"
-                  style={[styles.otpStatus, otpSession.error ? styles.otpStatusError : null]}
-                >
-                  {otpSession.status}
-                </Text>
-                <Pressable onPress={() => otpInput.current?.focus()} accessibilityRole="button" accessibilityLabel="One-time code">
-                  <View style={styles.otpRow}>
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <View key={index} style={styles.otpBox}>
-                        <Text style={styles.otpDigit}>{otpCode[index] ?? ''}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </Pressable>
-                <TextInput
-                  ref={otpInput}
-                  value={otpCode}
-                  onChangeText={(value) => {
-                    setOtpError(null);
-                    setOtpCode(value.replace(/\D/g, '').slice(0, 6));
-                  }}
-                  keyboardType="number-pad"
-                  autoFocus
-                  maxLength={6}
-                  caretHidden
-                  style={styles.hiddenInput}
-                  accessibilityLabel="Enter code"
-                />
-                <View style={styles.otpTools}>
-                  <Pressable
-                    onPress={() => void pasteCode(setOtpCode)}
-                    accessibilityRole="button"
-                    accessibilityLabel={CONNECT_COPY.paste}
-                    style={styles.otpTool}
-                  >
-                    <Text style={styles.pasteText}>{CONNECT_COPY.paste}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void handleResend()}
-                    disabled={resendDisabled}
-                    accessibilityRole="button"
-                    accessibilityLabel={resendLabel}
-                    accessibilityState={{ disabled: resendDisabled, busy: otpSession.phase === 'sending' }}
-                    style={styles.otpTool}
-                  >
-                    <Text style={[styles.pasteText, resendDisabled && styles.otpToolDisabled]}>{resendLabel}</Text>
-                  </Pressable>
-                </View>
-                {otpError ? <Text style={styles.errorText}>{otpError}</Text> : null}
-                <PrimaryButton
-                  label={CONNECT_COPY.verify}
-                  disabled={!otpCode.trim() || otpSession.phase === 'sending'}
-                  busy={busy && otpSession.phase !== 'sending'}
-                  onPress={() => void handleVerifyOTP()}
-                />
-              </View>
+              <OtpStep
+                busy={busy}
+                otpClock={otpClock}
+                otpCode={otpCode}
+                otpError={otpError}
+                otpSession={otpSession}
+                handleResend={handleResend}
+                handleVerifyOTP={handleVerifyOTP}
+                setOtpCode={setOtpCode}
+                setOtpError={setOtpError}
+              />
             ) : null}
 
             {flow.step.kind === 'creating' ? (
