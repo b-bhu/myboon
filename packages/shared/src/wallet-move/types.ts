@@ -122,4 +122,10 @@ export interface WalletMoveStatus {
   txHashes: string[]
   /** Set on `failure` when Relay reports a failed refund — the only non-`refund` status that still ends the move. */
   refundFailReason?: string
+  /**
+   * True only when Relay answers `unknown` (#747): the id is not in Relay's
+   * ledger yet. The state stays `pending` and `final` false — "not found
+   * yet" is not an error; the app stops polling this id after its own cap.
+   */
+  notFound?: boolean
 }
