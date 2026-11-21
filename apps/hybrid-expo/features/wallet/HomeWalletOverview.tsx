@@ -18,6 +18,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { Chain } from '@/features/chain/chain.contract';
 import { swapTheme as color } from '@/features/swap/swap.theme';
+import { WalletModeSwitch } from '@/features/wallet/components/WalletModeSwitch';
+import {
+  WALLET_ACTION_BODY_HEIGHT,
+  type WalletActionMode,
+} from '@/features/wallet/wallet-mode';
 import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
@@ -37,6 +42,7 @@ const accountTabs: { id: AccountTab; label: string }[] = [
 ];
 
 const MemoActionPanel = memo(WalletActionPanel);
+const MemoModeSwitch = memo(WalletModeSwitch);
 
 function rememberHeight(current: number, next: number): number {
   return current === next ? current : next;
@@ -214,6 +220,7 @@ export function HomeWalletOverview({
   dormantNotices?: React.ReactNode;
 }) {
   const [accountTab, setAccountTab] = useState<AccountTab>('spot');
+  const [mode, setMode] = useState<WalletActionMode>('swap');
   const [surfaceKey, setSurfaceKey] = useState(0);
   const [tradeBusy, setTradeBusy] = useState(false);
   const [upperHeight, setUpperHeight] = useState(0);
@@ -226,7 +233,11 @@ export function HomeWalletOverview({
   const wasActive = useRef(active);
   const previousSurfaceVersion = useRef(surfaceVersion);
   const { width } = useWindowDimensions();
-  const compactLayout = viewportHeight > 0 && composerContentHeight > viewportHeight - 120;
+  // The action body is one fixed frame in every mode and state (430px at
+  // 390x844, issue #715); the composer scrolls inside it when its content
+  // runs taller than the frame. The old viewport-shrink logic the composer
+  // used before the fixed frame is gone with it.
+  const composerOverflows = composerContentHeight > WALLET_ACTION_BODY_HEIGHT;
 
   const handlePanelCoveredChange = useCallback((covered: boolean) => {
     // The UI-thread reaction calls back only when the composer boundary changes.
@@ -305,7 +316,7 @@ export function HomeWalletOverview({
     >
       <View
         collapsable={false}
-        style={[styles.upper, compactLayout && { maxHeight: Math.max(34, viewportHeight - 96) }, panelCovered && { height: upperHeight }]}
+        style={[styles.upper, panelCovered && { height: upperHeight }]}
         onLayout={(event) => {
           const height = event.nativeEvent.layout.height;
           setUpperHeight((current) => rememberHeight(current, height));
@@ -314,33 +325,36 @@ export function HomeWalletOverview({
         accessibilityElementsHidden={panelCovered}
         importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
       >
-        <ScrollView
-          accessibilityElementsHidden={panelCovered}
-          importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
-          style={[compactLayout && { maxHeight: Math.max(0, viewportHeight - 130) }, panelCovered && { display: 'none' }]}
-          scrollEnabled={compactLayout}
-          nestedScrollEnabled
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          showsVerticalScrollIndicator={compactLayout}
-          onContentSizeChange={(_, height) => {
-            if (panelCovered) return;
-            setComposerContentHeight((current) => rememberHeight(current, height));
-          }}
-        >
-          <View onLayout={(event) => {
-            if (panelCovered) return;
-            const height = event.nativeEvent.layout.height;
-            setComposerContentHeight((current) => rememberHeight(current, height));
-          }}>
-            <MemoActionPanel
-              active={actionActive}
-              controllerActive={active}
-              surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
-              onBusyChange={setTradeBusy}
-            />
-          </View>
-        </ScrollView>
+        <MemoModeSwitch mode={mode} locked={tradeBusy} onSelect={setMode} />
+        <View style={styles.actionBody}>
+          <ScrollView
+            accessibilityElementsHidden={panelCovered}
+            importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
+            style={[styles.actionBodyScroll, panelCovered && { display: 'none' }]}
+            scrollEnabled={composerOverflows}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={composerOverflows}
+            onContentSizeChange={(_, height) => {
+              if (panelCovered) return;
+              setComposerContentHeight((current) => rememberHeight(current, height));
+            }}
+          >
+            <View onLayout={(event) => {
+              if (panelCovered) return;
+              const height = event.nativeEvent.layout.height;
+              setComposerContentHeight((current) => rememberHeight(current, height));
+            }}>
+              <MemoActionPanel
+                active={actionActive}
+                controllerActive={active}
+                surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
+                onBusyChange={setTradeBusy}
+              />
+            </View>
+          </ScrollView>
+        </View>
       </View>
 
       <Animated.View
@@ -400,6 +414,9 @@ export function HomeWalletOverview({
 const styles = StyleSheet.create({
   wallet: { flex: 1, overflow: 'hidden', backgroundColor: color.gold },
   upper: { paddingHorizontal: color.composerInset, paddingBottom: 34, backgroundColor: color.gold },
+  // One fixed action-frame height in every mode and state (issue #715).
+  actionBody: { height: WALLET_ACTION_BODY_HEIGHT, overflow: 'hidden' },
+  actionBodyScroll: { flex: 1 },
   panel: {
     position: 'absolute',
     left: 0,
