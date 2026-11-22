@@ -34,8 +34,8 @@ import {
   LIST_HEIGHT_PX,
   ROW_GAP_PX,
   ROW_HEIGHT_PX,
+  listTopForIndex,
   rowCentreY,
-  ROW_PITCH_PX,
   WIRE_GUTTER_PX,
   wireAnchorY,
 } from './pair-panel-geometry';
@@ -132,6 +132,7 @@ function ChainDial({ chains, selectedId, onSelect, fadeColor }: {
         snapToInterval={DIAL_ITEM_PX}
         scrollEventThrottle={16}
         onScrollBeginDrag={() => { dragging.current = true; }}
+        onScrollEndDrag={() => { dragging.current = false; }}
         onMomentumScrollEnd={() => { dragging.current = false; }}
         onScroll={(event) => {
           // Live selection: the centred chain counts, even mid-drag (mock dialV).
@@ -189,9 +190,11 @@ function AssetList({
   const idx = assets.findIndex((asset) => asset.id === selectedAssetId);
 
   // Mock `seeSelected`: bring a changed selection into view (row top − 44).
+  // Depends on the index and the list length, not the `assets` array, so a
+  // live balance refresh (new array identity, same rows) doesn't snap the list.
   useEffect(() => {
-    if (idx >= 0) listRef.current?.scrollTo({ y: Math.max(0, idx * ROW_PITCH_PX - 44), animated: false });
-  }, [idx, assets, listRef]);
+    if (idx >= 0) listRef.current?.scrollTo({ y: listTopForIndex(idx), animated: false });
+  }, [idx, assets.length, listRef]);
 
   return (
     <ScrollView

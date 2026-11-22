@@ -14,6 +14,7 @@ import {
   DIAL_ITEM_PX,
   LIST_HEIGHT_PX,
   ROW_PITCH_PX,
+  listTopForIndex,
   rowCentreY,
   WIRE_BOTTOM_INSET_PX,
   WIRE_TOP_INSET_PX,
@@ -43,6 +44,15 @@ test('dial snap: clamps at both ends', () => {
   assert.equal(centredDialIndex(10000, 5), 4);
   // An empty dial keeps its zero index instead of crashing.
   assert.equal(centredDialIndex(DIAL_ITEM_PX * 2, 0), 0);
+});
+
+test('list top: a changed selection scrolls to row top − 44, clamped at 0', () => {
+  // Row 0 and 1 sit above the 44px offset, so the list stays at its top edge.
+  assert.equal(listTopForIndex(0), 0);
+  assert.equal(listTopForIndex(1), 0);
+  // Row 2 onward scrolls to row top − 44 (mock `seeSelected`).
+  assert.equal(listTopForIndex(2), 2 * ROW_PITCH_PX - 44);
+  assert.equal(listTopForIndex(5), 5 * ROW_PITCH_PX - 44);
 });
 
 test('wire anchor: a visible selected row is drawn unclamped', () => {

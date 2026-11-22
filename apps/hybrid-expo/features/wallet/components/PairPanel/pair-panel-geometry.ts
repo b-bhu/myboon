@@ -49,6 +49,12 @@ export function rowCentreY(rowIndex: number, scrollTopPx: number, pitchPx = ROW_
   return rowIndex * pitchPx + pitchPx / 2 - scrollTopPx;
 }
 
+/** Scroll offset that brings a row to near the list's top (mock `seeSelected`:
+ * row top − 44), clamped at 0 so small indices don't scroll negative. */
+export function listTopForIndex(index: number, pitchPx = ROW_PITCH_PX): number {
+  return Math.max(0, index * pitchPx - 44);
+}
+
 /**
  * One wire end: the row centre, clamped to the visible edge of that end's
  * list when the selected row has scrolled out of view (mock `clamp`).
