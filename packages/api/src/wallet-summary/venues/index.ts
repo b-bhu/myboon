@@ -7,6 +7,7 @@
  */
 import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
 import { meteoraVenue } from './meteora.js'
+import { pacificaVenue } from './pacifica.js'
 import { phoenixVenue } from './phoenix.js'
 import { spotVenue } from './spot.js'
 
@@ -18,8 +19,9 @@ export function walletVenues(): WalletVenue[] {
     // Phoenix perps account: Solana side (#744), read through the same
     // trader-state reader the Phoenix routes serve.
     phoenixVenue,
-    // Pacifica perps account: Solana side.
-    { id: 'pacifica', fetch: async () => unavailableApp() },
+    // Pacifica perps account: Solana side (#728), read from the same
+    // three upstream calls the phone makes.
+    pacificaVenue,
     // Meteora LP positions: Solana side (#726), read from the shared
     // MeteoraDataApiClient's open-portfolio answer.
     meteoraVenue,

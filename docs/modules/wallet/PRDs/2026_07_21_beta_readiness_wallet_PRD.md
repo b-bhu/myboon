@@ -114,6 +114,56 @@ truth for how the screen looks and behaves, not just what data it shows.
     tappable tiles (no "Soon" badge, no muted/disabled visual treatment).
     Tapping one shows a small "Coming soon" tooltip near the tile, rather
     than the tile itself announcing its own unavailability up front.
+19. The Spot row is a single pressable row whose only destination is a
+    **Spot holdings sheet**: the compact row opens a list of everything held
+    in Spot, and the venue-level `/spot` link lives inside that sheet's
+    footer instead of on the row itself. Chips and pills inside account rows
+    stay decorative composition — never individually pressable. A 20pt logo
+    tile is not a tap target, and nesting pressables inside the row's own
+    button gives ambiguous hit areas on both native and web. A user who
+    wants one token gets there in two taps (row → Trade); a user who wants
+    the venue gets one tap on the sheet's primary action. This replaces the
+    earlier "Spot row opens `/spot` directly" behaviour and concretises
+    TC-NAV-004.
+20. Holdings sheet anatomy: one row per token, ranked by USD value
+    descending, with no dust filter — hiding a holding is worse than showing
+    a small one. Each row is 60pt tall with a 32pt token mark, the symbol as
+    primary text, a mono secondary line of `<uiAmount> · <name>`, the USD
+    value right-aligned, and exactly one trailing action, separated by
+    hairlines. The sheet header reads `<n> tokens · <total>`; it sizes to its
+    content up to 80% of screen height and scrolls beyond that, so a 2-token
+    wallet does not open a mostly-empty sheet. It is dismissible by scrim tap,
+    swipe-down, and Android back, and never traps the user.
+21. Per-token entry rule: the trailing action is a gold "Trade" target
+    (56×44 minimum, never shorter than 44pt) that opens `/spot` with
+    `params: { token: MINT }` — the same route shape and canonical-mint
+    payload as the token-sheet entry from #655/#659. Eligibility is the
+    **mint-shape gate only**, the same base58 32–44 character public-key
+    check `takeAction.routes.ts` uses: a token whose mint is not a valid
+    address gets no Trade target at all and instead renders a muted two-line
+    "NOT ON SPOT" label, so the row is never a dead tap target. Value is not
+    part of eligibility — a dust-sized balance of a tradable token keeps its
+    Trade link. There is no listing check today; if Spot listing becomes a
+    real constraint, this one rule is where it gets added.
+22. Chips and sheet share one ordering and one count, and the sheet needs the
+    full list rather than the chip slice. `SpotRowDetail` gains
+    `tokens: SpotChipToken[]` — the same `ranked` array `wallet.sources.ts`
+    already builds before slicing — and `SpotChipToken` gains
+    `uiAmount: number` and `name: string | null`, both of which
+    `SpotTokenBalance` already normalizes and the sources mapper currently
+    drops. `topTokens` and `overflowCount` keep their current shape (existing
+    consumers in `WalletAccountRow`) but stay derived from `tokens` in the
+    mapper — `slice(0, SPOT_TOP_TOKEN_COUNT)` and `ranked.length - topTokens.length` — so the chip
+    row and the sheet can never disagree. All of this is additive: no new
+    fetch (`getWalletBalances` already returns every token), no second source
+    of truth, nothing fabricated for display.
+23. Touch-target rule for compact rows (applies beyond Spot): a pressable
+    row is at least 60pt tall, carries a chevron, and is the only target
+    inside its own bounds; any secondary action inside a row gets its own
+    control at least 44pt in each axis with spacing around it — never a
+    wrapped logo, never a 20pt chip. Decorative logos and chips keep an
+    image accessibility role and no handler, so a screen reader announces
+    the row once rather than once per tile.
 
 ## Product Problem
 
