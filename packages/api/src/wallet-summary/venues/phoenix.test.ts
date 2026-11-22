@@ -93,7 +93,7 @@ test('several traders are summed into one slot, with the position list', async (
   }
 })
 
-test('a wallet with no trader records has no Phoenix account (not_connected, never ok-with-zero)', async () => {
+test('a wallet with no trader records is a legitimate $0 ok summary', async () => {
   const { restore } = stubFetch((url) => {
     if (url.pathname === legacyPath(WALLET_EMPTY)) {
       return Response.json({ slot: 101, slotIndex: 2, traders: [] })
@@ -103,7 +103,11 @@ test('a wallet with no trader records has no Phoenix account (not_connected, nev
 
   try {
     const slot = await phoenixVenue.fetch(context(WALLET_EMPTY))
-    assert.deepEqual(slot, { status: 'not_connected', valueUsd: null, summary: null })
+    assert.deepEqual(slot, {
+      status: 'ok',
+      valueUsd: 0,
+      summary: { equityUsd: 0, collateralUsd: 0, unrealizedPnlUsd: 0, positionCount: 0, positions: [] },
+    })
   } finally {
     restore()
   }

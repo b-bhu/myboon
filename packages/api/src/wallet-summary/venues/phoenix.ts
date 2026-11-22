@@ -6,9 +6,12 @@
  *
  * Sums mirror the phone (wallet.sources.ts / phoenix.portfolio.tsx) via the
  * shared helpers (`accountSummary`, `sumPhoenixPortfolioValue`, `toUsd`,
- * `toNumber`) — used, never copied. A wallet whose trader-state answer has
- * no trader records has no Phoenix account at all: `not_connected`, never
- * `ok` with zero values. A failed upstream (429 included) is thrown and the
+ * `toNumber`) — used, never copied. A successful trader-state lookup that
+ * finds no trader records is a legitimate $0, not a failure and not
+ * `not_connected` — the same reading the shared `sumPhoenixPortfolioValue`
+ * documents and the phone's Wallet row shows. `not_connected` is reserved
+ * for a missing `solana` address, exactly like the spot venue. A failed
+ * upstream (429 included) is thrown and the
  * summary service maps it to this app's `unavailable` slot while every
  * other app still returns (#725) — the same contract as the Meteora and
  * spot venues.
@@ -70,9 +73,16 @@ export const phoenixVenue = {
     const traders = result.body.traders
       .map(asRecord)
       .filter((record): record is PhoenixTraderRecord => record !== null)
-    // No trader records means this wallet never opened a Phoenix account —
-    // not a $0 account.
-    if (traders.length === 0) return notConnectedApp()
+    // A successful lookup with no trader records is a legitimate $0 — the
+    // same reading `sumPhoenixPortfolioValue` documents and the phone's
+    // Wallet row shows. Literal zeros, not `accountSummary([])`'s nulls.
+    if (traders.length === 0) {
+      return {
+        status: 'ok',
+        valueUsd: 0,
+        summary: { equityUsd: 0, collateralUsd: 0, unrealizedPnlUsd: 0, positionCount: 0, positions: [] },
+      }
+    }
 
     // Same totals the phone sums (portfolioValue, collateralBalance,
     // effectiveCollateral, unrealizedPnl) via the shared helpers.
