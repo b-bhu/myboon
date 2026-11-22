@@ -7,6 +7,7 @@
  */
 import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
 import { meteoraVenue } from './meteora.js'
+import { pacificaVenue } from './pacifica.js'
 import { spotVenue } from './spot.js'
 
 export function walletVenues(): WalletVenue[] {
@@ -16,8 +17,9 @@ export function walletVenues(): WalletVenue[] {
     { id: 'polymarket', fetch: async ({ evm }) => (evm ? unavailableApp() : notConnectedApp()) },
     // Phoenix perps account: Solana side.
     { id: 'phoenix', fetch: async () => unavailableApp() },
-    // Pacifica perps account: Solana side.
-    { id: 'pacifica', fetch: async () => unavailableApp() },
+    // Pacifica perps account: Solana side (#728), read from the same
+    // three upstream calls the phone makes.
+    pacificaVenue,
     // Meteora LP positions: Solana side (#726), read from the shared
     // MeteoraDataApiClient's open-portfolio answer.
     meteoraVenue,
