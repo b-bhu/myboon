@@ -130,6 +130,7 @@ function loadOverview() {
       swapTheme: { navy: '#000', gold: '#fff', dim: '#777', border: '#333', text: '#111', card: '#eee', panelOverlap: 24, composerInset: 14 },
     },
     '@/features/wallet/WalletActionPanel': { WalletActionPanel },
+    '@/features/wallet/components/ReceivePanel': { ReceivePanel: () => null },
     '@/features/wallet/WalletAccountRow': { WalletAccountRow: () => null },
     '@/features/wallet/PerpsAccountRow': { PerpsAccountRow: () => null },
     '@/features/wallet/components/WalletModeSwitch': { WalletModeSwitch: ModeSwitchHost },

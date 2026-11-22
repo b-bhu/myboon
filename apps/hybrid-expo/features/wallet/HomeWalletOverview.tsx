@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 import {
   Platform,
   Pressable,
@@ -24,8 +24,15 @@ import {
   type WalletActionMode,
 } from '@/features/wallet/wallet-mode';
 import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
+import { AppView } from '@/features/wallet/app-view/AppView';
+import {
+  initialWalletAppView,
+  walletAppViewReducer,
+} from '@/features/wallet/app-view.state';
+import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
+import { PortfolioSection } from '@/features/wallet/components/PortfolioSection';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
 import { LegalLinks } from '@/features/wallet/components/LegalLinks';
 import {
@@ -196,6 +203,7 @@ export function HomeWalletOverview({
   onOpenMeteora,
   onOpenPhoenix,
   onOpenPacifica,
+  onOpenPolymarket,
   onOpenSpot,
   onConnect,
   dormantNotices,
@@ -215,12 +223,17 @@ export function HomeWalletOverview({
   onOpenMeteora: () => void;
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
+  /** The Polymarket profile route the Portfolio row still opens (#769). */
+  onOpenPolymarket: () => void;
   onOpenSpot: () => void;
   onConnect: () => void;
   dormantNotices?: React.ReactNode;
 }) {
   const [accountTab, setAccountTab] = useState<AccountTab>('spot');
   const [mode, setMode] = useState<WalletActionMode>('swap');
+  // The app view state (#771): no app is open until something dispatches
+  // `select`, so the shell below never shows on screen for now.
+  const [appView, appViewDispatch] = useReducer(walletAppViewReducer, initialWalletAppView);
   const [surfaceKey, setSurfaceKey] = useState(0);
   const [tradeBusy, setTradeBusy] = useState(false);
   const [upperHeight, setUpperHeight] = useState(0);
@@ -257,6 +270,15 @@ export function HomeWalletOverview({
     wasActive.current = active;
     previousSurfaceVersion.current = surfaceVersion;
   }, [active, surfaceVersion, scrollY]);
+
+  // "Wallet change resets it" (#771): the app view belongs to the wallet it
+  // was opened from, and the Wallet's two embedded wallets are the two
+  // chain addresses this surface already shows. The reducer bails out while
+  // the id is unchanged, so repeated syncs never loop or reset.
+  const walletId = `${chainAddress('solana') ?? ''}|${chainAddress('evm') ?? ''}`;
+  useEffect(() => {
+    appViewDispatch({ type: 'wallet-change', walletId });
+  }, [walletId]);
 
   const panelRest = Math.max(0, upperHeight - color.panelOverlap);
   const selectAccountTab = useCallback((id: AccountTab) => {
@@ -346,12 +368,22 @@ export function HomeWalletOverview({
               const height = event.nativeEvent.layout.height;
               setComposerContentHeight((current) => rememberHeight(current, height));
             }}>
-              <MemoActionPanel
-                active={actionActive}
-                controllerActive={active}
-                surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
-                onBusyChange={setTradeBusy}
-              />
+              {/* Receive (#719) renders its QR card in the same fixed frame;
+                  anything signed stays on the swap composer. */}
+              {mode === 'receive' ? (
+                <ReceivePanel
+                  solanaAddress={chainAddress('solana')}
+                  evmAddress={chainAddress('evm')}
+                  chains={chains}
+                />
+              ) : (
+                <MemoActionPanel
+                  active={actionActive}
+                  controllerActive={active}
+                  surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
+                  onBusyChange={setTradeBusy}
+                />
+              )}
             </View>
           </ScrollView>
         </View>
@@ -388,6 +420,17 @@ export function HomeWalletOverview({
             <AccountTabs accountTab={accountTab} tradeBusy={tradeBusy} onSelect={selectAccountTab} />
           </View>
           <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest }, panelLiftStyle]}>
+            {/* Portfolio table (#769): the new sheet content above the old
+                rows, which stay until #770 removes them. */}
+            <PortfolioSection
+              solana={chainAddress('solana')}
+              evm={chainAddress('evm')}
+              onOpenPolymarket={onOpenPolymarket}
+              onOpenPhoenix={onOpenPhoenix}
+              onOpenPacifica={onOpenPacifica}
+              onOpenMeteora={onOpenMeteora}
+              onOpenSpot={onOpenSpot}
+            />
             <AccountBody
               dormantNotices={dormantNotices}
               showSolana={showSolana}
@@ -406,6 +449,15 @@ export function HomeWalletOverview({
             />
           </Animated.View>
         </Animated.ScrollView>
+        {/* App view shell (#771) covers the Portfolio until back is pressed.
+            Nothing selects an app yet, so this never renders for now. */}
+        {appView.selectedApp ? (
+          <AppView
+            app={appView.selectedApp}
+            onBack={() => appViewDispatch({ type: 'back' })}
+            style={styles.appViewOverlay}
+          />
+        ) : null}
       </Animated.View>
     </View>
   );
@@ -469,4 +521,6 @@ const styles = StyleSheet.create({
     backgroundColor: color.gold,
   },
   connectLabel: { color: color.navy, fontSize: 14, fontWeight: '700' },
+  // App view shell (#771): fills the Portfolio panel while an app is open.
+  appViewOverlay: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
 });

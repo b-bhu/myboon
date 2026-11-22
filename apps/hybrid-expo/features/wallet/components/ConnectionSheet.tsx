@@ -12,112 +12,58 @@
  * calls, not the mock's timers.
  *
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
+ *
+ * The step screens live in ConnectionSheetSteps.tsx (#739); this file keeps the
+ * Modal, the header and the step switch.
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
-  Keyboard,
   Modal,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
-import * as Clipboard from 'expo-clipboard';
-import * as Haptics from 'expo-haptics';
-import * as WebBrowser from 'expo-web-browser';
-import Svg, { Circle, Path } from 'react-native-svg';
 import type { Chain } from '@/features/chain/chain.contract';
 import { useChainActivation } from '@/features/chain/activation';
 import { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
 import { availableOptions } from '@/features/wallet/components/connect.options';
 import {
   CONNECT_COPY,
-  EXPORT_INSTRUCTIONS,
-  INITIAL_CONNECT_FLOW,
-  assertPrivyHomeUrl,
-  beginPrivyExport,
   canGoBack,
-  interpretPrivyExportSession,
-  classifyWalletSetupError,
   connectedChainLabel,
-  emailEntryError,
-  isUserCancelled,
-  otpFailureMessage,
-  reduceConnectFlow,
   sheetChrome,
   showsLogout,
-  type ConnectFlowEvent,
-  type ConnectFlowState,
   type LinkedKind,
 } from '@/features/wallet/components/connect.flow';
-import {
-  beginOtpSend,
-  canRequestOtp,
-  emptyOtpSession,
-  finishOtpSend,
-  isPrivyRateLimit,
-  resendButtonLabel,
-  sessionForEmail,
-  type OtpCodeSession,
-} from '@/features/wallet/components/otp-resend';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
 import { useWallet } from '@/hooks/useWallet';
-import { selectMwaDisconnect } from '@/features/wallet/signOut';
-import { semantic, tokens } from '@/theme';
-
-function useConnectFlow(
-  visible: boolean,
-  session: {
-    linked: LinkedKind | null;
-    privyAuthenticated: boolean;
-    hasEmbeddedWallet: boolean;
-    privyReady: boolean;
-  },
-) {
-  const [flow, setFlow] = useState<ConnectFlowState>(INITIAL_CONNECT_FLOW);
-  const decided = useRef(false);
-  let display = flow;
-
-  const openEvent: ConnectFlowEvent = {
-    type: 'open',
-    linked: session.linked,
-    privyAuthenticated: session.privyAuthenticated,
-    hasEmbeddedWallet: session.hasEmbeddedWallet,
-  };
-
-  if (!visible) {
-    decided.current = false;
-  } else if (!decided.current && session.privyReady) {
-    decided.current = true;
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  } else if (
-    visible
-    && decided.current
-    && session.linked
-    && flow.linked !== session.linked
-    && (flow.step.kind === 'entry' || flow.step.kind === 'fail_setup')
-  ) {
-    // The session can land a moment after the sheet opens. Show the connected
-    // sheet once it does, instead of leaving the user on the email form.
-    display = reduceConnectFlow(flow, openEvent);
-    if (display !== flow) setFlow(display);
-  }
-
-  const dispatch = useCallback((event: ConnectFlowEvent) => {
-    setFlow((current) => reduceConnectFlow(current, event));
-  }, []);
-
-  return { flow: display, dispatch, deciding: visible && !session.privyReady };
-}
+import { semantic } from '@/theme';
+import { styles } from '@/features/wallet/components/ConnectionSheet.styles';
+import {
+  FailBlock,
+  PrimaryButton,
+  WaitBlock,
+} from '@/features/wallet/components/ConnectionSheetParts';
+import { useKeyboardLift } from '@/features/wallet/components/useKeyboardLift';
+import { useConnectFlow } from '@/features/wallet/components/useConnectFlow';
+import { useEmailOtp } from '@/features/wallet/components/useEmailOtp';
+import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
+import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
+import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
+import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
+import {
+  ConnectedStep,
+  ConfirmDisconnectStep,
+  EntryStep,
+  ExportSteps,
+  OtpStep,
+} from '@/features/wallet/components/ConnectionSheetSteps';
 
 export function ConnectionSheet({
   visible,
@@ -152,80 +98,9 @@ export function ConnectionSheet({
     privyReady: privy.isReady,
   });
 
-  const [emailInput, setEmailInput] = useState('');
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailFocused, setEmailFocused] = useState(false);
-  const [sentEmail, setSentEmail] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpError, setOtpError] = useState<string | null>(null);
-  const [otpSession, setOtpSession] = useState<OtpCodeSession>(emptyOtpSession);
-  const [otpClock, setOtpClock] = useState(() => Date.now());
-  const otpSendLock = useRef(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const exportInFlight = useRef(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const emailField = useRef<TextInput>(null);
-  const otpInput = useRef<TextInput>(null);
-  const keyboardLift = useRef(new Animated.Value(0)).current;
-  const [lifted, setLifted] = useState(false);
-
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return;
-
-    const onShow = Keyboard.addListener('keyboardWillShow', (event) => {
-      setLifted(true);
-      Animated.timing(keyboardLift, {
-        toValue: event.endCoordinates.height,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start();
-    });
-
-    const onHide = Keyboard.addListener('keyboardWillHide', (event) => {
-      Animated.timing(keyboardLift, {
-        toValue: 0,
-        duration: event.duration || 250,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) setLifted(false);
-      });
-    });
-
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, [keyboardLift]);
-
-  useEffect(() => {
-    if (Platform.OS === 'ios') return;
-    const onShow = Keyboard.addListener('keyboardDidShow', () => setLifted(true));
-    const onHide = Keyboard.addListener('keyboardDidHide', () => setLifted(false));
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, []);
-
-  useEffect(() => () => {
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-  }, []);
-
-  useEffect(() => {
-    if (flow.step.kind !== 'otp') return;
-    setOtpClock(Date.now());
-    const waiting = otpSession.phase === 'sending' || otpSession.availableAt > Date.now();
-    if (!waiting) return;
-    const timer = setInterval(() => setOtpClock(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [flow.step.kind, otpSession.availableAt, otpSession.phase]);
-
-  const options = availableOptions(chain);
-  const emailAvailable = options.includes('email');
-  const externalAvailable = options.includes('external_wallet');
-  const chrome = sheetChrome(flow, { email: sentEmail });
+  const { keyboardLift, lifted, setLifted } = useKeyboardLift();
 
   const requestClose = useCallback(() => {
     // The typed email stays. Closing and reopening, or backing out of the
@@ -236,220 +111,64 @@ export function ConnectionSheet({
     onClose();
   }, [keyboardLift, onClose]);
 
-  const finishActivated = useCallback((kind: LinkedKind) => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    onConnected?.();
-    dispatch({ type: 'wallet_setup_succeeded', linked: kind });
-    onClose();
-  }, [dispatch, onClose, onConnected]);
+  const { runWalletSetup, handleExternalWallet, handleRetryWallet } = useWalletSetup({
+    chain,
+    dispatch,
+    privy,
+    evm,
+    activate,
+    onClose,
+    onConnected,
+    solana,
+    busy,
+    setBusy,
+    setActionError,
+  });
 
-  /**
-   * Wallet step only. The caller has already signed in. A throw here is a
-   * setup failure, never an "Invalid code".
-   */
-  const runWalletSetup = useCallback(async () => {
-    if (chain === 'solana') await privy.waitForWallet();
-    else if (!evm.isProvisioned) await evm.provision();
-    await activate(chain);
-    finishActivated('privy');
-  }, [activate, chain, evm, finishActivated, privy]);
+  const {
+    emailInput,
+    setEmailInput,
+    emailError,
+    setEmailError,
+    emailFocused,
+    setEmailFocused,
+    emailField,
+    sentEmail,
+    otpCode,
+    setOtpCode,
+    otpError,
+    setOtpError,
+    otpSession,
+    setOtpSession,
+    otpClock,
+    handleContinue,
+    handleResend,
+    handleVerifyOTP,
+  } = useEmailOtp({ flow, dispatch, privy, busy, setBusy, setActionError, runWalletSetup });
 
-  const requestEmailCode = useCallback(async (email: string, resend: boolean) => {
-    if (busy || otpSendLock.current) return;
-    const now = Date.now();
-    const current = sessionForEmail(otpSession, email);
-    if (current !== otpSession) setOtpCode('');
-    // Continue returns to the code already sent. Resend is the only new send.
-    if (!resend && current.delivered) {
-      setOtpSession(current);
-      setSentEmail(email);
-      setOtpError(null);
-      dispatch({ type: 'code_sent' });
-      return;
-    }
-    if (!canRequestOtp(current, now)) {
-      setOtpSession(current);
-      setSentEmail(email);
-      if (!resend) dispatch({ type: 'code_sent' });
-      return;
-    }
-    const sending = beginOtpSend(current, email, now);
-    if (!sending) return;
-    otpSendLock.current = true;
-    setOtpSession(sending);
-    setOtpClock(now);
-    setOtpError(null);
-    setEmailError(null);
-    setBusy(true);
-    setActionError(null);
-    try {
-      await privy.sendEmailOTP(email);
-      setOtpSession((session) => finishOtpSend(session, Date.now(), { ok: true }));
-      setOtpClock(Date.now());
-      setSentEmail(email);
-      dispatch({ type: 'code_sent' });
-    } catch (error: unknown) {
-      const failedAt = Date.now();
-      setOtpSession((session) => finishOtpSend(session, failedAt, { ok: false, error }));
-      setOtpClock(failedAt);
-      if (isPrivyRateLimit(error) || resend) {
-        setSentEmail(email);
-        if (!resend) dispatch({ type: 'code_sent' });
-      } else {
-        dispatch({ type: 'login_failed' });
-      }
-    } finally {
-      otpSendLock.current = false;
-      setBusy(false);
-    }
-  }, [busy, dispatch, otpSession, privy]);
+  const options = availableOptions(chain);
+  const emailAvailable = options.includes('email');
+  const externalAvailable = options.includes('external_wallet');
+  const chrome = sheetChrome(flow, { email: sentEmail });
 
-  const handleExternalWallet = useCallback(async () => {
-    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet.
-    // connectExternal is that call. This path does not sign in or create a wallet.
-    if (busy || chain !== 'solana') return;
-    setActionError(null);
-    dispatch({ type: 'choose_external' });
-    setBusy(true);
-    try {
-      await solana.connectExternal();
-      await activate('solana');
-      finishActivated('external');
-    } catch (error: unknown) {
-      if (isUserCancelled(error)) {
-        dispatch({ type: 'external_cancelled' });
-      } else {
-        const message = error instanceof Error && error.message
-          ? error.message
-          : 'Could not connect that wallet.';
-        dispatch({ type: 'external_failed', message });
-      }
-    } finally {
-      setBusy(false);
-    }
-  }, [activate, busy, chain, dispatch, finishActivated, solana]);
-
-  const handleContinue = useCallback(async () => {
-    const email = emailInput.trim();
-    const invalid = emailEntryError(email);
-    if (invalid) {
-      setEmailInput(email);
-      setEmailError(invalid);
-      emailField.current?.focus();
-      return;
-    }
-    if (busy) return;
-    setEmailInput(email);
-    setEmailError(null);
-    await requestEmailCode(email, false);
-  }, [busy, emailInput, requestEmailCode]);
-
-  const handleResend = useCallback(async () => {
-    if (!sentEmail || busy || otpSendLock.current) return;
-    await requestEmailCode(sentEmail, true);
-  }, [busy, requestEmailCode, sentEmail]);
-
-  const handleVerifyOTP = useCallback(async () => {
-    if (!otpCode.trim() || busy) return;
-    setBusy(true);
-    setOtpError(null);
-    try {
-      await privy.loginWithEmailOTP(otpCode.trim(), sentEmail);
-    } catch (error: unknown) {
-      setOtpError(otpFailureMessage(error));
-      dispatch({ type: 'otp_rejected' });
-      setBusy(false);
-      return;
-    }
-    dispatch({ type: 'login_succeeded' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, otpCode, privy, runWalletSetup, sentEmail]);
-
-  const handleRetryWallet = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    dispatch({ type: 'retry_wallet' });
-    try {
-      await runWalletSetup();
-    } catch (error: unknown) {
-      dispatch({ type: 'wallet_setup_failed', failure: classifyWalletSetupError(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, runWalletSetup]);
-
-  const handleLogout = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      await privy.disconnect(selectMwaDisconnect(solana));
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      setEmailError(null);
-      dispatch({ type: 'logout' });
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not log out.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, dispatch, privy, solana]);
-
-  const handleCopy = useCallback(async (key: string, address: string) => {
-    await Clipboard.setStringAsync(address);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    setCopiedKey(key);
-    if (copyTimer.current) clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopiedKey(null), 900);
-  }, []);
-
-  const handleExportContinue = useCallback(() => {
-    if (flow.linked !== 'privy' || exportInFlight.current) return;
-    const handoff = beginPrivyExport();
-    exportInFlight.current = true;
-    dispatch({ type: 'export_continue' });
-    void openPrivyExportPage(handoff.url)
-      .then((outcome) => {
-        dispatch(outcome === 'handed_off' ? { type: 'export_handed_off' } : { type: 'export_failed' });
-      })
-      .finally(() => {
-        exportInFlight.current = false;
-      });
-  }, [dispatch, flow.linked]);
-
-  const confirmDisconnect = useCallback(async () => {
-    if (busy || !flow.linked) return;
-    setBusy(true);
-    setActionError(null);
-    try {
-      if (flow.linked === 'external') {
-        if (solana.disconnect) await solana.disconnect();
-        await deactivate('solana');
-      } else if (privy.isPrivyUser) {
-        await privy.disconnect(selectMwaDisconnect(solana));
-      } else if (solana.disconnect) {
-        await solana.disconnect();
-        await deactivate(chain);
-      }
-      setOtpCode('');
-      setOtpError(null);
-      setOtpSession(emptyOtpSession());
-      dispatch({ type: 'disconnected' });
-      onClose();
-    } catch (error: unknown) {
-      setActionError(error instanceof Error && error.message ? error.message : 'Could not disconnect.');
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, chain, deactivate, dispatch, flow.linked, onClose, privy, solana]);
+  const { handleLogout, confirmDisconnect } = useSheetDisconnect({
+    flow,
+    dispatch,
+    privy,
+    solana,
+    chain,
+    deactivate,
+    onClose,
+    busy,
+    setBusy,
+    setActionError,
+    setOtpCode,
+    setOtpError,
+    setOtpSession,
+    setEmailError,
+  });
+  const { copiedKey, handleCopy } = useCopyAddress();
+  const { handleExportContinue } = usePrivyExport({ flow, dispatch });
 
   const goBack = useCallback(() => {
     setOtpError(null);
@@ -471,8 +190,6 @@ export function ConnectionSheet({
     ];
 
   const privyLabel = privy.identityEmail ?? privy.identityName ?? CONNECT_COPY.emailDetail;
-  const resendLabel = resendButtonLabel(otpSession.availableAt, otpClock);
-  const resendDisabled = busy || otpSession.phase === 'sending' || !canRequestOtp(otpSession, otpClock);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={requestClose} statusBarTranslucent navigationBarTranslucent>
@@ -533,140 +250,36 @@ export function ConnectionSheet({
             ) : null}
 
             {flow.step.kind === 'entry' ? (
-              <View style={styles.stack}>
-                {emailAvailable ? (
-                  <View>
-                    <Text style={styles.fieldLabel}>{CONNECT_COPY.emailLabel}</Text>
-                    <View
-                      style={[
-                        styles.emailField,
-                        emailFocused && !emailError && styles.emailFieldFocused,
-                        emailError && styles.emailFieldInvalid,
-                      ]}
-                    >
-                      <EmailMark color={semantic.text.dim} />
-                      <TextInput
-                        ref={emailField}
-                        style={styles.emailInput}
-                        placeholder={CONNECT_COPY.emailPlaceholder}
-                        placeholderTextColor={semantic.text.dim}
-                        value={emailInput}
-                        onChangeText={(value) => {
-                          setEmailInput(value);
-                          if (emailError) setEmailError(null);
-                        }}
-                        onFocus={() => setEmailFocused(true)}
-                        onBlur={() => setEmailFocused(false)}
-                        onSubmitEditing={() => void handleContinue()}
-                        keyboardType="email-address"
-                        inputMode="email"
-                        autoCapitalize="none"
-                        autoComplete="email"
-                        autoCorrect={false}
-                        spellCheck={false}
-                        textContentType="emailAddress"
-                        enterKeyHint="go"
-                        returnKeyType="go"
-                        accessibilityLabel={CONNECT_COPY.emailLabel}
-                      />
-                    </View>
-                    {emailError ? (
-                      <Text style={styles.emailError} accessibilityLiveRegion="polite">{emailError}</Text>
-                    ) : null}
-                    <View style={styles.continueGap}>
-                      <PrimaryButton
-                        label={CONNECT_COPY.continue}
-                        busy={busy}
-                        onPress={() => void handleContinue()}
-                      />
-                    </View>
-                    {otpSession.phase === 'sending' ? (
-                      <Text accessibilityLiveRegion="polite" style={styles.otpStatus}>{otpSession.status}</Text>
-                    ) : null}
-                  </View>
-                ) : null}
-                {externalAvailable ? (
-                  <View style={styles.externalWrap}>
-                    {flow.externalError ? <Text style={styles.errorText}>{flow.externalError}</Text> : null}
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.externalEntry,
-                        busy && styles.disabled,
-                        pressed && !busy && styles.pressed,
-                      ]}
-                      disabled={busy}
-                      onPress={() => void handleExternalWallet()}
-                      accessibilityRole="button"
-                      accessibilityLabel={CONNECT_COPY.connectExternal}
-                    >
-                      <WalletMark color={semantic.text.dim} />
-                      <Text style={styles.externalEntryText}>{CONNECT_COPY.connectExternal}</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </View>
+              <EntryStep
+                flow={flow}
+                emailAvailable={emailAvailable}
+                externalAvailable={externalAvailable}
+                busy={busy}
+                emailField={emailField}
+                emailInput={emailInput}
+                emailError={emailError}
+                emailFocused={emailFocused}
+                otpSession={otpSession}
+                handleContinue={handleContinue}
+                handleExternalWallet={handleExternalWallet}
+                setEmailInput={setEmailInput}
+                setEmailError={setEmailError}
+                setEmailFocused={setEmailFocused}
+              />
             ) : null}
 
             {flow.step.kind === 'otp' ? (
-              <View style={styles.stack}>
-                <Text
-                  accessibilityLiveRegion="polite"
-                  accessibilityRole="text"
-                  style={[styles.otpStatus, otpSession.error ? styles.otpStatusError : null]}
-                >
-                  {otpSession.status}
-                </Text>
-                <Pressable onPress={() => otpInput.current?.focus()} accessibilityRole="button" accessibilityLabel="One-time code">
-                  <View style={styles.otpRow}>
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <View key={index} style={styles.otpBox}>
-                        <Text style={styles.otpDigit}>{otpCode[index] ?? ''}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </Pressable>
-                <TextInput
-                  ref={otpInput}
-                  value={otpCode}
-                  onChangeText={(value) => {
-                    setOtpError(null);
-                    setOtpCode(value.replace(/\D/g, '').slice(0, 6));
-                  }}
-                  keyboardType="number-pad"
-                  autoFocus
-                  maxLength={6}
-                  caretHidden
-                  style={styles.hiddenInput}
-                  accessibilityLabel="Enter code"
-                />
-                <View style={styles.otpTools}>
-                  <Pressable
-                    onPress={() => void pasteCode(setOtpCode)}
-                    accessibilityRole="button"
-                    accessibilityLabel={CONNECT_COPY.paste}
-                    style={styles.otpTool}
-                  >
-                    <Text style={styles.pasteText}>{CONNECT_COPY.paste}</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void handleResend()}
-                    disabled={resendDisabled}
-                    accessibilityRole="button"
-                    accessibilityLabel={resendLabel}
-                    accessibilityState={{ disabled: resendDisabled, busy: otpSession.phase === 'sending' }}
-                    style={styles.otpTool}
-                  >
-                    <Text style={[styles.pasteText, resendDisabled && styles.otpToolDisabled]}>{resendLabel}</Text>
-                  </Pressable>
-                </View>
-                {otpError ? <Text style={styles.errorText}>{otpError}</Text> : null}
-                <PrimaryButton
-                  label={CONNECT_COPY.verify}
-                  disabled={!otpCode.trim() || otpSession.phase === 'sending'}
-                  busy={busy && otpSession.phase !== 'sending'}
-                  onPress={() => void handleVerifyOTP()}
-                />
-              </View>
+              <OtpStep
+                busy={busy}
+                otpClock={otpClock}
+                otpCode={otpCode}
+                otpError={otpError}
+                otpSession={otpSession}
+                handleResend={handleResend}
+                handleVerifyOTP={handleVerifyOTP}
+                setOtpCode={setOtpCode}
+                setOtpError={setOtpError}
+              />
             ) : null}
 
             {flow.step.kind === 'creating' ? (
@@ -715,719 +328,39 @@ export function ConnectionSheet({
             ) : null}
 
             {flow.step.kind === 'connected' ? (
-              <View style={styles.stack}>
-                <View style={styles.ident}>
-                  {flow.linked === 'privy' ? (
-                    <View style={[styles.identMark, styles.markEmail]}>
-                      <EmailMark color={tokens.colors.viridian} size={22} />
-                    </View>
-                  ) : (
-                    <View style={styles.identMark}>
-                      <WalletMark color={semantic.text.primary} size={22} />
-                    </View>
-                  )}
-                  <View style={styles.identText}>
-                    <Text style={styles.identName}>
-                      {flow.linked === 'privy' ? privyLabel : CONNECT_COPY.externalWallet}
-                    </Text>
-                    <Text style={styles.identDetail}>
-                      {flow.linked === 'privy' ? CONNECT_COPY.emailDetail : CONNECT_COPY.externalDetail}
-                    </Text>
-                  </View>
-                </View>
-                {chainRows.map((row) => (
-                  <View key={row.key} style={styles.chainCard}>
-                    <View style={styles.labRow}>
-                      <Text style={styles.lab}>{row.label}</Text>
-                      <Pressable
-                        onPress={() => void handleCopy(row.key, row.address)}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Copy ${row.label} address`}
-                      >
-                        <Text style={styles.copyText}>
-                          {copiedKey === row.key ? CONNECT_COPY.copied : CONNECT_COPY.copy}
-                        </Text>
-                      </Pressable>
-                    </View>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <Text selectable style={styles.addressValue}>{row.address}</Text>
-                    </ScrollView>
-                  </View>
-                ))}
-                <View style={styles.stack}>
-                  {flow.linked === 'privy' ? (
-                    <SecondaryButton
-                      label={CONNECT_COPY.export}
-                      onPress={() => dispatch({ type: 'open_export' })}
-                    />
-                  ) : null}
-                  <DangerButton
-                    label={CONNECT_COPY.disconnect}
-                    disabled={busy}
-                    onPress={() => dispatch({ type: 'request_disconnect' })}
-                  />
-                </View>
-              </View>
+              <ConnectedStep
+                busy={busy}
+                chainRows={chainRows}
+                copiedKey={copiedKey}
+                dispatch={dispatch}
+                flow={flow}
+                handleCopy={handleCopy}
+                privyLabel={privyLabel}
+              />
             ) : null}
 
-            {flow.step.kind === 'export' ? (
-              <View style={styles.exportStack}>
-                <View accessibilityRole="list" style={styles.exportSteps}>
-                  {EXPORT_INSTRUCTIONS.map((parts, index) => (
-                    <Text key={index} style={styles.exportStepText}>
-                      <Text style={styles.exportIndex}>{index + 1}. </Text>
-                      {parts.map((part, partIndex) => (
-                        <Text key={partIndex} style={part.emphasis ? styles.exportStrong : undefined}>
-                          {part.text}
-                        </Text>
-                      ))}
-                    </Text>
-                  ))}
-                </View>
-                <Text style={styles.exportWarning}>{CONNECT_COPY.exportWarning}</Text>
-                <View style={styles.exportActions}>
-                  <PrimaryButton compact label={CONNECT_COPY.continuePrivy} onPress={handleExportContinue} />
-                  <SecondaryButton
-                    compact
-                    label={CONNECT_COPY.notNow}
-                    onPress={() => dispatch({ type: 'export_not_now' })}
-                  />
-                </View>
-              </View>
-            ) : null}
-
-            {flow.step.kind === 'export_opening' ? (
-              <WaitBlock title={CONNECT_COPY.openingPrivyTitle} body={CONNECT_COPY.openingPrivyBody} />
-            ) : null}
-
-            {flow.step.kind === 'export_failed' ? (
-              <View style={styles.stack}>
-                <Text style={styles.plain}>{CONNECT_COPY.exportFailed}</Text>
-                <PrimaryButton
-                  label={CONNECT_COPY.exportTryAgain}
-                  onPress={() => dispatch({ type: 'export_retry' })}
-                />
-                <SecondaryButton
-                  label={CONNECT_COPY.backToWallet}
-                  onPress={() => dispatch({ type: 'back' })}
-                />
-              </View>
+            {flow.step.kind === 'export'
+              || flow.step.kind === 'export_opening'
+              || flow.step.kind === 'export_failed' ? (
+              <ExportSteps
+                dispatch={dispatch}
+                onContinue={handleExportContinue}
+                step={flow.step}
+              />
             ) : null}
 
             {flow.step.kind === 'confirm_disconnect' ? (
-              <FailBlock
-                icon={false}
-                title={CONNECT_COPY.disconnectTitle}
-                body={flow.linked === 'privy' ? CONNECT_COPY.privyDisconnectBody : CONNECT_COPY.disconnectBody}
-              >
-                {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
-                <DangerButton
-                  label={busy ? 'Disconnecting...' : CONNECT_COPY.disconnect}
-                  disabled={busy}
-                  onPress={() => void confirmDisconnect()}
-                />
-                <SecondaryButton
-                  label={CONNECT_COPY.cancel}
-                  disabled={busy}
-                  onPress={() => dispatch({ type: 'cancel_disconnect' })}
-                />
-              </FailBlock>
+              <ConfirmDisconnectStep
+                actionError={actionError}
+                busy={busy}
+                confirmDisconnect={confirmDisconnect}
+                dispatch={dispatch}
+                flow={flow}
+              />
             ) : null}
           </ScrollView>
         </Animated.View>
       </KeyboardAvoidingView>
     </Modal>
   );
-}
-
-async function pasteCode(setOtpCode: (value: string) => void) {
-  const text = (await Clipboard.getStringAsync()) ?? '';
-  const digits = text.replace(/\D/g, '').slice(0, 6);
-  if (digits) setOtpCode(digits);
-}
-
-function WaitBlock({ title, body }: { title: string; body: string }) {
-  return (
-    <View style={styles.wait}>
-      <ActivityIndicator size="small" color={tokens.colors.viridian} />
-      <Text style={styles.waitTitle}>{title}</Text>
-      {body ? <Text style={styles.waitBody}>{body}</Text> : null}
-    </View>
-  );
-}
-
-function FailBlock({
-  title,
-  body,
-  icon = true,
-  children,
-}: {
-  title: string;
-  body: string;
-  icon?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.fail}>
-      {icon ? (
-        <View style={styles.failIcon}>
-          <MaterialIcons name="error-outline" size={22} color={tokens.colors.vermillion} />
-        </View>
-      ) : null}
-      <Text style={styles.waitTitle}>{title}</Text>
-      <Text style={styles.waitBody}>{body}</Text>
-      {children}
-    </View>
-  );
-}
-
-function PrimaryButton({
-  label,
-  onPress,
-  disabled,
-  busy,
-  compact = false,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  busy?: boolean;
-  compact?: boolean;
-}) {
-  const off = disabled || busy;
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.primaryBtn,
-        compact && styles.primaryBtnCompact,
-        off && styles.disabled,
-        pressed && !off && styles.pressed,
-      ]}
-      disabled={off}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      {busy ? (
-        <ActivityIndicator size="small" color={tokens.colors.walletCore} />
-      ) : (
-        <Text style={styles.primaryText}>{label}</Text>
-      )}
-    </Pressable>
-  );
-}
-
-function SecondaryButton({
-  label,
-  onPress,
-  disabled,
-  compact = false,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-  compact?: boolean;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.secondaryBtn,
-        compact && styles.secondaryBtnCompact,
-        disabled && styles.disabled,
-        pressed && !disabled && styles.pressed,
-      ]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      <Text style={styles.secondaryText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function DangerButton({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      style={({ pressed }) => [styles.dangerBtn, disabled && styles.disabled, pressed && !disabled && styles.pressed]}
-      disabled={disabled}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-    >
-      <Text style={styles.dangerText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function EmailMark({ color, size = 20 }: { color: string; size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M3.5 7.5A2.5 2.5 0 0 1 6 5h12a2.5 2.5 0 0 1 2.5 2.5v9A2.5 2.5 0 0 1 18 19H6a2.5 2.5 0 0 1-2.5-2.5v-9Z"
-        stroke={color}
-        strokeWidth={1.75}
-      />
-      <Path
-        d="m4.5 8 6.7 5.1a1.5 1.5 0 0 0 1.8 0L19.5 8"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
-function WalletMark({ color, size = 20 }: { color: string; size?: number }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M19 7V5a2 2 0 0 0-2-2H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h13a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H6a1 1 0 0 1 0-2"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <Path
-        d="M21 12h-5v5h5"
-        stroke={color}
-        strokeWidth={1.75}
-        strokeLinejoin="round"
-      />
-      <Circle cx={17.5} cy={14.5} r={0.75} fill={color} />
-    </Svg>
-  );
-}
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(3, 31, 44, 0.72)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: semantic.background.screen,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    borderColor: semantic.border.muted,
-    maxHeight: '92%',
-  },
-  sheetLifted: {
-    paddingBottom: 400,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: semantic.border.muted,
-    alignSelf: 'center',
-    marginTop: 10,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: tokens.spacing.sm,
-    paddingTop: tokens.spacing.sm,
-    paddingBottom: tokens.spacing.xs,
-  },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerText: {
-    flex: 1,
-    minWidth: 0,
-    paddingTop: 8,
-  },
-  title: {
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '600',
-    color: semantic.text.primary,
-  },
-  subtitle: {
-    marginTop: 4,
-    fontSize: tokens.fontSize.md,
-    lineHeight: 20,
-    color: semantic.text.dim,
-  },
-  body: {
-    paddingHorizontal: tokens.spacing.lg,
-    paddingTop: tokens.spacing.sm,
-    paddingBottom: 36,
-    gap: tokens.spacing.md,
-  },
-  bodyLifted: {
-    paddingBottom: tokens.spacing.lg,
-  },
-  stack: {
-    gap: tokens.spacing.sm,
-  },
-  primaryBtn: {
-    width: '100%',
-    minHeight: 56,
-    borderRadius: 14,
-    backgroundColor: tokens.colors.bone,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-  },
-  primaryText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: tokens.colors.walletCore,
-    textAlign: 'center',
-  },
-  secondaryBtn: {
-    width: '100%',
-    minHeight: 56,
-    borderRadius: 14,
-    backgroundColor: semantic.background.surface,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 16,
-  },
-  secondaryText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: semantic.text.primary,
-    textAlign: 'center',
-  },
-  dangerBtn: {
-    width: '100%',
-    minHeight: 52,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#7a2a3c',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  dangerText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: tokens.colors.vermillion,
-  },
-  disabled: {
-    opacity: 0.4,
-  },
-  pressed: {
-    opacity: 0.85,
-  },
-  markEmail: {
-    backgroundColor: tokens.colors.lift,
-  },
-  fieldLabel: {
-    marginBottom: 8,
-    color: semantic.text.dim,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  emailField: {
-    minHeight: 52,
-    borderRadius: 14,
-    backgroundColor: semantic.background.surface,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 14,
-  },
-  emailFieldFocused: {
-    borderColor: tokens.colors.viridian,
-  },
-  emailFieldInvalid: {
-    borderColor: tokens.colors.vermillion,
-  },
-  emailInput: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 52,
-    fontSize: 16,
-    color: semantic.text.primary,
-    paddingVertical: 0,
-  },
-  emailError: {
-    marginTop: 8,
-    color: semantic.text.primary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  continueGap: {
-    marginTop: 12,
-  },
-  externalWrap: {
-    marginTop: 8,
-    gap: tokens.spacing.sm,
-  },
-  externalEntry: {
-    minHeight: 52,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: semantic.border.muted,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-  },
-  externalEntryText: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: semantic.text.primary,
-  },
-  otpRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: tokens.spacing.sm,
-  },
-  otpBox: {
-    width: 44,
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: semantic.background.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  otpDigit: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: semantic.text.primary,
-  },
-  hiddenInput: {
-    position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
-  },
-  otpTools: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  otpTool: {
-    minHeight: 44,
-    minWidth: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  pasteText: {
-    color: tokens.colors.viridian,
-    fontSize: tokens.fontSize.md,
-    fontWeight: '500',
-  },
-  otpToolDisabled: {
-    color: semantic.text.dim,
-  },
-  otpStatus: {
-    minHeight: 20,
-    color: semantic.text.dim,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  otpStatusError: {
-    color: tokens.colors.vermillion,
-  },
-  wait: {
-    alignItems: 'center',
-    paddingVertical: 28,
-    gap: 6,
-  },
-  waitTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: semantic.text.primary,
-    textAlign: 'center',
-  },
-  waitBody: {
-    fontSize: tokens.fontSize.md,
-    lineHeight: 20,
-    color: semantic.text.dim,
-    textAlign: 'center',
-  },
-  fail: {
-    alignItems: 'stretch',
-    gap: tokens.spacing.sm,
-    paddingTop: 8,
-  },
-  failIcon: {
-    alignSelf: 'center',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(239, 71, 111, 0.16)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  errorText: {
-    color: tokens.colors.vermillion,
-    fontSize: tokens.fontSize.sm,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
-  logoutBtn: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: tokens.spacing.md,
-  },
-  logoutText: {
-    color: semantic.text.faint,
-    fontSize: tokens.fontSize.md,
-    fontWeight: '500',
-    textAlign: 'center',
-    textDecorationLine: 'underline',
-  },
-  ident: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing.md,
-    marginBottom: 2,
-  },
-  identMark: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: semantic.background.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  identText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  identName: {
-    fontSize: 17,
-    fontWeight: '600',
-    color: semantic.text.primary,
-  },
-  identDetail: {
-    marginTop: 2,
-    fontSize: 13,
-    color: semantic.text.faint,
-  },
-  chainCard: {
-    borderRadius: 14,
-    backgroundColor: semantic.background.surface,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 10,
-    gap: 6,
-  },
-  labRow: {
-    minHeight: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: tokens.spacing.sm,
-  },
-  lab: {
-    color: semantic.text.faint,
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  copyText: {
-    color: tokens.colors.viridian,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  addressValue: {
-    fontFamily: 'monospace',
-    fontSize: 12.5,
-    lineHeight: 18,
-    color: semantic.text.dim,
-  },
-  plain: {
-    color: semantic.text.dim,
-    fontSize: tokens.fontSize.md,
-    lineHeight: 20,
-  },
-  exportBody: {
-    paddingTop: 8,
-    paddingBottom: 12,
-    gap: 12,
-  },
-  exportStack: {
-    gap: 12,
-  },
-  exportSteps: {
-    gap: 12,
-  },
-  exportStepText: {
-    color: semantic.text.primary,
-    fontSize: 16,
-    lineHeight: 23,
-  },
-  exportIndex: {
-    color: semantic.text.dim,
-    fontWeight: '500',
-  },
-  exportStrong: {
-    fontWeight: '700',
-  },
-  exportWarning: {
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    backgroundColor: semantic.background.surface,
-    color: tokens.colors.accent,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  exportActions: {
-    gap: 8,
-  },
-  primaryBtnCompact: {
-    minHeight: 52,
-    paddingVertical: 0,
-  },
-  secondaryBtnCompact: {
-    minHeight: 44,
-    paddingVertical: 0,
-  },
-});
-
-/**
- * Open Privy Home in the system browser (Safari view on iOS, Custom Tab on
- * Android). The page stays in that browser. This function returns only whether
- * the handoff started, and it does not read the page, the result URL, or a key.
- */
-async function openPrivyExportPage(url: string): Promise<'handed_off' | 'failed'> {
-  let safeUrl: string;
-  try {
-    safeUrl = assertPrivyHomeUrl(url);
-  } catch {
-    return 'failed';
-  }
-  try {
-    const result = await WebBrowser.openBrowserAsync(safeUrl, {
-      dismissButtonStyle: 'close',
-      readerMode: false,
-      showTitle: true,
-      createTask: false,
-      showInRecents: false,
-      enableDefaultShareMenuItem: false,
-    });
-    return interpretPrivyExportSession(result);
-  } catch {
-    return 'failed';
-  }
 }

@@ -1,7 +1,23 @@
 /**
- * Shared wallet-summary helpers (issue #723): the Polymarket, Phoenix and
- * Pacifica value logic the Expo app and the server must agree on.
+ * Shared wallet-summary surface: the Polymarket, Phoenix and Pacifica value
+ * logic the Expo app and the server must agree on (issue #723), plus the
+ * wallet-summary API contract types and fixture (from main).
  */
+export type {
+  AppSummary,
+  PacificaSummary,
+  PhoenixSummary,
+  PolymarketSummary,
+  MeteoraSummary,
+  SpotSummary,
+  VenueStatus,
+  WalletMeteoraPool,
+  WalletPerpPosition,
+  WalletSpotToken,
+  WalletSummary,
+} from './types.js'
+
+export { walletSummaryFixture } from './fixtures.js'
 export {
   HELD_POSITIONS_PAGE_CEILING,
   HeldPositionSummary,
