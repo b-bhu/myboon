@@ -1,0 +1,26 @@
+appId: xyz.myboon.app
+name: WAL-001 four modes switch without the panel resizing
+# Owner: agent. No wallet needed.
+# Selectors use visible text because the mode switch has no testID yet.
+# The app opens on Feed, so the flow taps the Wallet tab first.
+# NOTE: the build tested on 2026-11-22 had a "Swap" dropdown (content-desc
+# "Swap, choose wallet action") with Send/Receive/Transfer marked "Coming soon",
+# not four always-visible modes. Re-check the selectors against the build that
+# carries the one-screen Wallet before trusting this flow.
+---
+- launchApp:
+    stopApp: true
+- tapOn: "Wallet"
+- assertVisible: "Swap"
+- assertVisible: "Move"
+- assertVisible: "Send"
+- assertVisible: "Receive"
+- tapOn: "Move"
+- takeScreenshot: wal-001-move
+- tapOn: "Send"
+- takeScreenshot: wal-001-send
+- tapOn: "Receive"
+- takeScreenshot: wal-001-receive
+- tapOn: "Swap"
+- takeScreenshot: wal-001-swap
+# Panel height is compared by the tester from the four screenshots (430px body, same in all modes).
