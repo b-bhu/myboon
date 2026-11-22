@@ -19,4 +19,6 @@ assignees: ''
 
 **Tests:** <!-- one line per case, separated by ·. For a fix, extend the existing tests and name them; new tests only for new behaviour. -->
 
+**Testing:** <!-- "CI only", or "device test" plus one line per phone check (screen, action, what you should see). Device test also gets the needs-device-test label: after QA signs off, the PR waits under device-test until Bibhu comments device-tested (or device-failed: what broke). -->
+
 **Depends on:** none
