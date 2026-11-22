@@ -60,13 +60,61 @@ function tokenBase(symbol: string): string {
   return symbol.split('-')[0].replace(/[^A-Za-z0-9_]/g, '').toUpperCase()
 }
 
-async function pacificaGetJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${PACIFICA_API_BASE}${path}`)
-  if (!res.ok) throw new Error(`Pacifica ${path} failed (${res.status})`)
+// Upstream calls from the wallet summary share this timeout; the summary
+// service races each app at 8s, so the upstream call gives up no later.
+const PACIFICA_TIMEOUT_MS = 8_000
 
-  const json = await res.json() as { success?: boolean; data?: T; error?: string; message?: string }
+/**
+ * Error from a Pacifica upstream call. `status` is the HTTP status (or the
+ * upstream `code` for a `success: false` body), null for network/timeout
+ * failures; `retryAfter` carries the retry hint (seconds, as sent) when the
+ * upstream told us to back off.
+ */
+export class PacificaApiError extends Error {
+  readonly status: number | null
+  readonly retryAfter: string | null
+
+  constructor(message: string, status: number | null, retryAfter: string | null = null) {
+    super(message)
+    this.name = 'PacificaApiError'
+    this.status = status
+    this.retryAfter = retryAfter
+  }
+}
+
+// The retry hint, when the response carries one: `retry-after` wins, else the
+// `t=` reset seconds in the IETF `ratelimit` header ("credits";r=0;t=23).
+function retryHint(headers: Headers): string | null {
+  const retryAfter = headers.get('retry-after')
+  if (retryAfter) return retryAfter
+  const ratelimit = headers.get('ratelimit')
+  const reset = ratelimit?.match(/(?:^|;)\s*t=(\d+)/)?.[1]
+  return reset ?? null
+}
+
+export async function pacificaGetJson<T>(path: string): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${PACIFICA_API_BASE}${path}`, { signal: AbortSignal.timeout(PACIFICA_TIMEOUT_MS) })
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err)
+    throw new PacificaApiError(`Pacifica ${path} failed: ${detail}`, null)
+  }
+
+  if (res.status === 429) {
+    const retryAfter = retryHint(res.headers)
+    throw new PacificaApiError(
+      `Pacifica ${path} rate limited${retryAfter ? ` (retry after ${retryAfter}s)` : ''}`,
+      429,
+      retryAfter,
+    )
+  }
+  if (!res.ok) throw new PacificaApiError(`Pacifica ${path} failed (${res.status})`, res.status)
+
+  const json = await res.json() as { success?: boolean; data?: T; error?: string; message?: string; code?: number | null }
   if (json.success === false) {
-    throw new Error(json.error ?? json.message ?? `Pacifica ${path} failed`)
+    const status = typeof json.code === 'number' ? json.code : null
+    throw new PacificaApiError(json.error ?? json.message ?? `Pacifica ${path} failed`, status)
   }
   return json.data as T
 }

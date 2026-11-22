@@ -54,12 +54,13 @@ test('GET /wallet/summary with a bad address returns 400', async () => {
 })
 
 test('GET /wallet/summary with only solana returns stubs and Polymarket not_connected', async () => {
-  // #742 / #726: spot and meteora are real now and would call their
-  // upstreams here; the stub check is about the wiring, so the registry is
-  // injected without them (their own venues are covered in venues/*.test.ts).
+  // #742 / #726 / #728: spot, meteora and pacifica are real now and would
+  // call their upstreams here; the stub check is about the wiring, so the
+  // registry is injected without them (their own venues are covered in
+  // venues/*.test.ts).
   const service = createWalletSummaryService({
     now: () => new Date('2026-11-21T12:34:56.789Z'),
-    venues: walletVenues().filter((venue) => venue.id !== 'spot' && venue.id !== 'meteora'),
+    venues: walletVenues().filter((venue) => venue.id !== 'spot' && venue.id !== 'meteora' && venue.id !== 'pacifica'),
   })
   const response = await app(service).request(`/wallet/summary?solana=${SOL}`)
   assert.equal(response.status, 200)
@@ -76,11 +77,11 @@ test('GET /wallet/summary with only solana returns stubs and Polymarket not_conn
 
 test('GET /wallet/summary still answers when one venue throws', async () => {
   // Replace phoenix with a venue that throws; the others must still return.
-  // The real spot (#742) and meteora (#726) venues are left out too, so
-  // their upstream calls cannot log a failure into this test's
+  // The real spot (#742), meteora (#726) and pacifica (#728) venues are left
+  // out too, so their upstream calls cannot log a failure into this test's
   // console-error count.
   const venues: WalletVenue[] = walletVenues().filter(
-    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot' && venue.id !== 'meteora',
+    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot' && venue.id !== 'meteora' && venue.id !== 'pacifica',
   )
   venues.push({ id: 'phoenix', fetch: async () => { throw new Error('phoenix upstream 503') } })
 
