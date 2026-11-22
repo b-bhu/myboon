@@ -142,6 +142,29 @@ out of scope — see the source PRD's `Explicitly Postponed` section.
   a "+N" chip for the remainder — never a spelled-out sentence like "7
   tokens."
 - Chip order is by holding size, largest first.
+- Chips are decorative: tapping a chip does not navigate or open anything on
+  its own. The row's own press target handles the tap and opens the Spot
+  holdings sheet (TC-NAV-004).
+
+### TC-ROWS-008: Spot holdings sheet lists every token, ranked
+
+**Priority:** P0 · **Type:** Functional / UI · **Status:** Not Run
+
+**Steps**
+1. Connect a wallet holding at least 6 distinct tokens, one of them below $1.
+2. Tap the Spot row.
+3. Compare the sheet against the row's chips.
+
+**Expected**
+- Sheet header reads "<n> tokens · <total>", where `<n>` equals the number of
+  distinct held tokens and `<total>` equals the row's Spot value.
+- One row per token, ranked by USD value descending; small balances are still
+  listed (no dust filter).
+- The sheet lists the same tokens and the same order as the chips slice:
+  chips = first 3, "+N" chip = `<n> - 3`. For example 6 tokens shows 3 chips
+  and "+3".
+- Rows are 60pt tall with hairline separators; the "Open Spot" action stays
+  pinned in the footer while the list scrolls.
 
 ### TC-ROWS-004: Meteora row shows one pill per LP position
 
@@ -240,17 +263,61 @@ out of scope — see the source PRD's `Explicitly Postponed` section.
 **Expected**
 - Navigates to `/trade?view=profile`.
 
-### TC-NAV-004: Spot row has no protocol screen to open
+### TC-NAV-004: Spot row opens the Spot holdings sheet
 
-**Priority:** P1 · **Type:** Functional · **Status:** Not Run
+**Priority:** P0 · **Type:** Functional · **Status:** Not Run
 
 **Steps**
-1. Tap the Spot row.
+1. Tap the Spot row (any part of it, including on top of its chips).
+2. Scroll the list.
 
 **Expected**
-- Either no navigation occurs (row is informational only), or it opens a
-  reasonable Spot-specific detail surface if one exists — behavior must be
-  intentional and consistent, not an accidental dead tap target.
+- A sheet opens titled "Spot" with the sub-line "<n> tokens · <total>",
+  listing every held token ranked by USD value (TC-ROWS-008).
+- Tapping a chip inside the row opens the same sheet; chips are not separate
+  targets and never open anything else.
+- The "Open Spot" footer action opens venue-level `/spot` with no token
+  param.
+- Scrim tap, swipe-down, and Android back all dismiss the sheet and return
+  to Home with the wallet section unchanged.
+- The sheet never shows a loading skeleton on open when balances are already
+  on screen, and shows the existing refresh/error state if a refetch fails
+  while it is open.
+
+### TC-NAV-006: Per-token Trade opens Spot filtered to that token
+
+**Priority:** P0 · **Type:** Functional · **Status:** Not Run
+
+**Steps**
+1. Open the Spot holdings sheet for a wallet holding SOL.
+2. Tap "Trade" on the SOL row.
+
+**Expected**
+- Navigates to `/spot` with `params: { token: <SOL canonical mint> }` — the
+  mint address, never the symbol.
+- Spot opens filtered/selected to that token; back returns to Home wallet
+  section.
+- Every listed token with a valid mint address has its own Trade target;
+  none of them is a no-op.
+
+### TC-NAV-007: Token without a valid mint has no Trade target
+
+**Priority:** P1 · **Type:** Functional / UI · **Status:** Not Run
+
+**Steps**
+1. Connect a wallet whose Spot holdings include a token whose mint is not a
+   base58 32–44 character public key (mint-shape gate fails).
+2. Open the Spot holdings sheet.
+
+**Expected**
+- That row is still listed with its symbol, amount and value — the holding
+  is never hidden.
+- It has no Trade target at all; the trailing slot shows a muted "NOT ON
+  SPOT" label instead.
+- Tapping the row does nothing (no dead link, no empty Spot screen, no error
+  toast).
+- Screen readers announce the label as a state ("not tradable on Spot"), and
+  the row is not exposed as a button.
 
 ### TC-NAV-005: Home Wallet preview links into full `/wallet`
 
