@@ -1,16 +1,69 @@
 /**
- * Pure helpers for the held-positions data fetched by fetchPortfolio().
+ * Pure helpers over the Polymarket Data API v2 held-position rows.
  *
- * Lives apart from polymarket.api.ts (which imports them) because that module
- * pulls in expo/React Native module graphs via polymarket.signing; tests run
- * these helpers under node:test/tsx without those dependencies.
+ * Moved verbatim from the Expo app's
+ * apps/hybrid-expo/features/polymarket/portfolio-summary.ts (issue #723) so
+ * the server can run the same merge/map/summarize pipeline — one definition
+ * of the app's value, P&L and position sums.
+ *
+ * Shared defines small local types instead of importing the SDK: the SDK's
+ * branded shapes (EvmAddress, DecimalString, ...) are structurally
+ * compatible with them, so app-side call sites keep passing SDK `Position`
+ * rows unchanged.
  */
 
-import type { Position } from '@polymarket/client';
-import type { PortfolioPosition } from './polymarket.api';
+/**
+ * Structural stand-in for the SDK's parsed `Position`. Only the fields the
+ * helpers touch are declared. The DecimalString-ish fields are typed
+ * `unknown` on purpose: they go through toNumber(), which accepts both
+ * decimal strings ("0.99") and numbers.
+ */
+export interface SdkPosition {
+  wallet: string;
+  assetId: string;
+  conditionId: string;
+  currentSize: unknown;
+  avgPrice: unknown;
+  currentValue: unknown;
+  unrealizedPnl: unknown;
+  percentPnl: unknown;
+  currentPrice: unknown;
+  title?: string | null;
+  slug?: string | null;
+  eventSlug?: string | null;
+  outcome?: string | null;
+  /** The SDK declares this optional; a missing outcome index counts as 0. */
+  outcomeIndex?: unknown;
+  icon?: string | null;
+  endDate?: string | null;
+  negativeRisk: boolean;
+}
 
-// Duplicated (private) local helpers from polymarket.api.ts so this module stays
-// dependency-free.
+/** The app's PortfolioPosition shape (moved copy: one definition). */
+export interface PortfolioPosition {
+  proxyWallet: string;
+  /** Token ID — used as tokenID for sell orders */
+  asset: string;
+  conditionId: string;
+  size: number;
+  avgPrice: number;
+  currentValue: number;
+  cashPnl: number;
+  percentPnl: number;
+  curPrice: number;
+  title: string;
+  slug: string;
+  eventSlug: string;
+  outcome: string;
+  outcomeIndex: number;
+  icon: string | null;
+  endDate: string | null;
+  /** Whether this market uses the neg-risk exchange contract */
+  negativeRisk: boolean;
+}
+
+// Duplicated (private) local helpers from the app's polymarket.api.ts so this
+// module stays dependency-free.
 function toNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value !== 'string') return null;
@@ -23,7 +76,7 @@ function numberOrZero(value: unknown): number {
   return toNumber(value) ?? 0;
 }
 
-export function mapSdkPosition(value: Position): PortfolioPosition {
+export function mapSdkPosition(value: SdkPosition): PortfolioPosition {
   return {
     proxyWallet: value.wallet,
     asset: value.assetId,
@@ -52,9 +105,9 @@ export function mapSdkPosition(value: Position): PortfolioPosition {
  * pages. So the union must be deduped by assetId — OPEN rows first, then only
  * redeemable rows whose assetId is not already present (first occurrence wins).
  */
-export function mergeHeldPositions(open: Position[], redeemable: Position[]): Position[] {
-  const seen = new Set<Position['assetId']>();
-  const merged: Position[] = [];
+export function mergeHeldPositions(open: SdkPosition[], redeemable: SdkPosition[]): SdkPosition[] {
+  const seen = new Set<SdkPosition['assetId']>();
+  const merged: SdkPosition[] = [];
   for (const position of [...open, ...redeemable]) {
     if (seen.has(position.assetId)) continue;
     seen.add(position.assetId);

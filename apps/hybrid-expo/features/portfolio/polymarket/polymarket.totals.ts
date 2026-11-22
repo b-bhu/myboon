@@ -8,7 +8,8 @@
 
 import type { OpenOrder, PortfolioData } from '@/features/polymarket/polymarket.api';
 import type { PolymarketProfileAccountState } from '@/features/polymarket/portfolio/profile-state';
-import { formatShowingLabel, resolveCashOutNow } from '@/features/polymarket/portfolio/portfolio-totals';
+import { formatShowingLabel } from '@/features/polymarket/portfolio/portfolio-totals';
+import { resolveCashOutNow } from '@myboon/shared/wallet-summary';
 import { EMPTY_PORTFOLIO_POSITIONS, getOrderCost } from './polymarket.format';
 
 export interface PolymarketPortfolioTotalsInput {

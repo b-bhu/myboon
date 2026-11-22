@@ -12,11 +12,7 @@ import type {
 } from '@/features/perps/perps.types';
 import { fetchWithTimeout, resolveApiBaseUrl } from '@/lib/api';
 import { PACIFIC_REST } from '@/features/perps/pacific.config';
-
-export function safeNum(val: unknown): number {
-  const n = parseFloat(String(val));
-  return Number.isFinite(n) ? n : 0;
-}
+import { pacificaUnrealizedPnl, safeNum } from '@myboon/shared/wallet-summary';
 
 export async function pacificGet<T>(path: string): Promise<T> {
   const url = `${PACIFIC_REST}${path}`;
@@ -53,7 +49,7 @@ export async function fetchPerpsPositions(address: string): Promise<PerpsPositio
     const mark = priceMap.get(pos.symbol) ?? entry;
     const side = pos.side === 'bid' ? 'long' : ('short' as const);
     const direction = side === 'long' ? 1 : -1;
-    const pnl = (mark - entry) * size * direction;
+    const pnl = pacificaUnrealizedPnl(entry, mark, size, direction);
     const pnlPct = entry > 0 && size > 0 ? (pnl / (entry * size)) * 100 : 0;
 
     return { symbol: pos.symbol, side, size, entryPrice: entry, markPrice: mark, unrealizedPnl: pnl, unrealizedPnlPct: pnlPct };
