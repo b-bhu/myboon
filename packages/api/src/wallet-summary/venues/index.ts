@@ -8,6 +8,7 @@
 import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
 import { meteoraVenue } from './meteora.js'
 import { pacificaVenue } from './pacifica.js'
+import { phoenixVenue } from './phoenix.js'
 import { spotVenue } from './spot.js'
 
 export function walletVenues(): WalletVenue[] {
@@ -15,8 +16,9 @@ export function walletVenues(): WalletVenue[] {
     // Polymarket: EVM-only. Its summary needs the `evm` address (#742 et al.
     // in the #714 checklist); without it this person has no account there.
     { id: 'polymarket', fetch: async ({ evm }) => (evm ? unavailableApp() : notConnectedApp()) },
-    // Phoenix perps account: Solana side.
-    { id: 'phoenix', fetch: async () => unavailableApp() },
+    // Phoenix perps account: Solana side (#744), read through the same
+    // trader-state reader the Phoenix routes serve.
+    phoenixVenue,
     // Pacifica perps account: Solana side (#728), read from the same
     // three upstream calls the phone makes.
     pacificaVenue,

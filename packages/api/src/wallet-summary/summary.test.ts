@@ -54,13 +54,15 @@ test('GET /wallet/summary with a bad address returns 400', async () => {
 })
 
 test('GET /wallet/summary with only solana returns stubs and Polymarket not_connected', async () => {
-  // #742 / #726 / #728: spot, meteora and pacifica are real now and would
+  // #742 / #726 / #744 / #728: spot, meteora, phoenix and pacifica are real now and would
   // call their upstreams here; the stub check is about the wiring, so the
   // registry is injected without them (their own venues are covered in
   // venues/*.test.ts).
   const service = createWalletSummaryService({
     now: () => new Date('2026-11-21T12:34:56.789Z'),
-    venues: walletVenues().filter((venue) => venue.id !== 'spot' && venue.id !== 'meteora' && venue.id !== 'pacifica'),
+    venues: walletVenues().filter(
+      (venue) => venue.id !== 'spot' && venue.id !== 'meteora' && venue.id !== 'phoenix' && venue.id !== 'pacifica',
+    ),
   })
   const response = await app(service).request(`/wallet/summary?solana=${SOL}`)
   assert.equal(response.status, 200)
