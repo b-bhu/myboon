@@ -263,40 +263,6 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
-  apps/video:
-    dependencies:
-      '@remotion/captions':
-        specifier: 4.0.448
-        version: 4.0.448
-      '@remotion/cli':
-        specifier: ^4.0.0
-        version: 4.0.448(@swc/helpers@0.5.15)(bufferutil@4.1.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(utf-8-validate@5.0.10)
-      '@remotion/install-whisper-cpp':
-        specifier: 4.0.448
-        version: 4.0.448
-      '@remotion/media':
-        specifier: 4.0.448
-        version: 4.0.448(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
-      remotion:
-        specifier: ^4.0.0
-        version: 4.0.448(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.0
-        version: 18.3.28
-      style-loader:
-        specifier: 4.0.0
-        version: 4.0.0(webpack@5.105.0)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-
   apps/web:
     dependencies:
       framer-motion:
@@ -590,25 +556,6 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
-
-  packages/tx-parser:
-    dependencies:
-      '@solana/web3.js':
-        specifier: ^1.98.4
-        version: 1.98.4(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)
-      zod:
-        specifier: ^4.3.5
-        version: 4.3.5
-    devDependencies:
-      '@types/node':
-        specifier: ^22.13.4
-        version: 22.19.10
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.4
-        version: 3.2.4(@types/node@22.19.10)(jiti@2.6.1)(jsdom@30.1.2(@noble/hashes@2.2.0))(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.21.0)(yaml@2.8.2)
 
   packages/web-reader:
     dependencies:

@@ -28,7 +28,6 @@ jobs:
       full: ${{ steps.filter.outputs.full == 'true' || github.event_name == 'push' }}
       hybrid_expo: ${{ steps.filter.outputs.hybrid_expo }}
       shared: ${{ steps.filter.outputs.shared }}
-      tx_parser: ${{ steps.filter.outputs.tx_parser }}
       contracts: ${{ steps.filter.outputs.contracts }}
       analyst: ${{ steps.filter.outputs.analyst }}
       entity_manager: ${{ steps.filter.outputs.entity_manager }}
@@ -58,8 +57,6 @@ jobs:
               - 'apps/hybrid-expo/**'
             shared:
               - 'packages/shared/**'
-            tx_parser:
-              - 'packages/tx-parser/**'
             contracts:
               - 'packages/contracts/**'
             analyst:
@@ -106,21 +103,6 @@ jobs:
       - run: pnpm exec tsx scripts/check-ecosystem.ts
       - run: pnpm --filter @myboon/shared test
       - run: pnpm --filter @myboon/shared typecheck
-
-  tx-parser:
-    needs: detect
-    if: needs.detect.outputs.full == 'true' || needs.detect.outputs.tx_parser == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec tsx scripts/check-ecosystem.ts
-      - run: pnpm --filter @myboon/tx-parser test
 
   contracts:
     needs: detect
@@ -291,7 +273,7 @@ jobs:
   # Skipped jobs (paths not touched / filtered out) do not block it. No checkout
   # needed; it only inspects the needs results.
   ci-ok:
-    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, tx-parser, contracts, analyst, entity-manager, latest-updates, scout-news, api]
+    needs: [detect, secrets, migrations-lint, hybrid-expo, shared, contracts, analyst, entity-manager, latest-updates, scout-news, api]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -304,7 +286,6 @@ jobs:
             migrations-lint:${{ needs.migrations-lint.result }} \
             hybrid-expo:${{ needs.hybrid-expo.result }} \
             shared:${{ needs.shared.result }} \
-            tx-parser:${{ needs.tx-parser.result }} \
             contracts:${{ needs.contracts.result }} \
             analyst:${{ needs.analyst.result }} \
             entity-manager:${{ needs.entity-manager.result }} \

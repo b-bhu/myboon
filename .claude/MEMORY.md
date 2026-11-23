@@ -21,7 +21,6 @@ Narrative intelligence engine. Monorepo at `/home/main-user/.openclaw/workspace/
 
 ## Packages
 
-- `packages/tx-parser` — Solana tx parsing
 - `packages/brain` — LLM agents (analyst, classifier, research)
 - `packages/entity-memory` — in-memory entity store (pre-persistence)
 

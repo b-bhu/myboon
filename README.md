@@ -68,7 +68,6 @@ packages/
                   V4 pipeline workers (scout, analyst, entity manager, web reader, latest updates)
   contracts/ atlas-schema/  Shared V4 types and Atlas schema/migrations
   shared/         Shared SDK — PolymarketClient, PacificClient, types
-  tx-parser/      Solana transaction parsing
   entity-memory/  Entity store (pre-persistence)
 ```
 

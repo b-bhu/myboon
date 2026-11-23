@@ -233,8 +233,8 @@ PORT=3000
 
 ### Internal dashboard web environment
 
-The public web deployment may host `/internal/entities` and
-`/internal/polymarket`, but these routes are not public data. Configure these
+The public web deployment may host
+`/internal/polymarket`, but this route is not public data. Configure these
 values in the deployment provider's private
 environment-variable store only. Do not add secret values to source files,
 GitHub issues, CI logs, or browser-accessible `NEXT_PUBLIC_*` variables.

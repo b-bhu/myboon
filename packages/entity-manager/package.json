@@ -8,7 +8,6 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "once": "tsx src/run.ts",
-    "dry-run": "tsx src/dry-run.ts",
     "markets:preview": "tsx src/markets-preview.ts",
     "markets:apply": "tsx src/markets-apply.ts"
   },

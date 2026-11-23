@@ -2,14 +2,11 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { createSupabaseClient } from '@myboon/shared/supabase-client'
-import { createAiRoutes } from '../ai/routes.js'
 import { createCalendarRoutes } from '../calendar/routes.js'
 import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
 import { MarketHeatmapService } from '../market-heatmap/service.js'
 import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
 import { clobRoutes } from '../clob.js'
-import { createInternalAtlasBrowseRoutes } from '../internal/atlas-browse.js'
-import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createLatestUpdateRoutes } from '../latest-updates.js'
 import { pacificaRoutes } from '../pacifica.js'
@@ -29,7 +26,6 @@ import { createHyperliquidPrices } from '../hyperliquid.js'
 import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
 import { createStoryRoutes } from '../stories.js'
 import { createSwapRoutes } from '../swap.js'
-import { createWaitlistRoutes } from '../waitlist.js'
 import { createSqliteSwapExecutionStore } from '../swap/store.js'
 import {
   iconSourceUrlForAssetId,
@@ -97,22 +93,10 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     console.warn('[api] INTERNAL_POLYMARKET_CATALOG_WRITE_TOKEN must be at least 32 bytes; Polymarket catalog writes will return 503.')
   }
 
-  // Mount specific internal route groups before the broad /internal router,
-  // whose wildcard read-token middleware would otherwise intercept writes.
   app.route('/internal/polymarket/collections', createInternalPolymarketCatalogRoutes({
     internalReadToken: config.internalDashboardToken,
     internalWriteToken: config.internalPolymarketCatalogWriteToken,
     store: polymarketCatalogStore,
-  }))
-  app.route('/internal/atlas', createInternalAtlasBrowseRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
-    internalToken: config.internalDashboardToken,
-  }))
-  app.route('/internal', createInternalEntityRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
-    internalToken: config.internalDashboardToken,
   }))
   app.route('/stories', createStoryRoutes({
     supabaseUrl: config.supabaseUrl,
@@ -188,23 +172,9 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
 
   app.get('/health', (c) => c.json({ status: 'ok' }))
 
-  app.route('/ai', createAiRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
-    provider: config.aiExplanationProvider,
-    apiKey: config.aiExplanationApiKey,
-    baseUrl: config.aiExplanationBaseUrl,
-    model: config.aiExplanationModel,
-  }))
-
   app.route('/polymarket', createPolymarketReadRoutes({
     catalogStore: polymarketCatalogStore,
     upDownService,
-  }))
-
-  app.route('/waitlist', createWaitlistRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
   }))
 
   return app

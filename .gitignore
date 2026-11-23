@@ -58,17 +58,6 @@ packages/*/artifacts/
 *.local
 packages/brain/reports/narratives.csv
 reports/world-cup/
-apps/video/--props
-# Video working files: renders, extracted audio, transcripts, ffmpeg shim
-apps/video/out/
-apps/video/bin/
-apps/video/public/week1/
-apps/video/.whisper-cpp/
-apps/video/public/final-submission/*.mov
-apps/video/public/final-submission/*.wav
-apps/video/public/final-submission/recordings/
-apps/video/public/final-submission/captions/*-raw.json
-apps/video/public/final-submission/captions/*-whisper.json
 docs/specs/world-cup-x-campaign.md
 docs/scripts/
 docs/x_posts_snapshot.json
