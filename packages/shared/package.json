@@ -50,6 +50,11 @@
       "default": "./src/supabase-client.ts",
       "types": "./src/supabase-client.ts"
     },
+    "./supabase-rest": {
+      "import": "./src/supabase-rest.ts",
+      "default": "./src/supabase-rest.ts",
+      "types": "./src/supabase-rest.ts"
+    },
     "./latest-updates": {
       "import": "./src/latest-updates/index.ts",
       "default": "./src/latest-updates/index.ts",
@@ -83,13 +88,16 @@
       ],
       "supabase-client": [
         "src/supabase-client.ts"
+      ],
+      "supabase-rest": [
+        "src/supabase-rest.ts"
       ]
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/v4-runtime/health.test.ts && tsx src/v4-runtime/atlas-health-source.test.ts && tsx src/v4-runtime/scout-gate.test.ts && tsx src/v4-runtime/stage-gate.test.ts && tsx src/latest-updates/types.test.ts && tsx src/stories/types.test.ts && tsx src/calendar/types.test.ts && tsx src/wallet-move/types.test.ts && tsx src/wallet-summary/portfolio-totals.test.ts && tsx src/wallet-summary/wallet-value.test.ts && tsx src/wallet-summary/pacifica.test.ts && tsx src/wallet-summary/polymarket-value.test.ts && tsx src/wallet-summary/portfolio-v2-parity.test.ts",
+    "test": "tsx src/pacific/pacific.test.ts && tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts && tsx src/spot/data-api.test.ts && tsx src/tokens/types.test.ts && tsx src/supabase-client.test.ts && tsx src/supabase-rest.test.ts && tsx src/v4-runtime/health.test.ts && tsx src/v4-runtime/atlas-health-source.test.ts && tsx src/v4-runtime/scout-gate.test.ts && tsx src/v4-runtime/stage-gate.test.ts && tsx src/latest-updates/types.test.ts && tsx src/stories/types.test.ts && tsx src/calendar/types.test.ts && tsx src/wallet-move/types.test.ts && tsx src/wallet-summary/portfolio-totals.test.ts && tsx src/wallet-summary/wallet-value.test.ts && tsx src/wallet-summary/pacifica.test.ts && tsx src/wallet-summary/polymarket-value.test.ts && tsx src/wallet-summary/portfolio-v2-parity.test.ts",
     "test:meteora": "tsx src/meteora/service.test.ts && tsx src/meteora/execution.test.ts",
     "test:spot": "tsx src/spot/data-api.test.ts",
     "test:mobile-signing": "tsx src/pacific/mobile-signing.test.ts"
