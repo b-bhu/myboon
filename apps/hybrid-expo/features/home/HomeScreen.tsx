@@ -283,11 +283,12 @@ export default function HomeScreen() {
         style={[
           styles.header,
           { paddingTop: insets.top + 4 },
-          destination === 'wallet' && { backgroundColor: tokens.colors.primaryDim },
+          destination === 'wallet' && styles.headerWallet,
         ]}
       >
         <AppTopBarLogo
-          tintColor={destination === 'wallet' ? tokens.colors.walletCore : undefined}
+          tintColor={destination === 'wallet' ? '#021B26' : undefined}
+          logoHeight={destination === 'wallet' ? 30 : undefined}
         />
         <View style={styles.headerSpacer} />
         <Pressable
@@ -302,7 +303,7 @@ export default function HomeScreen() {
         >
           <MaterialIcons
             name="notifications-none"
-            size={24}
+            size={destination === 'wallet' ? 20 : 24}
             color={destination === 'wallet' ? tokens.colors.walletCore : semantic.text.primary}
           />
         </Pressable>
@@ -459,6 +460,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: tokens.spacing.lg,
     paddingBottom: 6,
+  },
+  // Wallet gold top flood, mock frame group 1 "Swap (default)" (wallet.html):
+  // .gold padding 12px sides, 12px bottom; the safe-area inset stays above.
+  headerWallet: {
+    backgroundColor: tokens.colors.primaryDim,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
   },
   headerSpacer: {
     flex: 1,
