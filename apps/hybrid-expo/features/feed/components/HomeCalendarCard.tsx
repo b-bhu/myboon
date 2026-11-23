@@ -46,7 +46,7 @@ export function HomeCalendarCard({ active }: { active: boolean }) {
   const summary = event ? eventFigureSummary(event) : '';
   const openCalendar = () => router.push('/calendar');
 
-  if (section.loading && !data) return <FeedSectionState title="Loading calendar…" loading />;
+  if (section.loading && !data) return <CalendarCardSkeleton />;
   if (section.error && !data) {
     return (
       <FeedSectionState
@@ -87,6 +87,36 @@ export function HomeCalendarCard({ active }: { active: boolean }) {
     </View>
   );
 }
+
+/**
+ * First-load skeleton for the Home calendar card (#797): a ground card the
+ * size of the real event card (label row, title + meta lines, countdown
+ * block) so the card column does not jump on arrival.
+ */
+function CalendarCardSkeleton() {
+  return (
+    <FeedBox tone="ground">
+      <View style={skeletonStyles.labelRow} />
+      <View style={skeletonStyles.rowEnd}>
+        <View style={skeletonStyles.copy}>
+          <View style={[skeletonStyles.line, skeletonStyles.title]} />
+          <View style={[skeletonStyles.line, skeletonStyles.meta]} />
+        </View>
+        <View style={skeletonStyles.countdown} />
+      </View>
+    </FeedBox>
+  );
+}
+
+const skeletonStyles = StyleSheet.create({
+  labelRow: { height: 12, width: 116, borderRadius: 4, backgroundColor: FEED_TOKENS.colors.border },
+  rowEnd: { marginTop: 8, flexDirection: 'row', alignItems: 'flex-end', gap: FEED_TOKENS.space.md },
+  copy: { flex: 1, minWidth: 0, gap: 6, paddingTop: 2 },
+  line: { height: 12, borderRadius: 4, backgroundColor: FEED_TOKENS.colors.border },
+  title: { height: 23, width: '70%' },
+  meta: { width: '56%' },
+  countdown: { width: 96, height: 32, borderRadius: 4, backgroundColor: FEED_TOKENS.colors.border },
+});
 
 const styles = StyleSheet.create({
   card: { gap: 8 },

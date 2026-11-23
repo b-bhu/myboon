@@ -64,3 +64,25 @@ test('no file under features/ or app/ references the removed feed modules', () =
   }
   assert.deepEqual(offenders, []);
 });
+
+// issue #797: the five first-load screens render shaped skeletons, so the
+// '…' loading-text placeholders must be gone for good.
+const firstLoadFiles = [
+  path.join(here, 'FeedScreen.tsx'),
+  path.join(here, 'AllStoriesScreen.tsx'),
+  path.join(here, 'CalendarScreen.tsx'),
+  path.join(here, 'components', 'HomeCalendarCard.tsx'),
+  path.join(here, '..', 'home', 'components', 'HomeFeedOverview.tsx'),
+];
+const goneLoadingPhrases = ['Loading stories…', 'Loading calendar…', 'Loading updates…'];
+
+test('first loads render skeletons, never a "Loading …" placeholder (issue #797)', () => {
+  const offenders: string[] = [];
+  for (const file of firstLoadFiles) {
+    const text = fs.readFileSync(file, 'utf8');
+    for (const phrase of goneLoadingPhrases) {
+      if (text.includes(phrase)) offenders.push(`${path.relative(here, file)}: ${phrase}`);
+    }
+  }
+  assert.deepEqual(offenders, []);
+});

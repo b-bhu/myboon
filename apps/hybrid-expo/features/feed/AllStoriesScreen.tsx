@@ -70,7 +70,7 @@ export default function AllStoriesScreen() {
         <View style={styles.tabs}>
           <SegmentedTabs options={TAB_OPTIONS} value={tab} onChange={setTab} />
         </View>
-        {stories.loading && !stories.data ? <FeedSectionState title="Loading stories…" loading /> : null}
+        {stories.loading && !stories.data ? <StoriesListSkeleton /> : null}
         {stories.error ? (
           <FeedSectionState title="Stories unavailable" text="Stories could not be loaded." onRetry={() => { void stories.load(); }} />
         ) : null}
@@ -86,6 +86,41 @@ export default function AllStoriesScreen() {
     </View>
   );
 }
+
+/**
+ * First-load skeleton for the All stories list (#797): row cards the size of
+ * the real StoryRow (thumbnail block, name and development lines, meta line)
+ * so the list does not jump on arrival.
+ */
+function StoriesListSkeleton() {
+  return (
+    <View style={skeletonStyles.list}>
+      {[0, 1, 2].map((index) => (
+        <FeedBox key={index} tone="ground">
+          <View style={skeletonStyles.rowTop}>
+            <View style={skeletonStyles.thumbnail} />
+            <View style={skeletonStyles.copy}>
+              <View style={[skeletonStyles.line, skeletonStyles.name]} />
+              <View style={[skeletonStyles.line, skeletonStyles.development]} />
+            </View>
+          </View>
+          <View style={[skeletonStyles.line, skeletonStyles.meta]} />
+        </FeedBox>
+      ))}
+    </View>
+  );
+}
+
+const skeletonStyles = StyleSheet.create({
+  list: { gap: FEED_TOKENS.space.md, marginTop: FEED_TOKENS.space.md },
+  rowTop: { flexDirection: 'row', gap: FEED_TOKENS.space.md },
+  thumbnail: { width: 56, height: 56, borderRadius: 6, backgroundColor: FEED_TOKENS.colors.border },
+  copy: { flex: 1, minWidth: 0, gap: FEED_TOKENS.space.sm, justifyContent: 'center' },
+  line: { height: 12, borderRadius: 4, backgroundColor: FEED_TOKENS.colors.border },
+  name: { height: 16, width: '72%' },
+  development: { width: '88%' },
+  meta: { width: 96, marginTop: FEED_TOKENS.space.sm },
+});
 
 /** Boxed story row (mock #s-allstories .card): 56px thumbnail, title, latest line, mono-cap meta. */
 function StoryRow({ story, now, onPress }: { story: StorySummary; now: Date; onPress: (slug: string) => void }) {

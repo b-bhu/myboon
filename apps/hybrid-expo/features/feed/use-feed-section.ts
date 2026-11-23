@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import { hasChanged } from './feed-state';
 import { readSectionCache, writeSectionCache } from './feed-section-cache';
 
 export interface FeedSectionOptions {
@@ -10,17 +9,18 @@ export interface FeedSectionOptions {
    */
   storageKey?: string;
   /**
-   * True while a press is down inside the section's wrapper. The first fresh
-   * result after open is then held until `release()` is called, so the tile or
-   * card under the finger does not jump out from under it.
+   * True while a press is down inside the section's wrapper. A fresh result
+   * that arrives while a finger is down is then held until `release()` is
+   * called, so the tile or card under the finger does not jump out from
+   * under it (#797: polls are silent, so the hold is their only guard).
    */
   holdRef?: RefObject<boolean>;
 }
 
-// Each module resolves independently. Polls queue content; explicit refresh/retry applies it.
+// Every fetch applies on arrival; the five-minute polls are silent and the
+// only deferral is the press hold, applied on `release()` (#797).
 export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, active = true, options: FeedSectionOptions = {}) {
   const [data, setData] = useState<T | null>(null);
-  const [pending, setPending] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const value = useRef<T | null>(null);
@@ -28,14 +28,13 @@ export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
   const { storageKey, holdRef } = options;
   const hydrated = useRef(false); // the on-device copy is read at most once per mount
   const firstFetchStarted = useRef(false); // the first fresh fetch runs once, saved copy or not
-  const firstFresh = useRef(true); // the first non-queue arrival may need a press hold
-  const held = useRef<T | null>(null); // a first-fresh result deferred while a press is down
+  const held = useRef<T | null>(null); // a fresh result deferred while a press is down
 
-  const load = useCallback(async (queue = false) => {
+  const load = useCallback(async (silent = false) => {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
-    if (!queue) setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const next = await fetcher(controller.signal);
       if (controller.signal.aborted) return;
@@ -43,19 +42,14 @@ export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
       // Persist every successful result, including an empty one; a thrown
       // fetch never reaches here, and a failed write never breaks the UI.
       void writeSectionCache(storageKey, next);
-      if (queue && value.current !== null) {
-        setPending(hasChanged(value.current, next) ? next : null);
-      } else if (holdRef?.current === true && value.current !== null && firstFresh.current) {
-        // A first fresh swap waits for the press to end so the tile or card
-        // under the finger does not move; `release()` applies it.
-        firstFresh.current = false;
+      if (holdRef?.current === true && value.current !== null) {
+        // With data on screen, a result arriving under a finger waits for the
+        // press to end; `release()` swaps it in.
         held.current = next;
       } else {
-        firstFresh.current = false;
+        held.current = null;
         value.current = next;
         setData(next);
-        setPending(null);
-        held.current = null;
       }
     } catch (cause) {
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Unable to load this section.');
@@ -86,8 +80,8 @@ export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
     if (active) {
       if (storageKey) {
         // A hydrated saved copy must not skip the first network fetch, and that
-        // first fetch runs with queue=false so it swaps in. Later activations of
-        // the same mount stay unchanged: polling and pull-to-refresh refresh.
+        // first fetch runs with silent=false so it swaps in. Later activations
+        // of the same mount stay unchanged: polling and pull-to-refresh refresh.
         if (!firstFetchStarted.current) {
           firstFetchStarted.current = true;
           void load();
@@ -100,15 +94,7 @@ export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
     return () => { request.current?.abort(); };
   }, [active, load, storageKey]);
 
-  const apply = useCallback(() => {
-    if (pending !== null) {
-      value.current = pending;
-      setData(pending);
-      setPending(null);
-    }
-  }, [pending]);
-
-  /** Applies a first-fresh result that was held while a press was down in this section. */
+  /** Applies a fresh result that was held while a press was down in this section. */
   const release = useCallback(() => {
     if (held.current === null) return;
     const next = held.current;
@@ -117,5 +103,5 @@ export function useFeedSection<T>(fetcher: (signal: AbortSignal) => Promise<T>, 
     setData(next);
   }, []);
 
-  return { data, pending, loading, error, load, apply, release };
+  return { data, loading, error, load, release };
 }

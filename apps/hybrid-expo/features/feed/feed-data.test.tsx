@@ -46,7 +46,7 @@ async function settle() {
   for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
 }
 
-test('module polls queue changes; errors retain readable data; late cancelled results cannot replace it', async () => {
+test('module polls apply silently; errors retain readable data; late cancelled results cannot replace it', async () => {
   let next: () => Promise<string[]> = async () => ['old'];
   const fetcher = () => next();
   let section!: ReturnType<typeof useFeedSection<string[]>>;
@@ -54,12 +54,12 @@ test('module polls queue changes; errors retain readable data; late cancelled re
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(createElement(Harness)); });
   assert.deepEqual(section.data, ['old']);
+  // A queued poll returning fresh data updates the section in place (#797):
+  // no pending queue to apply, and no loading flash.
   next = async () => ['new', 'old'];
   await act(async () => { await section.load(true); });
-  assert.deepEqual(section.data, ['old']);
-  assert.deepEqual(section.pending, ['new', 'old']);
-  await act(async () => { section.apply(); });
   assert.deepEqual(section.data, ['new', 'old']);
+  assert.equal(section.loading, false);
   next = async () => { throw new Error('offline'); };
   await act(async () => { await section.load(); });
   assert.deepEqual(section.data, ['new', 'old']);
@@ -115,12 +115,11 @@ test('report polling keeps the wider latest-updates page, deduplicates overlap, 
     await act(async () => { await pages.loadMore(); });
     assert.equal(pages.items.length, 30);
     total = 32;
+    // The five-minute poll applies in place (#797): no pending queue to clear.
     await act(async () => { await pages.refresh(true); });
-    assert.equal(pages.items[0]?.id, '30');
-    assert.equal(pages.pending?.[0]?.id, '32');
-    await act(async () => pages.apply());
     assert.equal(pages.items.length, 32);
     assert.equal(pages.items[0]?.id, '32');
+    assert.equal(new Set(pages.items.map((item) => item.id)).size, 32);
     failWider = true;
     await act(async () => { await pages.loadMore(); });
     assert.ok(pages.olderError);
@@ -222,7 +221,7 @@ test('a successful Home-section fetch (empty included) is persisted and a fresh 
   } finally { if (renderer) await act(async () => renderer.unmount()); }
 });
 
-test('after a saved copy the first queue=false load swaps in immediately and is persisted; a queued poll keeps data in place', async () => {
+test('after a saved copy the first load swaps in immediately and is persisted; a silent poll applies in place', async () => {
   disk.clear();
   seedSaved(FEED_HOME_STORAGE_KEYS.stories, ['saved']);
   let respond!: (value: string[]) => void; // resolver of the most recent request
@@ -234,23 +233,20 @@ test('after a saved copy the first queue=false load swaps in immediately and is 
     await act(async () => { renderer = create(createElement(Harness)); await settle(); });
     assert.deepEqual(section.data, ['saved']); // hydrated while the first fetch hangs
 
-    // The first fresh fetch (queue=false) applies immediately and is persisted.
+    // The first fresh fetch applies immediately and is persisted.
     await act(async () => { respond(['fresh']); await settle(); });
     assert.deepEqual(section.data, ['fresh']);
-    assert.equal(section.pending, null);
     assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.stories)!) as { payload: string[] }).payload, ['fresh']);
 
-    // Later background refreshes keep today's behaviour: pending queues on change.
+    // A silent poll also applies in place (#797), with no loading flash.
     await act(async () => { void section.load(true); await settle(); });
     await act(async () => { respond(['changed', 'fresh']); await settle(); });
-    assert.deepEqual(section.data, ['fresh']);
-    assert.deepEqual(section.pending, ['changed', 'fresh']);
-    await act(async () => section.apply());
     assert.deepEqual(section.data, ['changed', 'fresh']);
+    assert.equal(section.loading, false);
   } finally { if (renderer) await act(async () => renderer.unmount()); }
 });
 
-test('a first-fresh payload arriving while the section is mid-press is not applied until the press ends', async () => {
+test('a payload arriving while the section is mid-press is not applied until the press ends', async () => {
   disk.clear();
   seedSaved(FEED_HOME_STORAGE_KEYS.stories, ['saved']);
   const hold = { current: false };
@@ -266,7 +262,7 @@ test('a first-fresh payload arriving while the section is mid-press is not appli
     hold.current = true; // a tile is pressed
     await act(async () => { respond(['fresh']); await settle(); });
     assert.deepEqual(section.data, ['saved']); // the swap waits for the press
-    assert.equal(section.pending, null); // the press hold does not light up the poll queue
+    assert.equal(section.loading, false); // the hold does not flash the loading state
 
     hold.current = false;
     await act(async () => { section.release(); await settle(); });
@@ -277,6 +273,34 @@ test('a first-fresh payload arriving while the section is mid-press is not appli
     // Releasing with nothing held is a no-op.
     await act(async () => { section.release(); await settle(); });
     assert.deepEqual(section.data, ['fresh']);
+  } finally { if (renderer) await act(async () => renderer.unmount()); }
+});
+
+test('a silent poll returning a new story applies on release when the section is mid-press', async () => {
+  disk.clear();
+  seedSaved(FEED_HOME_STORAGE_KEYS.stories, ['saved']);
+  const hold = { current: false };
+  let respond!: (value: string[]) => void;
+  const fetcher = () => new Promise<string[]>((resolve) => { respond = resolve; });
+  let section!: ReturnType<typeof useFeedSection<string[]>>;
+  function Harness() { section = useFeedSection<string[]>(fetcher, true, { storageKey: FEED_HOME_STORAGE_KEYS.stories, holdRef: hold }); return null; }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); await settle(); });
+    assert.deepEqual(section.data, ['saved']);
+    await act(async () => { respond(['fresh']); await settle(); }); // the mount's first fetch applies while idle
+    assert.deepEqual(section.data, ['fresh']);
+
+    hold.current = true; // a tile is pressed
+    await act(async () => { void section.load(true); await settle(); });
+    await act(async () => { respond(['polled']); await settle(); });
+    assert.deepEqual(section.data, ['fresh']); // the polled story waits for the press
+    assert.equal(section.loading, false); // a silent poll never flashes the loading state
+
+    hold.current = false;
+    await act(async () => { section.release(); await settle(); });
+    assert.deepEqual(section.data, ['polled']); // applied on release
+    assert.deepEqual((JSON.parse(disk.get(FEED_HOME_STORAGE_KEYS.stories)!) as { payload: string[] }).payload, ['polled']);
   } finally { if (renderer) await act(async () => renderer.unmount()); }
 });
 

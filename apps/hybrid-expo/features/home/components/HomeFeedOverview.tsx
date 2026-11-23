@@ -1,10 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
-import { Animated, Pressable, RefreshControl, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
+import { Animated, RefreshControl, StyleSheet, Text, View, type ScrollViewProps } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HomeCalendarCard } from '@/features/feed/components/HomeCalendarCard';
 import { NarrativeSheet, type NarrativeSheetItem } from '@/features/feed/components/NarrativeSheet';
 import { TodayCarousel, TodayCarouselSkeleton } from '@/features/feed/components/StoryCarousel';
-import { TopicMosaic } from '@/features/feed/components/TopicMosaic';
+import { TopicMosaic, TopicMosaicSkeleton } from '@/features/feed/components/TopicMosaic';
 import { FeedSectionState } from '@/features/feed/components/feed-section-state';
 import { feedItemDetail, fetchFeedItems } from '@/features/feed/feed.api';
 import { fetchStories } from '@/features/feed/stories.api';
@@ -86,7 +86,7 @@ export function HomeFeedOverview({ active, onScroll }: {
           {reports.error && slides.length ? <Text selectable style={styles.latestNotice}>Refresh failed. Showing the last loaded updates.</Text> : null}
         </View>
         <View style={[styles.mosaic, storyList.length ? null : styles.mosaicEmpty]} onTouchStart={pressStories} onTouchEnd={releaseStories} onTouchCancel={releaseStories}>
-          {stories.loading && !stories.data ? <FeedSectionState title="Loading stories…" loading /> : null}
+          {stories.loading && !stories.data ? <TopicMosaicSkeleton /> : null}
           {stories.error ? (
             <FeedSectionState
               title={sectionFailureTitle(stories.error, 'Developing stories unavailable')}
@@ -102,11 +102,6 @@ export function HomeFeedOverview({ active, onScroll }: {
         </View>
       </View>
     </Animated.ScrollView>
-    {stories.pending || reports.pending ? (
-      <Pressable accessibilityRole="button" accessibilityLabel="Apply new Feed updates" onPress={() => { stories.apply(); reports.apply(); }} style={styles.newUpdates}>
-        <Text style={styles.action}>New updates ↓</Text>
-      </Pressable>
-    ) : null}
     <NarrativeSheet item={report} onClose={() => setReport(null)} />
   </>;
 }
@@ -120,6 +115,4 @@ const styles = StyleSheet.create({
   mosaicEmpty: { justifyContent: 'center' },
   calendar: {},
   latestNotice: { color: FEED_TOKENS.colors.textDim, fontSize: 12, lineHeight: 16 },
-  newUpdates: { position: 'absolute', bottom: 12, left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: color.border, borderRadius: 8, backgroundColor: color.card },
-  action: { color: color.accent, fontSize: 12, fontWeight: '700' },
 });

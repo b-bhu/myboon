@@ -10,6 +10,7 @@ import { storyAge, storyCountLabel, storyHref } from '../feed-stories';
 import {
   formatTileMove,
   mosaicPages,
+  PAGE_SLOTS,
   shownMarket,
   tileShowsArrow,
   type MosaicTileKind,
@@ -205,6 +206,46 @@ export function MosaicDots({ page, count }: { page: number; count: number }) {
       {Array.from({ length: count }, (_, index) => (
         <View key={index} style={[styles.dot, index === page && styles.dotOn]} />
       ))}
+    </View>
+  );
+}
+
+/**
+ * Loading state for the mosaic slot (#797): the heading row with a page-1 dot
+ * plus the real page-1 tile frames, empty, so nothing jumps when the first
+ * stories land.
+ */
+export function TopicMosaicSkeleton() {
+  return (
+    <View style={styles.section} accessibilityLabel="Loading developing stories">
+      <View style={styles.head}>
+        <Text accessibilityRole="header" style={styles.heading}>Developing stories</Text>
+        <View style={styles.dots}>
+          <View style={[styles.dot, styles.dotOn]} />
+          <View style={styles.dot} />
+          <View style={styles.dot} />
+        </View>
+      </View>
+      <View style={styles.pager}>
+        <View style={[styles.page, { width: '100%' }]}>
+          {PAGE_SLOTS.map((slot, index) => (
+            <View
+              key={index}
+              style={[
+                styles.tileFrame,
+                {
+                  left: `${(slot.col / 6) * 100}%`,
+                  top: `${(slot.row / 4) * 100}%`,
+                  width: `${(slot.colSpan / 6) * 100}%`,
+                  height: `${(slot.rowSpan / 4) * 100}%`,
+                },
+              ]}
+            >
+              <View style={[styles.tile, (slot.kind === 'large' || slot.kind === 'tall') && styles.tileLead]} />
+            </View>
+          ))}
+        </View>
+      </View>
     </View>
   );
 }

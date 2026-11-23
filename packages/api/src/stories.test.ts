@@ -1014,14 +1014,14 @@ test('Story Atlas eligibility ignores merged and inactive items and only lists a
   assert.equal(windowRead?.searchParams.get('merged_into_id'), 'is.null')
 })
 
-test('Story Atlas list returns at most 12 topics, newest latest development first', async () => {
-  const entities = Array.from({ length: 15 }, (_, index) => fakeEntity(index + 1))
-  // Topic n's newest item is n hours old, so topic-1 is the freshest and topic-15 the stalest.
+test('Story Atlas list returns at most 20 topics, newest latest development first', async () => {
+  const entities = Array.from({ length: 25 }, (_, index) => fakeEntity(index + 1))
+  // Topic n's newest item is n hours old, so topic-1 is the freshest and topic-25 the stalest.
   const items = entities.flatMap((_, index) => fakeItems(index + 1, 3, index + 1))
   const fake = atlasFake(entities, items)
   const slugs = await listSlugs(fake)
-  assert.equal(slugs.length, 12)
-  assert.deepEqual(slugs, Array.from({ length: 12 }, (_, index) => `topic-${index + 1}`))
+  assert.equal(slugs.length, 20)
+  assert.deepEqual(slugs, Array.from({ length: 20 }, (_, index) => `topic-${index + 1}`))
 })
 
 test('Story Atlas ordering uses the latest item, not the item count', async () => {

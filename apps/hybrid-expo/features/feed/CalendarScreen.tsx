@@ -176,7 +176,7 @@ export default function CalendarScreen() {
             })}
           </View>
         ))}
-        {section.loading && !data ? <FeedSectionState title="Loading calendar…" loading /> : null}
+        {section.loading && !data ? <CalendarListSkeleton /> : null}
         {section.error && !data ? (
           <FeedSectionState title="Calendar unavailable" text="Calendar could not be loaded." onRetry={() => { void section.load(); }} />
         ) : null}
@@ -222,6 +222,33 @@ export default function CalendarScreen() {
     </View>
   );
 }
+
+/**
+ * First-load skeleton for the Calendar events list (#797): the month grid
+ * renders above while these event-card placeholders stand in for the real
+ * FeedBox rows, so the screen does not jump on arrival.
+ */
+function CalendarListSkeleton() {
+  return (
+    <View style={skeletonStyles.list}>
+      {[0, 1, 2].map((index) => (
+        <FeedBox key={index} tone="ground">
+          <View style={[skeletonStyles.line, skeletonStyles.time]} />
+          <View style={[skeletonStyles.line, skeletonStyles.title]} />
+          <View style={[skeletonStyles.line, skeletonStyles.context]} />
+        </FeedBox>
+      ))}
+    </View>
+  );
+}
+
+const skeletonStyles = StyleSheet.create({
+  list: { gap: FEED_TOKENS.space.sm, marginTop: FEED_TOKENS.space.md },
+  line: { height: 12, borderRadius: 4, backgroundColor: FEED_TOKENS.colors.border },
+  time: { width: 56 },
+  title: { height: 16, width: '70%' },
+  context: { width: '52%' },
+});
 
 const styles = StyleSheet.create({
   screen: {

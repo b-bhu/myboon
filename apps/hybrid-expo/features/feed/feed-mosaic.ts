@@ -65,7 +65,7 @@ interface TileSpec {
  * The mock's fixed slots on the 6×4 grid, in rank order within a page.
  * A short last page fills only the slots it has and is never re-laid out.
  */
-const PAGE_SLOTS: readonly TileSpec[] = [
+export const PAGE_SLOTS: readonly TileSpec[] = [
   { kind: 'large', col: 0, row: 0, colSpan: 3, rowSpan: 2 },
   { kind: 'tall', col: 3, row: 0, colSpan: 2, rowSpan: 2 },
   { kind: 'wide', col: 0, row: 2, colSpan: 2, rowSpan: 1 },

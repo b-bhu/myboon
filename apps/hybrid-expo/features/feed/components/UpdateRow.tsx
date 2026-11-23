@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
-import { updateMeta } from '@/features/feed/feed-updates';
+import { summaryLine, updateMeta } from '@/features/feed/feed-updates';
 import type { FeedItem } from '@/features/feed/feed.types';
 
 interface UpdateRowProps {
@@ -10,9 +10,10 @@ interface UpdateRowProps {
 }
 
 /**
- * Text-only "All updates" row (issue #496, DESIGN.md §7 + feed-mock.html
- * #s-allupdates): plain hairline row, title first, one-line summary, mono-cap meta.
- * No image. The whole row is tappable and opens the news sheet.
+ * Bordered "All updates" card (docs/design/feed.html #s-allupdates, issue
+ * #797): #063343 fill inside a 1px #185A70 border, title first, one-line
+ * summary ending on a whole word, mono-cap meta. No image. The whole card is
+ * tappable and opens the news sheet.
  */
 export function UpdateRowCard({ item, now, onPress }: UpdateRowProps) {
   return (
@@ -23,7 +24,7 @@ export function UpdateRowCard({ item, now, onPress }: UpdateRowProps) {
       accessibilityLabel={item.headline}
     >
       <Text style={styles.title} numberOfLines={3}>{item.headline}</Text>
-      {item.description ? <Text style={styles.description} numberOfLines={1}>{item.description}</Text> : null}
+      {item.description ? <Text style={styles.description} numberOfLines={1}>{summaryLine(item.description)}</Text> : null}
       <Text style={styles.meta}>{updateMeta(item, now)}</Text>
     </Pressable>
   );
@@ -31,22 +32,26 @@ export function UpdateRowCard({ item, now, onPress }: UpdateRowProps) {
 
 const styles = StyleSheet.create({
   card: {
+    backgroundColor: FEED_TOKENS.colors.ground,
+    borderRadius: FEED_TOKENS.radius.card,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.border,
+    padding: FEED_TOKENS.space.md,
+    marginBottom: FEED_TOKENS.space.sm,
+    gap: FEED_TOKENS.space.xs,
     minHeight: 44,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: FEED_TOKENS.colors.border,
-    paddingVertical: FEED_TOKENS.space.md,
-    gap: FEED_TOKENS.space.sm,
   },
   title: {
     color: FEED_TOKENS.colors.text,
     fontSize: FEED_TOKENS.type.cardTitle,
     lineHeight: 23,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   description: {
     color: FEED_TOKENS.colors.textDim,
     fontSize: FEED_TOKENS.type.body,
-    lineHeight: 20,
+    lineHeight: 21,
+    marginTop: 2,
   },
   meta: {
     color: FEED_TOKENS.colors.textFaint,
@@ -55,6 +60,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     fontWeight: '600',
     letterSpacing: 1,
+    marginTop: 2,
   },
   pressed: {
     opacity: 0.78,
