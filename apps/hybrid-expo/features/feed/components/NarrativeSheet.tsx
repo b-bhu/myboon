@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Animated, Linking, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { TakeActionApps } from '@/features/feed/components/TakeActionApps';
 import { FEED_TOKENS, monoFontFamily } from '@/features/feed/feed-design';
-import { newsSheetHeight, shouldDismissSheet, updateAge } from '@/features/feed/feed-updates';
-import type { FeedUpdateSource } from '@/features/feed/feed.types';
+import { newsSheetHeight, shouldDismissSheet, sheetBodyDragClaims, updateTimeAgo } from '@/features/feed/feed-updates';
 import { useReducedMotion } from '../use-reduced-motion';
 
 export interface NarrativeSheetItem {
@@ -15,21 +14,27 @@ export interface NarrativeSheetItem {
   imageUrl?: string | null;
   imageKind?: 'content' | 'source_avatar' | null;
   imageAttribution?: string | null;
+  /**
+   * The meta line's halves (mock 'Bitcoin · Macro' / '2h ago · MyBoon', #798):
+   * left is the topic · category, right the age · source. Whichever half the
+   * update lacks is omitted, never filled with placeholder text.
+   */
+  topic?: string | null;
+  category?: string | null;
+  sourceName?: string | null;
+  /**
+   * The boxed Key points rows (mock #s-todaysheet .kp, #798). The API sends no
+   * figure list yet, so the block stays out until that data exists.
+   */
+  keyPoints?: readonly string[];
   howWeGotHere?: string;
   whatToWatch?: string;
-  sources?: readonly FeedUpdateSource[];
 }
 
 interface NarrativeSheetProps {
   item: NarrativeSheetItem | null;
   onClose: () => void;
 }
-
-const BODY: readonly { key: 'summary' | 'howWeGotHere' | 'whatToWatch'; label: string }[] = [
-  { key: 'summary', label: 'What happened' },
-  { key: 'howWeGotHere', label: 'How we got here' },
-  { key: 'whatToWatch', label: 'What to watch' },
-];
 
 export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const reducedMotion = useReducedMotion();
@@ -38,12 +43,16 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const sheetHeight = newsSheetHeight(screenHeight);
   const translateY = useRef(new Animated.Value(1000)).current;
   const dragY = useRef(new Animated.Value(0)).current;
+  // The article scroll offset gates the body drag: swiping down only closes
+  // the sheet while the article sits at its top (the grabber always drags).
+  const scrollAtTopRef = useRef(true);
 
   const onCloseRef = useRef(onClose);
   useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     setFailedImage(null);
+    scrollAtTopRef.current = true;
   }, [item?.id]);
 
   useEffect(() => {
@@ -55,29 +64,49 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
     }).start();
   }, [item, sheetHeight, translateY, dragY, reducedMotion]);
 
-  const panResponder = useMemo(() => {
-    const settle = () => {
-      if (reducedMotion) {
-        Animated.timing(dragY, { toValue: 0, duration: 0, useNativeDriver: true }).start();
-      } else {
-        Animated.spring(dragY, { toValue: 0, bounciness: 0, useNativeDriver: true }).start();
-      }
-    };
-    return PanResponder.create({
-      onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy > 4 && gesture.dy > Math.abs(gesture.dx),
+  const settle = useCallback(() => {
+    if (reducedMotion) {
+      Animated.timing(dragY, { toValue: 0, duration: 0, useNativeDriver: true }).start();
+    } else {
+      Animated.spring(dragY, { toValue: 0, bounciness: 0, useNativeDriver: true }).start();
+    }
+  }, [dragY, reducedMotion]);
+
+  // The grabber claims any outward drag; the article claims only at scroll
+  // top, so a drag inside a scrolled article keeps scrolling (#798). The
+  // drag-release decision stays shouldDismissSheet for both. Swiping down
+  // anywhere on the sheet body (or the grabber) closes it, never an upward
+  // or sideways drag.
+  const release = useCallback((_event: unknown, gesture: { dy: number; vy: number }) => {
+    if (shouldDismissSheet(Math.max(0, gesture.dy), gesture.vy, sheetHeight)) {
+      onCloseRef.current();
+      return;
+    }
+    settle();
+  }, [settle, sheetHeight]);
+  const grabberPanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) => sheetBodyDragClaims(gesture.dy, gesture.dx),
       onPanResponderMove: (_event, gesture) => {
         dragY.setValue(Math.max(0, gesture.dy));
       },
-      onPanResponderRelease: (_event, gesture) => {
-        if (shouldDismissSheet(Math.max(0, gesture.dy), gesture.vy, sheetHeight)) {
-          onCloseRef.current();
-          return;
-        }
-        settle();
-      },
+      onPanResponderRelease: release,
       onPanResponderTerminate: settle,
-    });
-  }, [dragY, sheetHeight, reducedMotion]);
+    }),
+    [dragY, release, settle],
+  );
+  const scrollPanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        scrollAtTopRef.current && sheetBodyDragClaims(gesture.dy, gesture.dx),
+      onPanResponderMove: (_event, gesture) => {
+        dragY.setValue(Math.max(0, gesture.dy));
+      },
+      onPanResponderRelease: release,
+      onPanResponderTerminate: settle,
+    }),
+    [dragY, release, settle],
+  );
 
   const title = item?.title ?? '';
   const publishedAt = item?.createdAt ?? '';
@@ -85,8 +114,11 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
   const showImage = Boolean(imageUrl)
     && item?.imageKind !== 'source_avatar'
     && failedImage !== imageUrl;
-  const age = updateAge(publishedAt, new Date());
-  const meta = age ? `${age} · LATEST` : 'LATEST';
+  const metaTopic = [item?.topic, item?.category].filter(Boolean).join(' · ');
+  const metaWhen = [updateTimeAgo(publishedAt, new Date()), item?.sourceName ?? '']
+    .filter(Boolean).join(' · ');
+  const fullPicture = (['howWeGotHere', 'whatToWatch'] as const)
+    .map((key) => item?.[key]?.trim() ?? '');
 
   return (
     <Modal
@@ -100,12 +132,24 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
       <Animated.View
         style={[styles.sheet, { height: sheetHeight, transform: [{ translateY: Animated.add(translateY, dragY) }] }]}
       >
-        <View style={styles.grabberArea} {...panResponder.panHandlers}>
+        <View style={styles.grabberArea} {...grabberPanResponder.panHandlers}>
           <View style={styles.grabber} />
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
-          <Text style={styles.meta}>{meta}</Text>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.content}
+          contentOffset={{ x: 0, y: 0 }}
+          scrollEventThrottle={16}
+          onScroll={(event) => { scrollAtTopRef.current = event.nativeEvent.contentOffset.y <= 0; }}
+          {...scrollPanResponder.panHandlers}
+        >
+          {metaTopic || metaWhen ? (
+            <View style={styles.metaRow}>
+              {metaTopic ? <Text style={styles.metaTopic}>{metaTopic}</Text> : null}
+              {metaWhen ? <Text style={styles.metaWhen}>{metaWhen}</Text> : null}
+            </View>
+          ) : null}
           <Text style={styles.title}>{title}</Text>
           {showImage && imageUrl ? (
             <Image
@@ -117,29 +161,22 @@ export function NarrativeSheet({ item, onClose }: NarrativeSheetProps) {
               accessibilityLabel={item?.imageAttribution ?? title}
             />
           ) : null}
-          {BODY.map((section) => {
-            const text = item?.[section.key]?.trim();
-            if (!text) return null;
-            return (
-              <View key={section.key} style={styles.section}>
-                <Text style={styles.sectionLabel}>{section.label}</Text>
-                <Text style={styles.lead}>{text}</Text>
-              </View>
-            );
-          })}
-          {item?.sources?.length ? (
+          {item?.summary?.trim() ? <Text style={styles.lead}>{item.summary.trim()}</Text> : null}
+          {item?.keyPoints?.length ? (
+            <View style={styles.keyPoints}>
+              <Text style={styles.keyPointsLabel}>Key points</Text>
+              {item.keyPoints.map((row, index) => (
+                <View key={`${index}-${row}`} style={index > 0 ? styles.keyPointRow : styles.keyPointFirst}>
+                  <Text style={styles.keyPointText}>{row}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {fullPicture.some(Boolean) ? (
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Sources</Text>
-              {item.sources.map((source) => (
-                <Pressable
-                  key={source.itemId}
-                  accessibilityRole="link"
-                  accessibilityLabel={source.title}
-                  onPress={() => { void Linking.openURL(source.link); }}
-                  style={styles.sourceLink}
-                >
-                  <Text style={styles.sourceTitle}>{source.title}</Text>
-                </Pressable>
+              <Text style={styles.sectionLabel}>The full picture</Text>
+              {fullPicture.map((paragraph, index) => (
+                paragraph ? <Text key={`${index}-${paragraph.slice(0, 24)}`} style={styles.body}>{paragraph}</Text> : null
               ))}
             </View>
           ) : null}
@@ -178,6 +215,7 @@ const styles = StyleSheet.create({
     height: 4,
     marginTop: 8,
     borderRadius: 2,
+    // The mock's hairline grabber (#798): #185A70, the border token.
     backgroundColor: FEED_TOKENS.colors.border,
   },
   content: {
@@ -185,8 +223,26 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 32,
   },
-  meta: {
-    color: FEED_TOKENS.colors.textFaint,
+  metaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    gap: 12,
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  metaTopic: {
+    flexShrink: 1,
+    color: FEED_TOKENS.colors.text,
+    fontFamily: monoFontFamily(),
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  metaWhen: {
+    color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
     fontSize: 11,
     lineHeight: 14,
@@ -196,27 +252,61 @@ const styles = StyleSheet.create({
   },
   title: {
     color: FEED_TOKENS.colors.text,
-    fontSize: 20,
-    lineHeight: 25,
+    fontSize: FEED_TOKENS.type.title,
+    lineHeight: 33,
     fontWeight: '700',
-    marginTop: 12,
+    marginTop: 8,
   },
   heroImage: {
     width: '100%',
-    height: 210,
+    height: 150,
     borderRadius: FEED_TOKENS.radius.card,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.border,
     marginTop: 12,
     backgroundColor: FEED_TOKENS.colors.card,
     borderCurve: 'continuous',
   },
+  lead: {
+    color: FEED_TOKENS.colors.text,
+    fontSize: 17,
+    lineHeight: 25,
+    marginTop: 8,
+  },
+  keyPoints: {
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.border,
+    borderRadius: FEED_TOKENS.radius.card,
+    padding: FEED_TOKENS.space.md,
+    marginTop: 12,
+  },
+  keyPointsLabel: {
+    color: FEED_TOKENS.colors.textFaint,
+    fontFamily: monoFontFamily(),
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  keyPointFirst: {
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  keyPointRow: {
+    marginTop: 8,
+    paddingVertical: 6,
+    borderTopWidth: 1,
+    borderTopColor: FEED_TOKENS.colors.border,
+  },
+  keyPointText: {
+    color: FEED_TOKENS.colors.text,
+    fontSize: 15,
+    lineHeight: 22,
+  },
   section: {
     marginTop: 24,
     gap: 8,
-  },
-  lead: {
-    color: FEED_TOKENS.colors.textDim,
-    fontSize: 15,
-    lineHeight: 22,
   },
   sectionLabel: {
     color: FEED_TOKENS.colors.textFaint,
@@ -227,13 +317,9 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  sourceLink: {
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  sourceTitle: {
-    color: FEED_TOKENS.colors.accent,
-    fontSize: 12,
-    lineHeight: 16,
+  body: {
+    color: FEED_TOKENS.colors.textDim,
+    fontSize: 15,
+    lineHeight: 23,
   },
 });
