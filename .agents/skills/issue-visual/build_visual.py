@@ -19,8 +19,11 @@ spec.json:
      "today": "Shows in the build", "issue": 802, "ghost": "Swap ⌄"}
   ]
 }
+Reviewer mode: add "verdict": "pass" | "fail" | "unchecked" and "evidence": "path/file.tsx:42" to a marker.
+  The marker then shows a tick, a cross or a question mark, and the card shows the verdict and the evidence.
 kind: new (built from fresh) | change | remove | keep (must not change).
 anchor: a CSS selector inside the frame; markers are placed by script, so they follow the real layout.
+        Add "all": true with "outline" to box every element the selector matches (for example both columns).
         Leave anchor out when the mock has no frame for it; the card then says so.
 """
 import json, re, subprocess, sys, html, pathlib
@@ -75,9 +78,15 @@ for mk in spec["markers"]:
     c = colors[mk["kind"]]
     iss = f' · #{mk["issue"]}' if mk.get("issue") else ""
     if not mk.get("anchor"): mk["today"] = (mk.get("today", "") + " (No frame in the mock.)").strip()
+    vd = mk.get("verdict")
+    vtxt = ""
+    if vd:
+        vc = {"pass": "#1D9E75", "fail": "#E24B4A", "unchecked": "#888780"}[vd]
+        ev = f' · {html.escape(mk["evidence"])}' if mk.get("evidence") else ""
+        vtxt = f'<p class="vv" style="color:{vc}">{vd.capitalize()}{ev}</p>'
     cards += (f'<div class="vc"><span class="vb" style="background:{c}">{mk["n"]}</span><div>'
               f'<b>{html.escape(mk["label"])}</b><small style="color:{c}">{words[mk["kind"]]}{iss}</small>'
-              f'<p>{html.escape(mk.get("today",""))}</p></div></div>')
+              f'<p>{html.escape(mk.get("today",""))}</p>{vtxt}</div></div>')
 legend = "".join(f'<span><i style="background:{colors[k]}"></i>{words[k]}</span>' for k in colors)
 
 page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -95,7 +104,8 @@ html,body{{background:#05161d!important;color:#E6F1F5;margin:0;padding:0;height:
 .vc b{{display:block;font:500 15px system-ui}} .vc small{{font:500 12px system-ui}} .vc p{{margin:4px 0 0;color:#9CB8C2;font-size:13px}}
 .vb{{flex:0 0 26px;height:26px;border-radius:50%;display:grid;place-items:center;color:#05161d;font:700 13px system-ui}}
 .vl{{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 0;color:#9CB8C2;font-size:12px}} .vl i{{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}}
-.mk{{position:absolute;z-index:9000;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;color:#05161d;font:700 12px system-ui;box-shadow:0 0 0 2px #05161d}}
+.vv{{font-weight:500}}
+.vmk{{position:absolute;z-index:9000;min-width:24px;height:24px;padding:0 6px;box-sizing:border-box;border-radius:12px;display:grid;place-items:center;color:#05161d;font:700 12px system-ui;box-shadow:0 0 0 2px #05161d}}
 .ol{{position:absolute;z-index:8999;border:2px dashed;border-radius:6px;pointer-events:none}}
 .gh{{position:absolute;z-index:8999;border:2px dashed #E24B4A;background:#E24B4A33;color:#FFD1D0;font:600 13px system-ui;padding:3px 8px;border-radius:6px;pointer-events:none}}
 </style></head><body><div class="vp"><h1>{html.escape(spec["title"])}</h1>
@@ -105,8 +115,9 @@ html,body{{background:#05161d!important;color:#E6F1F5;margin:0;padding:0;height:
 const M={json.dumps(spec["markers"])},C={json.dumps(colors)},f=document.getElementById('vf'),fr=f.getBoundingClientRect();
 const used={{}};M.forEach(m=>{{if(!m.anchor)return;const a=f.querySelector(m.anchor);if(!a)return;const k=m.anchor,off=(used[k]=(used[k]||0)+1)-1;const r=a.getBoundingClientRect(),x=r.left-fr.left,y=r.top-fr.top;
  if(m.outline){{const o=document.createElement('div');o.className='ol';o.style.cssText=`left:${{x}}px;top:${{y}}px;width:${{r.width}}px;height:${{r.height}}px;border-color:${{C[m.kind]}}`;f.appendChild(o)}}
+ if(m.all&&m.outline){{f.querySelectorAll(m.anchor).forEach((e,i)=>{{if(!i)return;const q=e.getBoundingClientRect(),o=document.createElement('div');o.className='ol';o.style.cssText=`left:${{q.left-fr.left}}px;top:${{q.top-fr.top}}px;width:${{q.width}}px;height:${{q.height}}px;border-color:${{C[m.kind]}}`;f.appendChild(o)}})}}
  if(m.ghost){{const g=document.createElement('div');g.className='gh';g.textContent=m.ghost;g.style.cssText=`left:${{x+8}}px;top:${{y+6}}px`;f.appendChild(g)}}
- const b=document.createElement('div');b.className='mk';b.textContent=m.n;b.style.cssText=`left:${{Math.max(4,x+r.width-30-off*28)}}px;top:${{y+4}}px;background:${{C[m.kind]}}`;f.appendChild(b)}});
+ const b=document.createElement('div');b.className='vmk';b.textContent=m.n+({{pass:' ✓',fail:' ✕',unchecked:' ?'}}[m.verdict]||'');b.style.cssText=`left:${{r.width<60?Math.max(4,x-6-off*28):Math.max(4,x+r.width-30-off*28)}}px;top:${{r.width<60?y-28:y+4}}px;background:${{C[m.kind]}}`;f.appendChild(b)}});
 </script></body></html>"""
 pathlib.Path(out).write_text(page, encoding="utf-8")
 print("wrote", out, f"({len(page)//1024} KB)")
