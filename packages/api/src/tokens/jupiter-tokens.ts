@@ -30,7 +30,8 @@ const DEFAULT_JUPITER_TOKEN_SEARCH_URL = 'https://lite-api.jup.ag/tokens/v2/sear
  * Search wiring from bootstrap (#833): the API base and key callers fall back
  * to when they do not pass one. bootstrap/create-app.ts sets these once from
  * bootstrap/config.ts (JUPITER_API_BASE / JUP_API_KEY), keeping the raw env
- * out of this module.
+ * out of this module. An unset JUPITER_API_BASE keeps the lite-api default
+ * below.
  */
 let searchDefaults: { apiBase?: string; apiKey?: string } = {}
 

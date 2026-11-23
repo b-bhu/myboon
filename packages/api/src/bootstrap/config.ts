@@ -24,6 +24,8 @@ export type ApiConfig = {
   tokensApiKey?: string
   jupApiKey?: string
   jupApiBase?: string
+  /** JUPITER_API_BASE: token-search base override; unset keeps the lite-api.jup.ag default. */
+  jupiterApiBase?: string
   /** Relay's wallet Move key, read from RELAY_API_KEY; optional so a missing key degrades instead of stopping the API. */
   relayApiKey?: string
   swapPriorityFeeMaxLamports?: string
@@ -115,6 +117,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     tokensApiKey: env.TOKENS_API_KEY,
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,
+    jupiterApiBase: env.JUPITER_API_BASE,
     relayApiKey,
     swapPriorityFeeMaxLamports: priorityFee,
     swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',

@@ -48,7 +48,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   // Env-derived settings arrive only through ApiConfig (#833): the venue
   // modules take their values from here instead of reading the raw env.
   configureTokenIdentityFlag(config.tokenIdentityEnabled)
-  configureJupiterSearch({ apiBase: config.jupApiBase, apiKey: config.jupApiKey })
+  configureJupiterSearch({ apiBase: config.jupiterApiBase, apiKey: config.jupApiKey })
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
