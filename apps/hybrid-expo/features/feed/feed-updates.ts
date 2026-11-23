@@ -108,3 +108,23 @@ export function groupUpdatesByDay(items: FeedItem[], now: Date): UpdateRow[] {
   }
   return rows;
 }
+
+/** Character budget of an All-updates card's one-line summary (mock #s-allupdates .sm). */
+export const UPDATE_SUMMARY_CHARS = 42;
+
+/**
+ * Trims a one-line All-updates summary so the visible text ends on a whole
+ * word and the ellipsis follows it (issue #797): the cut point is the end of
+ * the last whole word inside the budget, never inside a word. Collapses
+ * repeated whitespace; an already-short summary passes through unchanged.
+ * A single token longer than the budget has no word boundary to keep and is
+ * hard-cut at the budget.
+ */
+export function summaryLine(text: string, maxChars: number = UPDATE_SUMMARY_CHARS): string {
+  const trimmed = text.replace(/\s+/g, ' ').trim();
+  if (trimmed.length <= maxChars) return trimmed;
+  const head = trimmed.slice(0, maxChars);
+  const cut = head.lastIndexOf(' ');
+  if (cut < 1) return `${head}…`; // one unbroken token longer than the budget
+  return `${head.slice(0, cut)}…`;
+}

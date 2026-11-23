@@ -2,10 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   NEWS_SHEET_RATIO,
+  UPDATE_SUMMARY_CHARS,
   dayLabel,
   groupUpdatesByDay,
   newsSheetHeight,
   shouldDismissSheet,
+  summaryLine,
   updateAge,
   updateMeta,
 } from './feed-updates';
@@ -21,6 +23,20 @@ const item = (id: number, y: number, mon: number, d: number, h = 12, min = 0, ca
   headline: `Report ${id}`,
   description: 'Summary',
   actions: [],
+});
+
+test('summaryLine ends on a whole word before the ellipsis, never mid-word (#797)', () => {
+  // A short summary passes through with whitespace collapsed.
+  assert.equal(summaryLine('Traders now price two cuts by March.'), 'Traders now price two cuts by March.');
+  assert.equal(summaryLine('  extra   spaces   collapse  '), 'extra spaces collapse');
+  // Longer text is cut at the last whole word inside the budget, then '…'.
+  assert.equal(summaryLine('Prediction markets on a deal slipped to 31% today', 36), 'Prediction markets on a deal…');
+  assert.equal(summaryLine('Traders now price two cuts by March after the softer inflation print'), 'Traders now price two cuts by March after…');
+  // Tab-separated source text never carries tabs into the rendered line.
+  assert.equal(summaryLine('Tab\tseparated\ttext\twith\ttabs', 20), 'Tab separated text…');
+  // One unbroken token longer than the budget has no word boundary to keep.
+  assert.equal(summaryLine('Supercalifragilisticexpialidocious', 10), 'Supercalif…');
+  assert.equal(UPDATE_SUMMARY_CHARS, 42);
 });
 
 test('newsSheetHeight is 90% of the screen height, rounded', () => {

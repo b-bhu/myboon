@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FeedHeader } from './components/FeedHeader';
 import { FeedList } from './components/FeedList';
@@ -7,6 +7,7 @@ import { NarrativeSheet, type NarrativeSheetItem } from './components/NarrativeS
 import { FeedSectionState } from './components/feed-section-state';
 import { feedItemDetail } from './feed.api';
 import { FEED_COLORS as color } from './feed.constants';
+import { FEED_TOKENS } from './feed-design';
 import type { FeedItem } from './feed.types';
 import { useReportPages } from './use-report-pages';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
@@ -26,15 +27,48 @@ export default function FeedScreen() {
       header={<View style={styles.header}>
         {pages.error && pages.items.length ? <FeedSectionState title="Refresh unavailable" text="Your loaded reports are still available." onRetry={() => { void pages.refresh(); }} /> : null}
       </View>}
-      empty={<FeedSectionState title={pages.loading ? 'Loading updates…' : pages.error ? 'Updates unavailable' : 'No published updates yet'} loading={pages.loading} text={pages.error ?? undefined} onRetry={pages.error ? () => { void pages.refresh(); } : undefined} />}
+      empty={pages.loading && !pages.items.length ? <UpdatesListSkeleton /> : (
+        <FeedSectionState
+          title={pages.error ? 'Updates unavailable' : 'No published updates yet'}
+          text={pages.error ?? undefined}
+          onRetry={pages.error ? () => { void pages.refresh(); } : undefined}
+        />
+      )}
       footer={pages.olderError ? <FeedSectionState title="Older updates unavailable" text={pages.olderError} onRetry={() => { void pages.loadMore(); }} /> : null}
     />
-    {pages.pending ? <Pressable accessibilityRole="button" accessibilityLabel="Apply new report updates" onPress={pages.apply} style={[styles.updates, { bottom: insets.bottom + 12 }]}><Text style={styles.action}>New updates ↓</Text></Pressable> : null}
     <NarrativeSheet item={sheetItem} onClose={() => setSheetItem(null)} />
+  </View>;
+}
+
+/**
+ * First-load skeleton for the updates list (#797): a day header and the
+ * bordered cards of the real rows, the same sizes, so nothing jumps when the
+ * list lands.
+ */
+function UpdatesListSkeleton() {
+  return <View style={skeletonStyles.list}>
+    <View style={skeletonStyles.day} />
+    <View style={skeletonStyles.card}>
+      <View style={[skeletonStyles.line, skeletonStyles.title]} />
+      <View style={[skeletonStyles.line, skeletonStyles.summary]} />
+      <View style={[skeletonStyles.line, skeletonStyles.meta]} />
+    </View>
+    <View style={skeletonStyles.card}>
+      <View style={[skeletonStyles.line, skeletonStyles.title]} />
+      <View style={[skeletonStyles.line, skeletonStyles.summary]} />
+      <View style={[skeletonStyles.line, skeletonStyles.meta]} />
+    </View>
   </View>;
 }
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.screen }, header: { paddingBottom: 12, gap: 12 },
-  updates: { position: 'absolute', left: 16, right: 16, zIndex: 2, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 8, borderWidth: 1, borderColor: color.border, backgroundColor: color.card },
-  action: { color: color.accent, fontSize: 13, fontWeight: '700' },
+});
+const skeletonStyles = StyleSheet.create({
+  list: { marginTop: 8 },
+  day: { height: 14, width: 72, borderRadius: 4, marginTop: 8, marginBottom: 8, backgroundColor: color.borderSoft },
+  card: { minHeight: 92, borderRadius: 8, borderWidth: 1, borderColor: FEED_TOKENS.colors.border, backgroundColor: FEED_TOKENS.colors.ground, padding: 12, gap: 10, marginBottom: 12 },
+  line: { height: 12, borderRadius: 4, backgroundColor: color.borderSoft },
+  title: { height: 18, width: '76%' },
+  summary: { width: '88%' },
+  meta: { width: 92 },
 });

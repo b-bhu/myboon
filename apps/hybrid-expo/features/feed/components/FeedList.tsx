@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
   dayLabel: {
     paddingTop: 12,
     paddingBottom: 8,
-    color: FEED_TOKENS.colors.textFaint,
+    color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
     fontSize: FEED_TOKENS.type.label,
     lineHeight: 14,

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchFeedItems } from './feed.api';
 import type { FeedItem } from './feed.types';
-import { hasChanged, mergeReports } from './feed-state';
+import { mergeReports } from './feed-state';
 
 export const REPORT_PAGE_SIZE = 20;
 export function useReportPages() {
   const [items, setItems] = useState<FeedItem[]>([]);
-  const [pending, setPending] = useState<FeedItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,22 +28,21 @@ export function useReportPages() {
     offset.current = page.length;
     hasMore.current = page.length === REPORT_PAGE_SIZE;
     setItems((current) => mergeReports(current, page));
-    setPending(null);
     setOlderError(null);
   }, []);
 
-  const refresh = useCallback(async (queue = false) => {
+  const refresh = useCallback(async (silent = false) => {
     headRequest.current?.abort();
     const controller = new AbortController();
     headRequest.current = controller;
-    if (!queue) setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const page = await fetchFeedItems(REPORT_PAGE_SIZE, 0, { signal: controller.signal });
       if (controller.signal.aborted) return;
       setError(null);
-      if (queue && firstPage.current !== null) {
-        setPending(hasChanged(firstPage.current, page) ? page : null);
-      } else applyPage(page);
+      // Every fetch applies on arrival (#797): the five-minute poll refreshes
+      // the list in place, with no "New updates" bar.
+      applyPage(page);
     } catch {
       if (!controller.signal.aborted) setError('Latest updates could not be refreshed.');
     } finally {
@@ -79,6 +77,5 @@ export function useReportPages() {
     void refresh();
     return () => { headRequest.current?.abort(); olderRequest.current?.abort(); };
   }, [refresh]);
-  return { items, pending, loading, loadingMore, error, olderError, refresh, loadMore,
-    apply: () => { if (pending !== null) applyPage(pending); } };
+  return { items, loading, loadingMore, error, olderError, refresh, loadMore };
 }

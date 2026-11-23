@@ -46,7 +46,6 @@ import { useWallet } from '@/hooks/useWallet';
 import { semantic, tokens } from '@/theme';
 
 const HEADER_SCROLL_DISTANCE = 920;
-const MOCKUP_FEED_SOFT = '#28A9C9';
 
 type MarketAppIcon = {
   xml: string;
@@ -103,22 +102,6 @@ const MARKET_APPS: MarketHomeApp[] = [
   },
 ];
 
-function mixHex(start: string, end: string, amount: number): string {
-  const normalize = (hex: string) => hex.replace('#', '');
-  const startHex = normalize(start);
-  const endHex = normalize(end);
-
-  const channels = [0, 2, 4].map((index) => {
-    const from = Number.parseInt(startHex.slice(index, index + 2), 16);
-    const to = Number.parseInt(endHex.slice(index, index + 2), 16);
-    return Math.round(from + (to - from) * amount)
-      .toString(16)
-      .padStart(2, '0');
-  });
-
-  return `#${channels.join('')}`;
-}
-
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -148,10 +131,9 @@ export default function HomeScreen() {
 
   const backgroundColor = scrollY.interpolate({
     inputRange: [0, HEADER_SCROLL_DISTANCE],
-    outputRange: [
-      mixHex(tokens.colors.backgroundDark, MOCKUP_FEED_SOFT, 0.32),
-      tokens.colors.walletCore,
-    ],
+    // One background (#797): the feed screens sit on the mock's #031F2C from
+    // scroll top; no blue band before the first scroll.
+    outputRange: [tokens.colors.walletCore, tokens.colors.walletCore],
     extrapolate: 'clamp',
   });
 

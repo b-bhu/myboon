@@ -4,8 +4,8 @@ import type { StoryMarket } from '@myboon/shared/stories'
 import type { HyperliquidQuoteMap, HyperliquidQuotes } from './hyperliquid.js'
 import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from './hyperliquid-names.js'
 
-// Atlas Feed: how many topics the stories list returns (one full 10-tile mosaic page plus a short second page).
-const MAX_ATLAS_STORIES = 12
+// Atlas Feed: how many topics the stories list returns (two full 10-tile mosaic pages) (#797).
+const MAX_ATLAS_STORIES = 20
 // An entity is an Atlas Story when it has at least this many active, unmerged items in the window below.
 const ATLAS_MIN_ITEMS = 3
 const ATLAS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
