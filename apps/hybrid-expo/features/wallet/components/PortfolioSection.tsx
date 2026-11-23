@@ -209,7 +209,7 @@ export const PortfolioSection = memo(function PortfolioSection({
 
   type ListRow =
     // valueUsd at top level: every variant feeds #768's topFive.
-    | { kind: 'app'; appKey: PortfolioAppKey; row: AppPortfolioRow; valueUsd: number; stale: boolean; error: string | null }
+    | { kind: 'app'; appKey: PortfolioAppKey; row: AppPortfolioRow; valueUsd: number; stale: boolean }
     // valueUsd is 0: a never-loaded app carries no value.
     | { kind: 'appError'; appKey: PortfolioAppKey; error: string | null; valueUsd: number }
     | { kind: 'spot'; row: SpotPortfolioRow; valueUsd: number };
@@ -223,11 +223,11 @@ export const PortfolioSection = memo(function PortfolioSection({
         const app = state.byApp[key];
         const row = state.appRows[key];
         if (app.status === 'ok' && row) {
-          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: false, error: null });
+          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: false });
         } else if (app.status === 'stale' && row) {
-          // The mapping kept the venue's error text for stale rows (note 2);
-          // a whole-refresh failure from the hook explains itself otherwise.
-          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: true, error: app.error ?? error });
+          // The mapping still keeps the venue's error for stale states (#769),
+          // but the row holds the value dimmed with its age — no error line (#863).
+          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: true });
         } else if (app.status === 'unavailable') {
           failed.push({ kind: 'appError', appKey: key, error: app.error ?? null, valueUsd: 0 });
         }
@@ -363,7 +363,6 @@ export const PortfolioSection = memo(function PortfolioSection({
                     {name}
                   </Text>
                   <Text numberOfLines={1} style={styles.line}>{entry.row.summaryLine}</Text>
-                  {entry.error ? <Text numberOfLines={1} style={styles.failLine}>{entry.error}</Text> : null}
                 </View>
                 <View style={styles.valueCol}>
                   <Text style={[styles.value, entry.stale && styles.rowStaleValue]}>
