@@ -34,12 +34,6 @@ async function run() {
     return body?.status === 'ok' ? null : `expected {status:'ok'}, got ${JSON.stringify(b)}`
   }))
 
-  // Feed
-  results.push(await check('GET /narratives', '/narratives', (b) => {
-    if (!Array.isArray(b)) return `expected array, got ${typeof b}`
-    return null
-  }))
-
   // Polymarket — curated markets list
   results.push(await check('GET /polymarket/markets', '/polymarket/markets', (b) => {
     if (!Array.isArray(b)) return `expected array, got ${typeof b}`

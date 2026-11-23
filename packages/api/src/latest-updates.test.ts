@@ -4,7 +4,6 @@ import test from 'node:test'
 import { Hono } from 'hono'
 import type { LatestUpdatesResponse } from '@myboon/shared/latest-updates'
 import { createLatestUpdateRoutes, pickImageUrl, safeImageUrl } from './latest-updates.js'
-import { createNarrativeRoutes } from './narratives.js'
 import { createStoryRoutes } from './stories.js'
 
 type Row = Record<string, unknown>
@@ -417,7 +416,7 @@ test('database unavailable: generic 500, no partial data, no secrets in the body
   }
 })
 
-test('/stories, /stories/:slug and /narratives are unchanged and never touch the latest-updates tables (and the reverse)', async () => {
+test('/stories and /stories/:slug are unchanged and never touch the latest-updates tables (and the reverse)', async () => {
   const seen: string[] = []
   const stub = (async (input: RequestInfo | URL) => {
     const url = new URL(String(input))
@@ -425,20 +424,12 @@ test('/stories, /stories/:slug and /narratives are unchanged and never touch the
     if (url.pathname.endsWith('/entities') && url.searchParams.get('slug')) return Response.json([])
     return Response.json([])
   }) as typeof fetch
-  const memoryReader = {
-    async getEntityMemoryEvents() { return { schemaVersion: 1, items: [], totalCount: 0, nextCursor: null, hasMore: false } },
-    async getEntityMemoriesByIds() { return [] },
-  }
   const app = new Hono()
   // Same mounting order as bootstrap/create-app.ts.
   app.route('/stories', createStoryRoutes({
-    supabaseUrl: 'https://project.supabase.co', serviceRoleKey: SERVICE_KEY, source: 'atlas',
-    memoryReader: memoryReader as never, fetch: stub,
+    supabaseUrl: 'https://project.supabase.co', serviceRoleKey: SERVICE_KEY, fetch: stub,
   }))
   app.route('/latest-updates', routes(stub))
-  app.route('/narratives', createNarrativeRoutes({
-    supabaseUrl: 'https://project.supabase.co', serviceRoleKey: SERVICE_KEY, memoryReader, fetch: stub,
-  }))
 
   const stories = await app.request('/stories')
   assert.equal(stories.status, 200)
@@ -446,12 +437,9 @@ test('/stories, /stories/:slug and /narratives are unchanged and never touch the
   const missing = await app.request('/stories/bitcoin')
   assert.equal(missing.status, 404)
   assert.deepEqual(await missing.json(), { error: 'Story not found' })
-  const narratives = await app.request('/narratives')
-  assert.equal(narratives.status, 200)
-  assert.deepEqual(await narratives.json(), [])
   assert.ok(seen.length > 0)
-  assert.ok(!seen.some((table) => table.startsWith('latest_update')), `stories/narratives read ${seen.join(',')}`)
-  assert.ok(seen.includes('entity_items') && seen.includes('published_narratives'))
+  assert.ok(!seen.some((table) => table.startsWith('latest_update')), `stories read ${seen.join(',')}`)
+  assert.ok(seen.includes('entity_items'))
 
   seen.length = 0
   const latest = await app.request('/latest-updates')
@@ -460,11 +448,10 @@ test('/stories, /stories/:slug and /narratives are unchanged and never touch the
   assert.deepEqual(seen, ['latest_updates'])
 })
 
-test('create-app mounts /latest-updates and leaves the /stories and /narratives mounts as they were', () => {
+test('create-app mounts /latest-updates and leaves the /stories mount as it was', () => {
   const source = readFileSync(new URL('./bootstrap/create-app.ts', import.meta.url), 'utf8')
   assert.match(source, /app\.route\('\/latest-updates', createLatestUpdateRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*\}\)\)/)
-  assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*source: process\.env\.STORIES_SOURCE === 'atlas' \? 'atlas' : 'legacy',\s*prices: hyperliquidPrices,\s*\}\)\)/)
-  assert.match(source, /app\.route\('\/narratives', createNarrativeRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*memoryReader: entityKnowledgeReader,\s*\}\)\)/)
+  assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*prices: hyperliquidPrices,\s*\}\)\)/)
   // #691: /market/hyperliquid serves the same shared price instance /stories receives.
   assert.match(source, /app\.route\('\/market\/hyperliquid', createHyperliquidRoutes\(\{ prices: hyperliquidPrices \}\)\)/)
 })

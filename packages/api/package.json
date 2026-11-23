@@ -8,7 +8,7 @@
     "smoke": "tsx src/smoke-test.ts",
     "e2e:featured-markets": "tsx src/e2e/api-e2e.ts",
     "test:internal": "tsx --test src/internal/*.test.ts",
-    "test:feed": "tsx --test src/stories.test.ts src/narratives.test.ts src/entity-knowledge.test.ts src/hyperliquid.test.ts src/hyperliquid-routes.test.ts",
+    "test:feed": "tsx --test src/stories.test.ts src/hyperliquid.test.ts src/hyperliquid-routes.test.ts",
     "test:latest-updates": "tsx --test src/latest-updates.test.ts",
     "test:news-feed": "tsx --test src/news-feed/*.test.ts",
     "test:calendar": "tsx --test src/calendar/*.test.ts",
@@ -31,7 +31,6 @@
   "dependencies": {
     "@ellipsis-labs/rise": "0.4.9",
     "@hono/node-server": "^1.13.0",
-    "@myboon/collectors": "workspace:*",
     "@myboon/shared": "workspace:*",
     "@supabase/supabase-js": "2.98.0",
     "dotenv": "^16.0.0",

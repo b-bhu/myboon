@@ -1,14 +1,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
-import type { EntityKnowledgeMemoryV1, EntityKnowledgeReader } from '@myboon/collectors/entity-manager'
-import entityManager from '@myboon/collectors/entity-manager'
 import type { StoryMarket } from '@myboon/shared/stories'
 import type { HyperliquidQuoteMap, HyperliquidQuotes } from './hyperliquid.js'
 import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from './hyperliquid-names.js'
 
-const { ENTITY_KNOWLEDGE_MAX_PAGE_SIZE } = entityManager
-
-const MAX_STORIES = 5
 // Atlas Feed: how many topics the stories list returns (one full 10-tile mosaic page plus a short second page).
 const MAX_ATLAS_STORIES = 12
 // An entity is an Atlas Story when it has at least this many active, unmerged items in the window below.
@@ -27,7 +22,6 @@ const REQUEST_TIMEOUT_MS = 10_000
 const MARKETS_QUOTES_WAIT_MS = 1500
 const SAFE_STORY_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const ENTITY_SELECT = 'id,slug,name'
 // Atlas entities carry the story card image inside the jsonb `card` column
 // (card.image = { url, source }); the PostgREST alias reads it as plain text.
 const ATLAS_ENTITY_SELECT = 'id,slug,name,type,image:card->image->>url'
@@ -60,9 +54,9 @@ interface SelectedEntity {
   id: string
   slug: string
   name: string
-  /** Atlas entity type; null on legacy Entities. */
+  /** Atlas entity type; null when absent. */
   type: string | null
-  /** Atlas entity card image URL; null on legacy Entities. */
+  /** Atlas entity card image URL; null when absent. */
   imageUrl: string | null
 }
 
@@ -86,7 +80,7 @@ export interface StorySummary {
   imageUrl: string | null
   imageKind: StoryImageKind | null
   imageAttribution: string | null
-  /** Atlas entity type (lets the client pick a placeholder per type); null on legacy. */
+  /** Atlas entity type (lets the client pick a placeholder per type); null when absent. */
   entityType: string | null
   /**
    * Entity-linked Hyperliquid markets (#691), lead first. `storySummary()` keeps
@@ -115,9 +109,6 @@ export interface StoryPagination {
 export interface StoryRoutesConfig {
   supabaseUrl: string
   serviceRoleKey: string
-  memoryReader: Pick<EntityKnowledgeReader, 'getEntityMemoryEvents'>
-  /** Backing store for Stories; 'atlas' reads the PostgREST atlas schema. Anything else (or missing) is legacy. */
-  source?: 'legacy' | 'atlas'
   fetch?: typeof globalThis.fetch
   /** Clock for the Atlas 7-day window; defaults to Date.now. Tests inject it. */
   now?: () => number
@@ -133,7 +124,6 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
   const app = new Hono()
   const fetchImpl = config.fetch ?? globalThis.fetch
   const restBaseUrl = `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1`
-  const atlas = config.source === 'atlas'
 
   function restUrl(table: string, params: URLSearchParams): URL {
     const url = new URL(`${restBaseUrl}/${table}`)
@@ -162,91 +152,6 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     const body: unknown = await response.json()
     if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
     return body as T[]
-  }
-
-  async function selectedEntities(): Promise<SelectedEntity[]> {
-    const params = new URLSearchParams({
-      select: ENTITY_SELECT,
-      show_in_carousel: 'eq.true',
-      order: 'updated_at.desc',
-      limit: String(MAX_STORIES),
-    })
-    const rows = await readRows<EntityRow>('entities', params)
-    return rows.map(selectedEntity).filter((row): row is SelectedEntity => row !== null).slice(0, MAX_STORIES)
-  }
-
-  async function selectedEntityBySlug(storySlug: string): Promise<SelectedEntity | null> {
-    const params = new URLSearchParams({
-      select: ENTITY_SELECT,
-      slug: `eq.${storySlug}`,
-      show_in_carousel: 'eq.true',
-      limit: '1',
-    })
-    const rows = await readRows<EntityRow>('entities', params)
-    return selectedEntity(rows[0])
-  }
-
-  async function storyMemories(entityIds: string[]): Promise<{
-    memoriesByEntity: Map<string, StoryMemory[]>,
-    totalsByEntity: Map<string, number>,
-  }> {
-    const grouped = new Map<string, StoryMemory[]>()
-    const totals = new Map<string, number>()
-    if (entityIds.length === 0) return { memoriesByEntity: grouped, totalsByEntity: totals }
-    await Promise.all(entityIds.filter((id) => UUID_RE.test(id)).map(async (entityId) => {
-      const page = await config.memoryReader.getEntityMemoryEvents({ entityId, limit: 1 })
-      const memory = page.items[0] ? storyMemory(page.items[0]) : null
-      const expectedItems = page.totalCount === 0 ? 0 : 1
-      if (
-        page.items.length !== expectedItems
-        || (expectedItems === 1 && (!memory || memory.entityId !== entityId))
-        || page.hasMore !== (page.totalCount > 1)
-        || (page.hasMore && !page.nextCursor)
-      ) {
-        throw new Error('Entity memory event page was incomplete')
-      }
-      if (memory) grouped.set(entityId, [memory])
-      totals.set(entityId, page.totalCount)
-    }))
-    return { memoriesByEntity: grouped, totalsByEntity: totals }
-  }
-
-  async function storyMemoryPage(entityId: string, limit: number, offset: number): Promise<{
-    memories: StoryMemory[]
-    total: number
-    latest: StoryMemory | null
-  }> {
-    if (!UUID_RE.test(entityId)) return { memories: [], total: 0, latest: null }
-    const memories: StoryMemory[] = []
-    let cursor: string | undefined
-    let consumed = 0
-    let total: number | null = null
-    let latest: StoryMemory | null = null
-    while (consumed < offset + limit) {
-      const page = await config.memoryReader.getEntityMemoryEvents({
-        entityId,
-        limit: Math.min(ENTITY_KNOWLEDGE_MAX_PAGE_SIZE, offset + limit - consumed),
-        ...(cursor ? { cursor } : {}),
-      })
-      if (total !== null && page.totalCount !== total) throw new Error('Entity memory event count changed during pagination')
-      total = page.totalCount
-      for (const item of page.items) {
-        const memory = storyMemory(item)
-        if (!memory || memory.entityId !== entityId) throw new Error('Entity memory event page was incomplete')
-        latest ??= memory
-        if (consumed >= offset && memories.length < limit) memories.push(memory)
-        consumed += 1
-      }
-      if (consumed >= offset + limit || !page.hasMore) break
-      if (!page.nextCursor || page.items.length === 0) throw new Error('Entity memory event page was incomplete')
-      cursor = page.nextCursor
-    }
-    const exactTotal = total ?? 0
-    const expected = Math.min(limit, Math.max(0, exactTotal - offset))
-    if (consumed < Math.min(offset, exactTotal) || memories.length !== expected) {
-      throw new Error('Entity memory event page was incomplete')
-    }
-    return { memories, total: exactTotal, latest }
   }
 
   /**
@@ -386,10 +291,10 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     return { memories, total, latest }
   }
 
-  const listEntities = atlas ? atlasSelectedEntities : selectedEntities
-  const listMemories = atlas ? atlasStoryMemories : storyMemories
-  const entityBySlug = atlas ? atlasSelectedEntityBySlug : selectedEntityBySlug
-  const memoryPage = atlas ? atlasItemPage : storyMemoryPage
+  const listEntities = atlasSelectedEntities
+  const listMemories = atlasStoryMemories
+  const entityBySlug = atlasSelectedEntityBySlug
+  const memoryPage = atlasItemPage
 
   interface EntityMarketRow {
     entity_id: unknown
@@ -497,14 +402,12 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     try {
       const entities = await listEntities()
       const { memoriesByEntity, totalsByEntity } = await listMemories(entities.map((entity) => entity.id))
-      const marketsByEntity = atlas
-        ? await storyMarkets(await entityMarketLinks(entities.map((entity) => entity.id)))
-        : null
+      const marketsByEntity = await storyMarkets(await entityMarketLinks(entities.map((entity) => entity.id)))
       const stories = entities.flatMap((entity) => {
         const memories = memoriesByEntity.get(entity.id) ?? []
         const story = storySummary(entity, memories, totalsByEntity.get(entity.id) ?? memories.length)
         if (!story) return []
-        return [{ ...story, markets: marketsByEntity?.get(entity.id) ?? [] }]
+        return [{ ...story, markets: marketsByEntity.get(entity.id) ?? [] }]
       })
       return c.json({ stories })
     } catch (error) {
@@ -527,9 +430,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       const page = await memoryPage(entity.id, limit, offset)
       const story = storySummary(entity, page.latest ? [page.latest] : [], page.total)
       if (!story) return c.json({ error: 'Story not found' }, 404)
-      const marketsByEntity = atlas
-        ? await storyMarkets(await entityMarketLinks([entity.id]))
-        : null
+      const marketsByEntity = await storyMarkets(await entityMarketLinks([entity.id]))
 
       const events: StoryEvent[] = page.memories.map((memory) => ({
         text: memory.summary,
@@ -546,7 +447,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
         hasMore: nextOffset < page.total,
         nextOffset: nextOffset < page.total ? nextOffset : null,
       }
-      return c.json({ story: { ...story, markets: marketsByEntity?.get(entity.id) ?? [] }, events, pagination })
+      return c.json({ story: { ...story, markets: marketsByEntity.get(entity.id) ?? [] }, events, pagination })
     } catch (error) {
       return storyError(c, error, 'GET /stories/:storySlug')
     }
@@ -562,7 +463,7 @@ function selectedEntity(row: EntityRow | undefined): SelectedEntity | null {
   return { id: row.id, slug: row.slug, name: row.name.trim(), type: null, imageUrl: null }
 }
 
-/** Atlas entity: extends the validated legacy projection with the entity type and card image. */
+/** Atlas entity: extends the validated base projection with the entity type and card image. */
 function atlasSelectedEntity(row: AtlasEntityRow | undefined): SelectedEntity | null {
   const entity = selectedEntity(row)
   if (!entity || !row) return null
@@ -582,18 +483,6 @@ function atlasEntityType(value: unknown): string | null {
 function atlasEntityImageUrl(value: unknown): string | null {
   const url = safeHttpUrl(value)
   return url !== null && new URL(url).protocol === 'https:' ? url : null
-}
-
-function storyMemory(row: EntityKnowledgeMemoryV1): StoryMemory | null {
-  if (!UUID_RE.test(row.entityId) || !row.summary.trim() || !row.eventAt) return null
-  if (!Number.isFinite(Date.parse(row.eventAt))) return null
-  const image = storyImage(row.media)
-  return {
-    entityId: row.entityId,
-    summary: row.summary.trim(),
-    eventAt: row.eventAt,
-    ...image,
-  }
 }
 
 function atlasItemFilterParams(entityId: string): URLSearchParams {
@@ -655,24 +544,6 @@ function contentRangeTotal(value: string | null): number | null {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
-function storyImage(value: unknown): Pick<StoryMemory, 'imageUrl' | 'imageKind' | 'imageAttribution'> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { imageUrl: null, imageKind: null, imageAttribution: null }
-  }
-  const context = value as Record<string, unknown>
-  const imageUrl = safeHttpUrl(context.imageUrl)
-  if (!imageUrl) {
-    return { imageUrl: null, imageKind: null, imageAttribution: null }
-  }
-  const imageKind = context.imageKind === 'content' || context.imageKind === 'source_avatar'
-    ? context.imageKind
-    : new URL(imageUrl).pathname.includes('/profile_images/') ? 'source_avatar' : 'content'
-  const imageAttribution = typeof context.attribution === 'string' && context.attribution.trim()
-    ? context.attribution.trim()
-    : null
-  return { imageUrl, imageKind, imageAttribution }
-}
-
 function safeHttpUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null
   try {
@@ -696,8 +567,7 @@ export function storySummary(entity: SelectedEntity, memories: StoryMemory[], ev
   ), null)
   if (!latest) return null
   // Atlas entities carry their image on the selected entity and atlas memories
-  // carry none; legacy Entities never carry one, so the entity image (when
-  // present) wins and legacy keeps the memory image untouched.
+  // carry none, so the entity image (when present) wins.
   const entityImage = entity.imageUrl ?? null
   const imageUrl = entityImage ?? latest.imageUrl
   return {

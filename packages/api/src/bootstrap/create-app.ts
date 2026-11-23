@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
-import entityManager from '@myboon/collectors/entity-manager'
 import { createSupabaseClient } from '@myboon/shared/supabase-client'
 import { createAiRoutes } from '../ai/routes.js'
 import { createCalendarRoutes } from '../calendar/routes.js'
@@ -12,9 +11,7 @@ import { clobRoutes } from '../clob.js'
 import { createInternalAtlasBrowseRoutes } from '../internal/atlas-browse.js'
 import { createInternalEntityRoutes } from '../internal/entities.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
-import { createEntityKnowledgeRoutes } from '../entity-knowledge.js'
 import { createLatestUpdateRoutes } from '../latest-updates.js'
-import { createNarrativeRoutes } from '../narratives.js'
 import { pacificaRoutes } from '../pacifica.js'
 import { phoenixRoutes } from '../phoenix.js'
 import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
@@ -50,7 +47,6 @@ import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../r
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
-  const { createEntityKnowledgeReader } = entityManager
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -84,11 +80,6 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   const upDownService = new PolymarketUpDownService({
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
-  const entityKnowledgeReader = createEntityKnowledgeReader(createSupabaseClient(
-    config.supabaseUrl,
-    config.supabaseServiceRoleKey,
-    { clientOptions: { auth: { persistSession: false, autoRefreshToken: false } } },
-  ))
   // One Hyperliquid price cache per process (#691), shared by /stories markets and the candles route.
   const hyperliquidPrices = createHyperliquidPrices()
 
@@ -113,10 +104,6 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     internalWriteToken: config.internalPolymarketCatalogWriteToken,
     store: polymarketCatalogStore,
   }))
-  app.route('/internal/entity-knowledge', createEntityKnowledgeRoutes({
-    reader: entityKnowledgeReader,
-    internalToken: config.internalDashboardToken,
-  }))
   app.route('/internal/atlas', createInternalAtlasBrowseRoutes({
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
@@ -130,18 +117,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/stories', createStoryRoutes({
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
-    memoryReader: entityKnowledgeReader,
-    source: process.env.STORIES_SOURCE === 'atlas' ? 'atlas' : 'legacy',
     prices: hyperliquidPrices,
   }))
   app.route('/latest-updates', createLatestUpdateRoutes({
     supabaseUrl: config.supabaseUrl,
     serviceRoleKey: config.supabaseServiceRoleKey,
-  }))
-  app.route('/narratives', createNarrativeRoutes({
-    supabaseUrl: config.supabaseUrl,
-    serviceRoleKey: config.supabaseServiceRoleKey,
-    memoryReader: entityKnowledgeReader,
   }))
 
   app.route('/clob', clobRoutes)
