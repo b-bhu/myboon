@@ -35,7 +35,6 @@ jobs:
       latest_updates: ${{ steps.filter.outputs.latest_updates }}
       scout: ${{ steps.filter.outputs.scout }}
       api: ${{ steps.filter.outputs.api }}
-      collectors: ${{ steps.filter.outputs.collectors }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,8 +72,6 @@ jobs:
               - 'packages/scout-news/**'
             api:
               - 'packages/api/**'
-            collectors:
-              - 'packages/collectors/**'
 
   # Per-package jobs: a failure in one package cannot hide the others. Each runs
   # only when the PR touches it or its dependencies (see docs/CI.md). Skipped is OK.
@@ -271,7 +268,7 @@ jobs:
 
   api:
     needs: detect
-    if: needs.detect.outputs.full == 'true' || needs.detect.outputs.api == 'true' || needs.detect.outputs.shared == 'true' || needs.detect.outputs.collectors == 'true'
+    if: needs.detect.outputs.full == 'true' || needs.detect.outputs.api == 'true' || needs.detect.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

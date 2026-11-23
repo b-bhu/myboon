@@ -9,9 +9,9 @@
  *    packages/analyst/src/config.ts reads optionally, plus ANALYST_ENABLED;
  *  - the myboon-entity-manager env block declares ENTITY_MANAGER_ENABLED (#593).
  *  - the myboon-latest-updates env block declares LATEST_UPDATES_ENABLED (#634).
- *  - #695: ENTITY_MANAGER_MARKETS_ENABLED (myboon-entity-manager) and
- *    STORIES_SOURCE (myboon-api) are persisted in the tracked env, keep their
- *    defaults ('true' / 'atlas') when the shell is silent, and follow the
+ *  - #695: ENTITY_MANAGER_MARKETS_ENABLED (myboon-entity-manager) is
+ *    persisted in the tracked env, keeps its default ('true') when the
+ *    shell is silent, and follows the
  *    shell when it sets them — checked by clearing the require cache and
  *    re-requiring the file.
  *  - #702: myboon-calendar-releases is registered in the MAIN apps list (also
@@ -61,7 +61,6 @@ const CALENDAR_RELEASES_FLAG_KEY = 'CALENDAR_RELEASES_ENABLED';
 const API_NAME = 'myboon-api';
 // #695 the two flags this guard must keep persisted in the tracked env.
 const MARKETS_FLAG_KEY = 'ENTITY_MANAGER_MARKETS_ENABLED';
-const STORIES_SOURCE_KEY = 'STORIES_SOURCE';
 // requireString keys in config.ts; they must never sit in the tracked env.
 const ANALYST_SECRET_KEYS = ['ANALYST_DATABASE_URL', 'OLLAMA_API_KEY', 'JEV_API_TOKEN'];
 const ANALYST_CONFIG_PATH = path.join(here(), '..', 'packages', 'analyst', 'src', 'config.ts');
@@ -159,16 +158,6 @@ function main(): void {
     }
   }
 
-  // #695: /stories keeps its atlas source across a tracked-file restart only if
-  // the key is declared in the api env block (secrets stay out of this file).
-  const apiApp = apps.find((candidate) => candidate.name === API_NAME);
-  if (apiApp) {
-    const apiEnv = apiApp.env ?? {};
-    if (apiEnv[STORIES_SOURCE_KEY] === undefined) {
-      failures.push(`${API_NAME} env: missing ${STORIES_SOURCE_KEY}`);
-    }
-  }
-
   // #695 persistence values: clear the require cache and re-require the file
   // twice — once with both keys unset in the shell (the blocks must keep their
   // safe defaults) and once with each key overridden (the blocks must follow
@@ -224,28 +213,20 @@ function main(): void {
   }
 
   delete process.env[MARKETS_FLAG_KEY];
-  delete process.env[STORIES_SOURCE_KEY];
   delete process.env[CALENDAR_RELEASES_FLAG_KEY];
   const defaultApps = reloadEcosystem();
   if (envOf(defaultApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'true') {
     failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must default to 'true' when the shell does not set it`);
-  }
-  if (envOf(defaultApps, API_NAME)[STORIES_SOURCE_KEY] !== 'atlas') {
-    failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must default to 'atlas' when the shell does not set it`);
   }
   if (envOf(defaultApps, CALENDAR_RELEASES_NAME)[CALENDAR_RELEASES_FLAG_KEY] !== 'false') {
     failures.push(`${CALENDAR_RELEASES_NAME} env: ${CALENDAR_RELEASES_FLAG_KEY} must default to 'false' when the shell does not set it`);
   }
 
   process.env[MARKETS_FLAG_KEY] = 'false';
-  process.env[STORIES_SOURCE_KEY] = 'legacy';
   process.env[CALENDAR_RELEASES_FLAG_KEY] = 'true';
   const overrideApps = reloadEcosystem();
   if (envOf(overrideApps, ENTITY_MANAGER_NAME)[MARKETS_FLAG_KEY] !== 'false') {
     failures.push(`${ENTITY_MANAGER_NAME} env: ${MARKETS_FLAG_KEY} must follow the shell override`);
-  }
-  if (envOf(overrideApps, API_NAME)[STORIES_SOURCE_KEY] !== 'legacy') {
-    failures.push(`${API_NAME} env: ${STORIES_SOURCE_KEY} must follow the shell override`);
   }
   if (envOf(overrideApps, CALENDAR_RELEASES_NAME)[CALENDAR_RELEASES_FLAG_KEY] !== 'true') {
     failures.push(`${CALENDAR_RELEASES_NAME} env: ${CALENDAR_RELEASES_FLAG_KEY} must follow the shell override`);
@@ -253,7 +234,6 @@ function main(): void {
 
   // Leave the process clean: both keys unset, file re-required on a clear cache.
   delete process.env[MARKETS_FLAG_KEY];
-  delete process.env[STORIES_SOURCE_KEY];
   delete process.env[CALENDAR_RELEASES_FLAG_KEY];
   reloadEcosystem();
 

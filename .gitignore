@@ -43,8 +43,6 @@ artifacts/
 packages/*/artifacts/
 
 .data/
-packages/collectors/.data/
-packages/collectors/logs/
 
 # Host-local collector database and SQLite sidecars
 /news.sqlite
@@ -71,7 +69,6 @@ apps/video/public/final-submission/*.wav
 apps/video/public/final-submission/recordings/
 apps/video/public/final-submission/captions/*-raw.json
 apps/video/public/final-submission/captions/*-whisper.json
-packages/collectors/src/world-cup/
 docs/specs/world-cup-x-campaign.md
 docs/scripts/
 docs/x_posts_snapshot.json
