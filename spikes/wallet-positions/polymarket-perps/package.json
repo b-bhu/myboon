@@ -1,0 +1,14 @@
+{
+  "name": "poc-polymarket-perps",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only POC: report a wallet's Polymarket Perps positions from public HTTP APIs.",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3"
+  }
+}
