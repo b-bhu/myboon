@@ -11,10 +11,11 @@ import { registerBuilderSignRoutes } from './polymarket/trading/routes/builder-s
 import { registerFundRoutes } from './polymarket/trading/routes/funds.js'
 import { registerProxyRoutes } from './polymarket/trading/routes/proxies.js'
 
-export const clobRoutes = new Hono()
-
-registerFundRoutes(clobRoutes)
-registerProxyRoutes(clobRoutes)
-registerBuilderSignRoutes(clobRoutes)
-
-console.log('[clob] Routes loaded: transparent CLOB/Relayer proxies, Builder signing, stateless Bridge proxies')
+export function createClobRoutes(): Hono {
+  const routes = new Hono()
+  registerFundRoutes(routes)
+  registerProxyRoutes(routes)
+  registerBuilderSignRoutes(routes)
+  console.log('[clob] Routes loaded: transparent CLOB/Relayer proxies, Builder signing, stateless Bridge proxies')
+  return routes
+}
