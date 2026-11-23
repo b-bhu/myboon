@@ -450,10 +450,12 @@ export function HomeWalletOverview({
           </Animated.View>
         </Animated.ScrollView>
         {/* App view shell (#771) covers the Portfolio until back is pressed.
-            Nothing selects an app yet, so this never renders for now. */}
+            Nothing selects an app yet (#856), so this never renders for now. */}
         {appView.selectedApp ? (
           <AppView
             app={appView.selectedApp}
+            solana={chainAddress('solana')}
+            evm={chainAddress('evm')}
             onBack={() => appViewDispatch({ type: 'back' })}
             style={styles.appViewOverlay}
           />
