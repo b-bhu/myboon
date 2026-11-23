@@ -2,14 +2,13 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 
-// Flag OFF. Must live in a separate file from routes.test.ts (flag ON) —
-// tsx --test shares one process per file, and modules cache their env reads
-// at import time, so flag-ON and flag-OFF tests cannot coexist in one file.
-process.env.TOKEN_IDENTITY_ENABLED = '0'
-delete process.env.TOKEN_IDENTITY_ENABLED
-
+// Flag OFF. Keep this suite in a separate file from routes.test.ts (flag ON)
+// so each process wires its own flag value. Passing false explicitly matches
+// how bootstrap wires an unset TOKEN_IDENTITY_ENABLED (#833) — the module
+// default is off either way.
 const { createTokenRoutes } = await import('./routes.js')
-const { resolveRef, iconSourceUrlForAssetId, resolveCatalog } = await import('./identity-service.js')
+const { resolveRef, iconSourceUrlForAssetId, resolveCatalog, configureTokenIdentityFlag } = await import('./identity-service.js')
+configureTokenIdentityFlag(false)
 
 function buildApp() {
   const app = new Hono()

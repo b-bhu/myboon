@@ -23,10 +23,26 @@
 
 import { UpstreamStatusError } from './registry/limiter.js'
 
-/** Free tier. `JUP_API_KEY` upgrades to api.jup.ag via the swap proxy config. */
-const JUPITER_TOKEN_SEARCH_URL = process.env.JUPITER_API_BASE
-  ? `${process.env.JUPITER_API_BASE}/tokens/v2/search`
-  : 'https://lite-api.jup.ag/tokens/v2/search'
+/** Free tier default. A wired `JUP_API_KEY` upgrades to api.jup.ag via the swap proxy config. */
+const DEFAULT_JUPITER_TOKEN_SEARCH_URL = 'https://lite-api.jup.ag/tokens/v2/search'
+
+/**
+ * Search wiring from bootstrap (#833): the API base and key callers fall back
+ * to when they do not pass one. bootstrap/create-app.ts sets these once from
+ * bootstrap/config.ts (JUPITER_API_BASE / JUP_API_KEY), keeping the raw env
+ * out of this module.
+ */
+let searchDefaults: { apiBase?: string; apiKey?: string } = {}
+
+export function configureJupiterSearch(options: { apiBase?: string; apiKey?: string }): void {
+  searchDefaults = options
+}
+
+function searchUrl(): string {
+  return searchDefaults.apiBase
+    ? `${searchDefaults.apiBase}/tokens/v2/search`
+    : DEFAULT_JUPITER_TOKEN_SEARCH_URL
+}
 
 /** Jupiter accepts a comma-separated query; 10 keeps URLs and failures small. */
 const MINTS_PER_REQUEST = 10
@@ -115,11 +131,12 @@ function parseToken(raw: Record<string, unknown>): JupiterTokenInfo | null {
 export async function fetchJupiterTokenBatch(
   mints: readonly string[],
   fetchImpl: FetchLike = globalThis.fetch,
-  apiKey = process.env.JUP_API_KEY,
+  apiKey?: string,
 ): Promise<JupiterTokenInfo[]> {
-  const url = `${JUPITER_TOKEN_SEARCH_URL}?query=${encodeURIComponent(mints.join(','))}`
+  const key = apiKey ?? searchDefaults.apiKey
+  const url = `${searchUrl()}?query=${encodeURIComponent(mints.join(','))}`
   const response = await fetchImpl(url, {
-    headers: apiKey ? { 'x-api-key': apiKey } : undefined,
+    headers: key ? { 'x-api-key': key } : undefined,
     signal: AbortSignal.timeout(15_000),
   })
   if (!response.ok) {
@@ -143,7 +160,7 @@ export async function fetchJupiterTokenBatch(
 }
 
 async function fetchBatch(mints: string[], fetchImpl: FetchLike, apiKey?: string): Promise<void> {
-  const url = `${JUPITER_TOKEN_SEARCH_URL}?query=${encodeURIComponent(mints.join(','))}`
+  const url = `${searchUrl()}?query=${encodeURIComponent(mints.join(','))}`
   const expiresAt = Date.now() + ENTRY_TTL_MS
   try {
     const res = await fetchImpl(url, {
@@ -190,7 +207,7 @@ async function fetchBatch(mints: string[], fetchImpl: FetchLike, apiKey?: string
 export async function warmJupiterTokens(
   mints: readonly string[],
   fetchImpl: FetchLike = globalThis.fetch,
-  apiKey = process.env.JUP_API_KEY,
+  apiKey?: string,
 ): Promise<void> {
   const missing = unknownMints(mints)
   if (missing.length === 0) return
@@ -204,7 +221,7 @@ export async function warmJupiterTokens(
     const key = batch.join(',')
     let pending = inFlight.get(key)
     if (!pending) {
-      pending = fetchBatch(batch, fetchImpl, apiKey).finally(() => inFlight.delete(key))
+      pending = fetchBatch(batch, fetchImpl, apiKey ?? searchDefaults.apiKey).finally(() => inFlight.delete(key))
       inFlight.set(key, pending)
     }
     return pending

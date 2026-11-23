@@ -1,3 +1,5 @@
+import { DEFAULT_PRICES_TTL_MS } from '../hyperliquid.js'
+
 export type ApiConfig = {
   supabaseUrl: string
   supabaseServiceRoleKey: string
@@ -5,6 +7,8 @@ export type ApiConfig = {
   internalPolymarketCatalogWriteToken?: string
   port: number
   host: string
+  /** HYPERLIQUID_PRICES_TTL_MS: createHyperliquidPrices()'s freshness window. */
+  hyperliquidPricesTtlMs: number
   tokenIdentityEnabled: boolean
   tokenRegistryEnabled: boolean
   tokenRegistryLruMax: number
@@ -67,6 +71,13 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     const value = Number(raw)
     return Number.isSafeInteger(value) && value > 0 ? value : fallback
   }
+  // Same values createHyperliquidPrices used to read inline: a safe positive
+  // integer wins, anything else (unset, NaN, 0, negative) keeps the default.
+  const envPricesTtlMs = Number(env.HYPERLIQUID_PRICES_TTL_MS)
+  const hyperliquidPricesTtlMs = Number.isSafeInteger(envPricesTtlMs) && envPricesTtlMs > 0
+    ? envPricesTtlMs
+    : DEFAULT_PRICES_TTL_MS
+
   const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || env.HELIUS_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
   const solanaDevnetRpcUrl = env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com'
   const polygonRpcUrl = env.POLYGON_RPC_URL?.trim() || 'https://polygon-rpc.com'
@@ -100,6 +111,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     tokenUpstreamMaxPerRequest: positiveInt('TOKEN_UPSTREAM_MAX_PER_REQUEST', 50),
     tokenUpstreamRequestBudgetMs: positiveInt('TOKEN_UPSTREAM_REQUEST_BUDGET_MS', 2_000),
     tokenUpstreamQueueMax: positiveInt('TOKEN_UPSTREAM_QUEUE_MAX', 1000),
+    hyperliquidPricesTtlMs,
     tokensApiKey: env.TOKENS_API_KEY,
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,
