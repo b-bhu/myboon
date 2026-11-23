@@ -33,5 +33,4 @@ returns the JSON (title/summary/duplicate_of). Without Jev the chat model's deci
 Connects as `entity_worker` (`ENTITY_MANAGER_DATABASE_URL`). Needs migration
 `20261106120000_atlas_em_writer_grants.sql` (not applied yet).
 
-- `pnpm --filter @myboon/entity-manager dry-run` — read-only; DB pending rows if reachable, else `fixtures/handoffs.jsonl`; offline stub model when `OLLAMA_API_KEY` is unset.
 - `pnpm --filter @myboon/entity-manager once` — one worker pass (writes). Not deployed; pipeline is off.

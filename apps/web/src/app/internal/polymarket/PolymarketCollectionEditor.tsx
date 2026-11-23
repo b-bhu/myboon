@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { FormEvent, Fragment, useEffect, useRef, useState } from 'react'
 import styles from './styles.module.css'
 import type {
@@ -353,10 +352,6 @@ export function PolymarketCollectionEditor() {
           </div>
         </div>
         <nav className={styles.topActions} aria-label="Internal dashboard">
-          <Link className={styles.textButton} href="/internal/entities">
-            <span className="material-symbols-outlined" aria-hidden="true">folder_open</span>
-            Entities
-          </Link>
           <button className={styles.textButton} type="button" onClick={logout}>
             <span className="material-symbols-outlined" aria-hidden="true">logout</span>
             Log out

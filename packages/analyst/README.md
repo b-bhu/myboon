@@ -33,7 +33,7 @@ tables: everything it touches is created by
   `target_dropped` log line, and no entity is ever created (#567). `pgCandidateLookup` is
   the read-only #566 candidate fetch.
 - `src/session.ts` — the analyst session and type-first matching (#567, see
-  below). `src/dry-run-matching.ts` is the read-only matching dry run.
+  below).
 
 ## The handoff (#571)
 

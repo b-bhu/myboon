@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 
 // Helius DAS API (getAssetsByOwner) — same JSON-RPC endpoint as HELIUS_RPC_URL
-// used elsewhere in this repo (see packages/tx-parser). The Helius key is
+// used elsewhere in this repo. The Helius key is
 // metered/paid, unlike the free public RPC Meteora/Pacifica fall back to, so
 // this call must stay server-side and never be exposed via an
 // `EXPO_PUBLIC_*` client env var.

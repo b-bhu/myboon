@@ -47,7 +47,7 @@ End with:
 ## Project context
 
 - Expo / React Native monorepo. App code in `apps/hybrid-expo/`, shared packages
-  in `packages/{api,shared,tx-parser}`.
+  in `packages/{api,shared}`.
 - Documentation is per module: `docs/modules/<module>/{specs,PRDs,test cases}/`.
   A module's `specs/` document states how the system is meant to work and
   outranks any PRD; PRDs are change plans that stop being true once shipped.

@@ -4,7 +4,6 @@ import { NextResponse } from 'next/server'
 
 export const INTERNAL_SESSION_COOKIE = 'myboon_internal_dashboard_session'
 
-const LEGACY_INTERNAL_ENTITY_SESSION_COOKIE = 'myboon_internal_entity_session'
 const MIN_SECRET_BYTES = 32
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 4
 const MAX_WRITE_BODY_BYTES = 256 * 1024
@@ -80,13 +79,6 @@ export function hasValidInternalSession(session: string): boolean {
 export async function setInternalSession(): Promise<void> {
   const cookieStore = await cookies()
 
-  // Remove the original path-scoped cookie so requests to /internal/entities do
-  // not send two cookies with the same legacy name after the dashboard expands.
-  cookieStore.set(LEGACY_INTERNAL_ENTITY_SESSION_COOKIE, '', {
-    ...INTERNAL_COOKIE_OPTIONS,
-    path: '/internal/entities',
-    maxAge: 0,
-  })
   cookieStore.set(INTERNAL_SESSION_COOKIE, createInternalSession(), {
     ...INTERNAL_COOKIE_OPTIONS,
     path: '/internal',
@@ -99,11 +91,6 @@ export async function clearInternalSession(): Promise<void> {
   cookieStore.set(INTERNAL_SESSION_COOKIE, '', {
     ...INTERNAL_COOKIE_OPTIONS,
     path: '/internal',
-    maxAge: 0,
-  })
-  cookieStore.set(LEGACY_INTERNAL_ENTITY_SESSION_COOKIE, '', {
-    ...INTERNAL_COOKIE_OPTIONS,
-    path: '/internal/entities',
     maxAge: 0,
   })
 }

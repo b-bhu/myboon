@@ -8,8 +8,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "analyst:once": "tsx src/run.ts",
-    "analyst:catchup": "tsx src/catchup.ts",
-    "matching:dry-run": "tsx src/dry-run-matching.ts"
+    "analyst:catchup": "tsx src/catchup.ts"
   },
   "dependencies": {
     "@myboon/atlas-schema": "workspace:*",
