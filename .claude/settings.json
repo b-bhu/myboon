@@ -9,5 +9,8 @@
       "Bash(node_modules/.bin/tsc --project packages/collectors/tsconfig.json --noEmit)",
       "Bash(node_modules/.bin/tsc --noEmit)"
     ]
-  }
+  },
+  "bashOutputMaxChars": 16000,
+  "includeGitInstructions": false,
+  "disableBundledSkills": true
 }
