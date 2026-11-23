@@ -1,12 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm --filter @myboon/collectors tsc --noEmit)",
       "Bash(pnpm --filter @myboon/brain tsc --noEmit)",
       "Bash(pnpm --filter @myboon/api tsc --noEmit)",
       "Bash(npx tsc:*)",
-      "Bash(./node_modules/.bin/tsc --project packages/collectors/tsconfig.json --noEmit)",
-      "Bash(node_modules/.bin/tsc --project packages/collectors/tsconfig.json --noEmit)",
       "Bash(node_modules/.bin/tsc --noEmit)"
     ]
   },

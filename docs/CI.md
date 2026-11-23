@@ -15,9 +15,9 @@ A PR runs lint/test/typecheck only for the packages it changes, plus packages th
 | analyst | `packages/analyst/**`, `packages/shared/**`, or `packages/contracts/**` |
 | latest-updates | `packages/latest-updates/**` or `packages/shared/**` (unit tests, the store and runner suite on a postgres:17 service, typecheck, and the eval script on the frozen set) |
 | scout-news | `packages/scout-news/**`, `packages/shared/**`, or `packages/contracts/**` |
-| api | `packages/api/**`, `packages/shared/**`, or `packages/collectors/**` |
+| api | `packages/api/**` or `packages/shared/**` |
 
-Changing only docs or `apps/web` runs no package jobs — `ci-ok` still passes. `packages/collectors` has no standalone CI job today; it turns on the `api` job.
+Changing only docs or `apps/web` runs no package jobs — `ci-ok` still passes.
 
 ## Full runs
 

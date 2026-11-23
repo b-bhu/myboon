@@ -64,7 +64,9 @@ apps/
 
 packages/
   api/            API server (Hono) — Feed, markets, wallet/action data
-  collectors/     Feed V3 source pipelines — Data Engineer, Researcher, Editor, Publisher
+  scout-news/ analyst/ entity-manager/ web-reader/ latest-updates/
+                  V4 pipeline workers (scout, analyst, entity manager, web reader, latest updates)
+  contracts/ atlas-schema/  Shared V4 types and Atlas schema/migrations
   shared/         Shared SDK — PolymarketClient, PacificClient, types
   tx-parser/      Solana transaction parsing
   entity-memory/  Entity store (pre-persistence)
@@ -102,31 +104,6 @@ cd apps/hybrid-expo
 pnpm start
 ```
 
-### Run the Polymarket collector + researcher
-
-```bash
-cp packages/collectors/.env.example packages/collectors/.env
-pnpm --dir packages/collectors polymarket:markets-data-engineer
-pnpm --dir packages/collectors polymarket:researcher
-```
-
-For VPS process mode, set `POLYMARKET_MARKETS_RUN_ONCE=0` for the collector,
-then start:
-
-```bash
-pm2 start ecosystem.config.cjs
-```
-
-This production cut intentionally runs only:
-
-```text
-Polymarket data collector -> local pipeline.sqlite candidates
-Polymarket researcher     -> local pipeline.sqlite research
-```
-
-Temporary pipeline rows stay on the VPS. Only durable entity and publishing
-records are written to Supabase.
-
 ---
 
 ## Planned revenue
@@ -146,7 +123,7 @@ myboon is currently pre-revenue.
 - **LLM:** configurable CLI-agent runners for feed research/editor/publisher
 - **Mobile:** Expo (React Native)
 - **Monorepo:** pnpm workspaces
-- **VPS:** API + feed collectors on US VPS
+- **VPS:** API + V4 pipeline workers on US VPS
 
 ---
 

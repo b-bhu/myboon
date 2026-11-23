@@ -22,7 +22,6 @@ pnpm install --frozen-lockfile
 echo "Building workspace packages..."
 pnpm --filter @myboon/shared build
 pnpm --filter @myboon/tx-parser build
-pnpm --filter @myboon/collectors build
 
 echo "Before reloading PM2, make sure required Supabase migrations are applied:"
 echo "  - supabase/migrations/20260706000100_pipeline_runs.sql"
