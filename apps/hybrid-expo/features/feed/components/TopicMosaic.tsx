@@ -9,7 +9,9 @@ import { FEED_TOKENS, monoFontFamily } from '../feed-design';
 import { storyAge, storyCountLabel, storyHref } from '../feed-stories';
 import {
   formatTileMove,
+  heldMarket,
   mosaicPages,
+  pageSparkSymbols,
   PAGE_SLOTS,
   shownMarket,
   tileShowsArrow,
@@ -81,19 +83,14 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
     return () => clearInterval(timer);
   }, [reduced]);
 
-  // Sparkline candles for each market a large or tall tile is currently showing.
-  const sparkTargets = new Set<string>();
-  for (const group of pages) {
-    for (const placement of group.placements) {
-      if (placement.kind !== 'large' && placement.kind !== 'tall') continue;
-      const story = group.items[placement.index];
-      const shown = story ? shownMarket(story, tick, reduced) : null;
-      if (shown) sparkTargets.add(shown.symbol);
-    }
-  }
-  const sparkKey = [...sparkTargets].sort().join('|');
+  // Sparkline candles to prefetch (#798): every priced market on the current
+  // mosaic page's lead tiles, so a rotation tick finds its next market's
+  // sparkline already loaded instead of fading the slot in bare. The target
+  // set follows the page and the stories, never the rotation tick.
+  const sparkKey = pageSparkSymbols(pages, current).join('|');
   const sparksRef = useRef(sparks);
   sparksRef.current = sparks;
+  const sparkReady = (symbol: string) => symbol in sparksRef.current;
 
   useEffect(() => {
     const symbols = sparkKey.split('|').filter(Boolean);
@@ -172,7 +169,15 @@ export function TopicMosaic({ stories, now }: TopicMosaicProps) {
                   {group.placements.map((placement) => {
                     const story = group.items[placement.index];
                     if (!story) return null;
-                    const shown = shownMarket(story, tick, reduced);
+                    // A lead slot only swaps in once its next market's candles
+                    // exist (#798): heldMarket holds the previous sparkline
+                    // during a rotation whose next market has not loaded yet.
+                    // Wide and slim tiles paint no sparkline, so they keep the
+                    // free rotation.
+                    const lead = placement.kind === 'large' || placement.kind === 'tall';
+                    const shown = lead
+                      ? heldMarket(story, tick, reduced, sparkReady)
+                      : shownMarket(story, tick, reduced);
                     return (
                       <TopicTile
                         key={story.storySlug}

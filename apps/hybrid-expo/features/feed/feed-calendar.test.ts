@@ -11,8 +11,10 @@ import {
   calendarHistoryRequest,
   countdown,
   countdownLower,
+  eventCardMeta,
   eventCountdown,
   eventFigures,
+  eventImpactPips,
   historyMoveCell,
   historyResultLabel,
   historyTableColumns,
@@ -323,6 +325,39 @@ test('eventMetaLabel reads Macro with the currency, country, or nothing', () => 
 });
 test('eventMetaLabel reads Earnings with the symbol', () => {
   assert.equal(eventMetaLabel(earnings('2026-10-28', null)), 'Earnings · META');
+});
+
+// The day-list card's meta (mock #s-calendar card, #798): currency · Est · Prev.
+test('eventCardMeta paints currency, Est and Prev with the unit', () => {
+  assert.equal(eventCardMeta(economic('2026-10-28', null)), 'USD · Est 4.25% · Prev 4.5%');
+});
+test('eventCardMeta omits whatever half the event lacks', () => {
+  assert.equal(eventCardMeta(economic('2026-10-28', null, { previous: null })), 'USD · Est 4.25%');
+  assert.equal(eventCardMeta(economic('2026-10-28', null, { estimate: null, previous: null })), 'USD');
+  assert.equal(
+    eventCardMeta(economic('2026-10-28', null, { currency: null, estimate: null, previous: null })),
+    '',
+  );
+  // An empty unit drops the suffix: a non-% series speaks bare numbers.
+  assert.equal(
+    eventCardMeta(economic('2026-10-28', null, { unit: '', previous: 4.5 })),
+    'USD · Est 4.25 · Prev 4.5',
+  );
+});
+test('eventCardMeta speaks earnings as the symbol with its EPS estimate', () => {
+  assert.equal(eventCardMeta(earnings('2026-10-28', null)), 'META · EPS est $5.25');
+  assert.equal(eventCardMeta(earnings('2026-10-28', null, { epsEstimated: null })), 'META');
+});
+
+// The card's impact pips (mock .imp, #798): the level lights the boxes.
+test('eventImpactPips lights the impact level out of three', () => {
+  assert.equal(eventImpactPips(economic('2026-10-28', null, { impact: 'High' })), 3);
+  assert.equal(eventImpactPips(economic('2026-10-28', null, { impact: 'medium' })), 2);
+  assert.equal(eventImpactPips(economic('2026-10-28', null, { impact: 'Low' })), 1);
+  assert.equal(eventImpactPips(economic('2026-10-28', null, { impact: null })), 0);
+  assert.equal(eventImpactPips(economic('2026-10-28', null, { impact: 'unrated' })), 0);
+  // Earnings events have no impact level and stay unlit.
+  assert.equal(eventImpactPips(earnings('2026-10-28', null)), 0);
 });
 
 test('eventMetaLine joins the date, the time and the summary', () => {

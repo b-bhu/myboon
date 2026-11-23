@@ -4,8 +4,10 @@ import type { StoryMarket } from '@myboon/shared/stories';
 import {
   formatSignedPercent,
   formatTileMove,
+  heldMarket,
   isOfflineMessage,
   mosaicPages,
+  pageSparkSymbols,
   pickDetailMarket,
   pricedMarkets,
   rankStories,
@@ -172,6 +174,41 @@ test('shownMarket cycles priced markets by tick and parks on rank 1 for reduce m
 
   assert.equal(shownMarket(story('c', 1, { markets: [market(1, 'STALE', null, null)] }), 0, false), null);
   assert.equal(shownMarket(story('d', 1), 0, false), null);
+});
+
+test('heldMarket holds the previous sparkline until the next market has candles (#798)', () => {
+  const three = story('a', 3, { markets: [market(1, 'BTC', 2.8), market(2, 'ETH', 0.5), market(3, 'SOL', -0.9)] });
+  // All candles ready: the display follows the rotation exactly.
+  const all = new Set(['BTC', 'ETH', 'SOL']);
+  assert.deepEqual(
+    [0, 1, 2, 3].map((tick) => heldMarket(three, tick, false, (symbol) => all.has(symbol))?.symbol),
+    ['BTC', 'ETH', 'SOL', 'BTC'],
+  );
+  // Rotation wants ETH next while only BTC has candles: the tile holds BTC
+  // instead of fading in a bare slot, then advances once ETH lands.
+  assert.equal(heldMarket(three, 1, false, (symbol) => symbol === 'BTC')?.symbol, 'BTC');
+  assert.equal(heldMarket(three, 2, false, (symbol) => symbol === 'BTC')?.symbol, 'BTC');
+  // A fetched-but-unusable answer still counts as ready: the fetched slot
+  // shows and stays, it can never loop the hold waiting on dead candles.
+  assert.equal(heldMarket(three, 1, false, (symbol) => symbol === 'ETH')?.symbol, 'ETH');
+  // Nothing ready anywhere in the tile's cycle: no slot at all, nothing flickers.
+  assert.equal(heldMarket(three, 2, false, () => false), null);
+  // Reduce motion never rotates, so the first market holds regardless.
+  assert.equal(heldMarket(three, 9, true, () => false)?.symbol, 'BTC');
+  assert.equal(heldMarket(three, 9, true, () => true)?.symbol, 'BTC');
+  // No priced market: nothing shows, with or without candles.
+  assert.equal(heldMarket(story('e', 1), 0, false, () => true), null);
+});
+
+test('pageSparkSymbols lists every priced lead-tile market of one page (#798)', () => {
+  const lead = story('btc', 9, { markets: [market(1, 'BTC', 2.8), market(2, 'ETH', 0.5)] });
+  const second = story('oil', 4, { markets: [market(1, 'WTIOIL', -0.9), market(2, 'STALE', null, null)] });
+  const pages = mosaicPages([story('quiet', 1), second, lead]);
+  // Page 1: ranks 1-2 are the large and tall tiles; only those tiles' markets
+  // load, and a symbol appears once however many tiles share it.
+  assert.deepEqual(pageSparkSymbols(pages, 0), ['BTC', 'ETH', 'WTIOIL']);
+  assert.deepEqual(pageSparkSymbols(pages, 5), []);
+  assert.deepEqual(pageSparkSymbols([], 0), []);
 });
 
 test('formatTileMove colours one-decimal moves and dims a 0.0 move', () => {

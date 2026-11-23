@@ -1,5 +1,5 @@
 import type { LatestUpdate } from '@myboon/shared/latest-updates';
-import type { FeedItem, FeedUpdateSource } from '@/features/feed/feed.types';
+import type { FeedItem } from '@/features/feed/feed.types';
 import { fetchLatestUpdates } from './latest-updates.api';
 import {
   LATEST_UPDATES_MOCK,
@@ -75,9 +75,11 @@ export function feedItemDetail(item: FeedItem): {
   imageUrl: string | null;
   imageKind: FeedItem['imageKind'];
   imageAttribution: string | null;
+  topic: string | null;
+  category: string | null;
+  sourceName: string | null;
   howWeGotHere: string;
   whatToWatch: string;
-  sources: FeedUpdateSource[];
 } {
   return {
     id: item.id,
@@ -87,9 +89,14 @@ export function feedItemDetail(item: FeedItem): {
     imageUrl: item.imageUrl ?? null,
     imageKind: item.imageKind ?? null,
     imageAttribution: item.imageAttribution ?? null,
+    // The meta line's halves (mock 'Bitcoin · Macro' / '2h ago · MyBoon',
+    // #798): the API carries only the entity name, so the category half and
+    // the Key points list stay out until that data exists.
+    topic: item.category ?? null,
+    category: null,
+    sourceName: item.sourceName ?? null,
     howWeGotHere: item.howWeGotHere ?? '',
     whatToWatch: item.whatToWatch ?? '',
-    sources: item.sources ?? [],
   };
 }
 

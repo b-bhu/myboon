@@ -148,6 +148,50 @@ export function shownMarket(
   return priced[index] ?? null;
 }
 
+/**
+ * The market a tile shows when a slot is only swapped in once its sparkline
+ * data exists (#798): rotation still cycles priced markets (the 4-second
+ * crossfade decided in #684), but a tick whose market has no candles yet
+ * falls back to the newest earlier rotation that does, so a slot never
+ * fades in bare and the previous sparkline holds until the next one loads.
+ * Reduce motion never rotates, so it stays on rank 1 whatever is ready.
+ */
+export function heldMarket(
+  story: Pick<StorySummary, 'markets'>,
+  tick: number,
+  reduced: boolean,
+  sparkReady: (symbol: string) => boolean,
+): StoryMarket | null {
+  const priced = pricedMarkets(story);
+  if (priced.length === 0) return null;
+  if (reduced || priced.length === 1) return priced[0] ?? null;
+  for (let back = 0; back < priced.length; back += 1) {
+    const index = (((tick - back) % priced.length) + priced.length) % priced.length;
+    const market = priced[index];
+    if (market && sparkReady(market.symbol)) return market;
+  }
+  return null;
+}
+
+/**
+ * Symbols whose candles to prefetch for one page (#798): every priced market
+ * of the page's lead tiles (large and tall), so the rotation between them
+ * finds the next sparkline already on hand. Lead tiles are the only tiles
+ * that paint a sparkline.
+ */
+export function pageSparkSymbols(pages: readonly MosaicPage<StorySummary>[], pageIndex: number): string[] {
+  const page = pages[pageIndex];
+  if (!page) return [];
+  const symbols = new Set<string>();
+  for (const placement of page.placements) {
+    if (placement.kind !== 'large' && placement.kind !== 'tall') continue;
+    const story = page.items[placement.index];
+    if (!story) continue;
+    for (const market of pricedMarkets(story)) symbols.add(market.symbol);
+  }
+  return [...symbols].sort();
+}
+
 export interface TileMove {
   text: string;
   tone: 'up' | 'down' | 'dim';

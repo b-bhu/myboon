@@ -27,6 +27,30 @@ export function shouldDismissSheet(dy: number, vy: number, sheetHeight: number):
   return dy > 24 && vy > 0.8;
 }
 
+/**
+ * The sheet body's drag claim (mock #s-todaysheet: the grab and the drag both
+ * close the sheet, #798): a mostly-vertical outward drag claims the responder
+ * anywhere on the sheet, so swiping down on the article at scroll top behaves
+ * like the grabber. Upward (scrolling) and sideways (paging) drags never claim.
+ */
+export function sheetBodyDragClaims(dy: number, dx: number): boolean {
+  return dy > 4 && dy > Math.abs(dx);
+}
+
+/**
+ * The sheet meta's spoken age, e.g. '2h ago' (the mock meta's '2h ago · MyBoon',
+ * #798): the row's sentence-case form of updateAge. '' for unusable timestamps.
+ */
+export function updateTimeAgo(iso: string, now: Date): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const ms = Math.max(0, now.getTime() - date.getTime());
+  if (ms < 60_000) return `${Math.max(1, Math.floor(ms / 60_000))}m ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 24 * 3_600_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / (24 * 3_600_000))}d ago`;
+}
+
 // Local week/month abbreviations for the All-updates day rows.
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

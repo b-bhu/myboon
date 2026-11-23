@@ -302,6 +302,40 @@ export function eventMetaLabel(event: CalendarEvent): string {
   return region ? `Macro · ${region}` : 'Macro';
 }
 
+/**
+ * The day-list card's painted meta (mock #s-calendar, #798): 'currency · Est
+ * x · Prev y' with the figure's unit suffix. Whatever half the event lacks
+ * is dropped; '' renders no line. Earnings speak the symbol and the EPS
+ * estimate, the one figure they share with the mock's shape.
+ */
+export function eventCardMeta(event: CalendarEvent): string {
+  if (event.type === 'earnings') {
+    const parts = [event.symbol];
+    if (event.epsEstimated !== null && Number.isFinite(event.epsEstimated)) {
+      parts.push(`EPS est ${compactUsd(event.epsEstimated)}`);
+    }
+    return parts.filter(Boolean).join(' · ');
+  }
+  const unit = event.unit ?? '';
+  const parts = [event.currency ?? ''];
+  if (event.estimate !== null && Number.isFinite(event.estimate)) parts.push(`Est ${numbered(event.estimate, unit)}`);
+  if (event.previous !== null && Number.isFinite(event.previous)) parts.push(`Prev ${numbered(event.previous, unit)}`);
+  return parts.filter(Boolean).join(' · ');
+}
+
+/**
+ * The day-list card's filled impact pips (mock .imp, #798): three pip boxes
+ * with the impact level lighting them, high 3 / medium 2 / low 1; events
+ * without an impact level (and every earnings event) stay unlit at 0.
+ */
+export function eventImpactPips(event: CalendarEvent): number {
+  if (event.type !== 'economic' || typeof event.impact !== 'string') return 0;
+  if (/high/i.test(event.impact)) return 3;
+  if (/medium|moderate/i.test(event.impact)) return 2;
+  if (/low/i.test(event.impact)) return 1;
+  return 0;
+}
+
 export interface EventFigure {
   label: string;
   value: string;

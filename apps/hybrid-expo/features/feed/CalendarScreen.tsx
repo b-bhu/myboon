@@ -5,14 +5,28 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusedAppStateInterval } from '@/hooks/useFocusedAppStateInterval';
 import { fetchCalendar } from './calendar.api';
 import type { CalendarEvent } from './calendar.types';
-import { eventLocalDate, eventLocalTime, eventMetaLabel, eventWhen, eventsByDay, isHighImpact, localDateKey, monthGrid, monthRange, shiftDate, shiftMonth } from './feed-calendar';
+import { eventCardMeta, eventImpactPips, eventLocalDate, eventLocalTime, eventWhen, eventsByDay, isHighImpact, localDateKey, monthGrid, monthRange, shiftDate, shiftMonth } from './feed-calendar';
 import { FEED_TOKENS, monoFontFamily } from './feed-design';
 import { useFeedSection } from './use-feed-section';
 import { FeedBox } from './components/ui/FeedBox';
 import { FeedSectionState } from './components/feed-section-state';
-import { CalendarEventSheet, calendarDateLabel, eventFigureSummary } from './components/CalendarEventSheet';
+import { CalendarEventSheet, calendarDateLabel } from './components/CalendarEventSheet';
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
+
+/**
+ * The mock's impact pips on an event card (#s-calendar .imp, #798): three
+ * square boxes, the event's impact level lighting them from the left.
+ */
+function ImpactPips({ filled }: { filled: number }) {
+  return (
+    <View style={styles.pipRow} accessibilityElementsHidden>
+      {Array.from({ length: 3 }, (_, index) => (
+        <View key={index} style={[styles.pip, index < filled ? styles.pipOn : null]} />
+      ))}
+    </View>
+  );
+}
 
 /**
  * Full-screen Calendar (issue #498, markup per feed-mock.html #s-calendar,
@@ -133,14 +147,10 @@ export default function CalendarScreen() {
         {grid.map((row, rowIndex) => (
           <View key={rowIndex} style={styles.gridRow}>
             {row.map((cell) => {
+              // The mock's leading and trailing slots are empty (docs/design/
+              // feed.html #s-calendar): only in-month days paint a bordered cell.
               if (!cell.inMonth) {
-                return (
-                  <View key={cell.date} style={styles.cell}>
-                    <View style={styles.chip}>
-                      <Text style={[styles.cellDate, styles.cellDim]}>{Number(cell.date.slice(8))}</Text>
-                    </View>
-                  </View>
-                );
+                return <View key={cell.date} style={styles.cell} />;
               }
               const events = byDay[cell.date] ?? [];
               const isSelected = cell.date === selectedDay;
@@ -163,7 +173,7 @@ export default function CalendarScreen() {
                       isToday && styles.chipToday,
                     ]}
                   >
-                    <Text style={[styles.cellDate, (isPast || !cell.inMonth) ? styles.cellDim : null]}>
+                    <Text style={[styles.cellDate, isPast ? styles.cellDim : null]}>
                       {Number(cell.date.slice(8))}
                     </Text>
                     <View
@@ -194,7 +204,7 @@ export default function CalendarScreen() {
               <Text style={styles.dayMeta}>{dayEvents.length === 1 ? '1 event' : `${dayEvents.length} events`}</Text>
             </View>
             {dayEvents.length ? dayEvents.map((event) => {
-              const summary = eventFigureSummary(event);
+              const meta = eventCardMeta(event);
               return (
                 <FeedBox
                   key={event.id}
@@ -202,14 +212,12 @@ export default function CalendarScreen() {
                   onPress={() => setSheetEvent(event)}
                   accessibilityLabel={`${event.title}, ${calendarDateLabel(selectedDay, { weekday: 'short', day: 'numeric', month: 'long' })}, ${eventLocalTime(event)}, ${eventWhen(event, now)}`}
                 >
-                  <Text style={styles.eventTime}>{eventLocalTime(event)}</Text>
+                  <View style={styles.eventMeta}>
+                    <Text style={styles.eventTime}>{eventLocalTime(event)}</Text>
+                    <ImpactPips filled={eventImpactPips(event)} />
+                  </View>
                   <Text style={styles.eventTitle} numberOfLines={2}>{event.title}</Text>
-                  <Text style={styles.eventContext}>
-                    {eventMetaLabel(event)}
-                    {' · '}
-                    {eventWhen(event, now)}
-                    {summary ? ` · ${summary}` : ''}
-                  </Text>
+                  {meta ? <Text style={styles.eventContext}>{meta}</Text> : null}
                 </FeedBox>
               );
             }) : (
@@ -342,17 +350,20 @@ const styles = StyleSheet.create({
   },
   chip: {
     position: 'relative',
+    // The mock's day cell (docs/design/feed.html #s-calendar): 38 px square,
+    // 1 px hairline border, 4 radius (#798).
     width: 38,
     height: 38,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: FEED_TOKENS.radius.button,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.border,
+    borderRadius: FEED_TOKENS.radius.chip,
   },
   chipSelected: {
     backgroundColor: FEED_TOKENS.colors.lift,
   },
   chipToday: {
-    borderWidth: 1,
     borderColor: FEED_TOKENS.colors.accent,
   },
   cellDate: {
@@ -404,24 +415,49 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
+  eventMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: FEED_TOKENS.space.sm,
+  },
   eventTime: {
     color: FEED_TOKENS.colors.textDim,
     fontFamily: monoFontFamily(),
     fontSize: FEED_TOKENS.type.label,
+    lineHeight: 14,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
+  pipRow: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  pip: {
+    width: 6,
+    height: 6,
+    borderWidth: 1,
+    borderColor: FEED_TOKENS.colors.textFaint,
+  },
+  pipOn: {
+    backgroundColor: FEED_TOKENS.colors.text,
+    borderColor: FEED_TOKENS.colors.text,
+  },
   eventTitle: {
     color: FEED_TOKENS.colors.text,
-    fontSize: FEED_TOKENS.type.body,
-    lineHeight: 20,
-    fontWeight: '600',
-    marginTop: FEED_TOKENS.space.xs,
+    fontSize: FEED_TOKENS.type.cardTitle,
+    lineHeight: 23,
+    fontWeight: '700',
+    marginTop: 4,
   },
   eventContext: {
     color: FEED_TOKENS.colors.textDim,
-    fontSize: FEED_TOKENS.type.caption,
-    lineHeight: 18,
-    marginTop: FEED_TOKENS.space.xs,
+    fontFamily: monoFontFamily(),
+    fontSize: FEED_TOKENS.type.label,
+    lineHeight: 14,
+    fontWeight: '600',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginTop: 2,
   },
 });

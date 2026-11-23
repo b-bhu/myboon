@@ -6,10 +6,12 @@ import {
   dayLabel,
   groupUpdatesByDay,
   newsSheetHeight,
+  sheetBodyDragClaims,
   shouldDismissSheet,
   summaryLine,
   updateAge,
   updateMeta,
+  updateTimeAgo,
 } from './feed-updates';
 import type { FeedItem } from './feed.types';
 
@@ -68,6 +70,30 @@ test('shouldDismissSheet never dismisses at or below the dragged top', () => {
   const height = 760;
   assert.equal(shouldDismissSheet(0, 10, height), false);
   assert.equal(shouldDismissSheet(-50, 10, height), false);
+});
+
+test('sheetBodyDragClaims claims a downward drag anywhere on the sheet, never upward or sideways (#798)', () => {
+  // Downward body drags claim like the grabber drag does.
+  assert.equal(sheetBodyDragClaims(5, 0), true);
+  assert.equal(sheetBodyDragClaims(190, 0), true);
+  assert.equal(sheetBodyDragClaims(30, 4), true);
+  // Upward drags belong to the article scroll.
+  assert.equal(sheetBodyDragClaims(0, 0), false);
+  assert.equal(sheetBodyDragClaims(-30, 0), false);
+  // Sideways drags never claim the sheet's vertical close gesture.
+  assert.equal(sheetBodyDragClaims(10, 40), false);
+  assert.equal(sheetBodyDragClaims(2, 20), false);
+});
+
+test('updateTimeAgo speaks the sheet meta age in sentence case (#798)', () => {
+  const now = new Date(2026, 9, 30, 12, 0);
+  assert.equal(updateTimeAgo(new Date(now.getTime() - 30_000).toISOString(), now), '1m ago');
+  assert.equal(updateTimeAgo(new Date(now.getTime() - 5 * 60_000).toISOString(), now), '5m ago');
+  assert.equal(updateTimeAgo(new Date(now.getTime() - 2 * 3_600_000).toISOString(), now), '2h ago');
+  assert.equal(updateTimeAgo(new Date(now.getTime() - 3 * 86_400_000).toISOString(), now), '3d ago');
+  assert.equal(updateTimeAgo('not-a-date', now), '');
+  // A future timestamp never reads as negative.
+  assert.equal(updateTimeAgo(new Date(now.getTime() + 3_600_000).toISOString(), now), '1m ago');
 });
 
 test('dayLabel names calendar days Today and Yesterday across midnight', () => {
