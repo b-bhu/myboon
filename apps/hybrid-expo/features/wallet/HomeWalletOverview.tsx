@@ -241,6 +241,12 @@ export function HomeWalletOverview({
   const [composerContentHeight, setComposerContentHeight] = useState(0);
   const [panelCovered, setPanelCovered] = useState(false);
   const coveredRef = useRef(false);
+  // #843: pull-to-refresh stays mounted only while the panel is expanded and
+  // its list is at the top; the collapsed rest point never mounts the control,
+  // so a pull there cannot start a refresh and the drag between the two end
+  // states is never competing with the native control.
+  const [refreshAllowed, setRefreshAllowed] = useState(false);
+  const refreshAllowedRef = useRef(false);
   const scrollY = useSharedValue(0);
   const accountScrollRef = useRef<Animated.ScrollView>(null);
   const wasActive = useRef(active);
@@ -321,10 +327,40 @@ export function HomeWalletOverview({
   );
 
   const onAccountScroll = useAnimatedScrollHandler({
+    // The scroll listener runs on the UI thread: useAnimatedScrollHandler is a
+    // worklet, so a panel drag registers no per-frame JS callback (#843).
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
     },
   });
+
+  const handleRefreshGateChange = useCallback((allowed: boolean) => {
+    // The UI-thread reaction calls back only when the gate boundary changes.
+    if (allowed !== refreshAllowedRef.current) {
+      refreshAllowedRef.current = allowed;
+      setRefreshAllowed(allowed);
+    }
+  }, []);
+
+  useAnimatedReaction(
+    () => {
+      // The gate is the scope's condition pair (#843): the panel is expanded
+      // (scrollY has reached the lift boundary, like the covered reaction
+      // above) and the list is at the top (it has not scrolled past the lift
+      // range). Anywhere else — collapsed rest, mid-drag, scrolled content —
+      // the control is unmounted and a pull-down starts nothing.
+      // Android can stop within a fractional pixel of the animated scroll boundary.
+      const expanded = panelRest > 0 && scrollY.value >= panelRest - 2;
+      const atTop = scrollY.value <= panelRest + 2;
+      return expanded && atTop;
+    },
+    (allowed, previous) => {
+      if (allowed !== previous) {
+        runOnJS(handleRefreshGateChange)(allowed);
+      }
+    },
+    [panelRest],
+  );
   const actionActive = active && !panelCovered;
   const showSolana = solanaConnected && chains.includes('solana');
 
@@ -407,11 +443,13 @@ export function HomeWalletOverview({
           scrollEventThrottle={16}
           stickyHeaderIndices={[0]}
           refreshControl={
-            <RefreshControl
-              refreshing={walletRefreshing}
-              onRefresh={onWalletRefresh}
-              tintColor={color.gold}
-            />
+            refreshAllowed ? (
+              <RefreshControl
+                refreshing={walletRefreshing}
+                onRefresh={onWalletRefresh}
+                tintColor={color.gold}
+              />
+            ) : undefined
           }
           onScroll={onAccountScroll}
           contentContainerStyle={{ minHeight: viewportHeight + panelRest }}
