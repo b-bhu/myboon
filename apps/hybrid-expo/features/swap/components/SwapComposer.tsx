@@ -31,6 +31,8 @@ import {
 } from '@/features/wallet/wallet-action-gesture';
 
 type Surface = 'actions' | 'slippage' | 'details' | null;
+
+const NO_OP = () => {};
 const actionIcons = {
   swap: 'currency-exchange',
   send: 'arrow-upward',
@@ -47,6 +49,8 @@ export type SwapComposerProps = {
   controller: SwapController;
   walletSheet?: WalletSheet;
   walletActions?: boolean;
+  /** Wallet body: no heading row, no action menu (mode switch already covers it). */
+  inWallet?: boolean;
 };
 
 export function SwapComposer({
@@ -56,6 +60,7 @@ export function SwapComposer({
   controller: c,
   walletSheet: walletSheetOverride,
   walletActions = true,
+  inWallet = false,
 }: SwapComposerProps) {
   const runtimeWalletSheet = useWalletSheet();
   const walletSheet = walletSheetOverride ?? runtimeWalletSheet;
@@ -114,14 +119,14 @@ export function SwapComposer({
         latest.current.surface === null &&
         !latest.current.walletSheetOpen,
       onSingleTap: () => latest.current.c.reversePair(),
-      onDoubleTap: openActions,
+      onDoubleTap: inWallet ? NO_OP : openActions,
     });
     gesture.current = recognizer;
     return () => {
       recognizer.dispose();
       gesture.current = null;
     };
-  }, [openActions]);
+  }, [openActions, inWallet]);
 
   useLayoutEffect(() => {
     cancelGesture();
@@ -277,7 +282,7 @@ export function SwapComposer({
   const heading = c.mode === 'swap' ? 'Swap' : `${c.mode === 'buy' ? 'Buy' : 'Sell'} ${c.selectedToken?.symbol ?? ''}`.trim();
   return (
     <View>
-      <View style={styles.heading}>
+      {!inWallet && <View style={styles.heading}>
         {walletActions ? <Pressable
           ref={actionHeadingRef}
           onPress={openActions}
@@ -291,7 +296,7 @@ export function SwapComposer({
           <Text style={styles.actionName}>{heading}</Text>
           <MaterialIcons name="expand-more" size={22} color={color.navy} />
         </Pressable> : <View ref={actionHeadingRef}><Text accessibilityRole="header" style={styles.actionName}>{heading}</Text></View>}
-      </View>
+      </View>}
       <AssetSwap
         inputToken={c.inputToken} outputToken={c.outputToken} amount={c.amount}
         outputAmount={c.outputUi} inputUsd={c.inputUsd} outputUsd={c.outputUsd}
