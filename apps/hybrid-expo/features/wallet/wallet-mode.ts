@@ -16,6 +16,6 @@ export const WALLET_ACTION_BODY_HEIGHT = 430;
 export const WALLET_ACTION_MODES: readonly WalletActionModeOption[] = [
   { id: 'swap', label: 'Swap', enabled: true },
   { id: 'move', label: 'Move', enabled: false },
-  { id: 'send', label: 'Send', enabled: false },
+  { id: 'send', label: 'Send', enabled: true },
   { id: 'receive', label: 'Receive', enabled: true },
 ];
