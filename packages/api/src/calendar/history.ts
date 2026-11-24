@@ -15,8 +15,8 @@
 import type { CalendarHistoryMarket, CalendarHistoryMove, CalendarHistoryRelease, CalendarHistoryResponse } from '@myboon/shared/calendar'
 import type { MarketCandle } from '@myboon/shared/stories'
 import { createSupabaseRest } from '@myboon/shared/supabase-rest'
-import type { CandleInterval } from '../hyperliquid.js'
-import { hyperliquidDisplaySymbol, hyperliquidDisplayName } from '../hyperliquid-names.js'
+import type { CandleInterval } from '../hyperliquid/prices.js'
+import { hyperliquidDisplaySymbol, hyperliquidDisplayName } from '../hyperliquid/names.js'
 import { parseCalendarDate } from './dates.js'
 import { RELEASE_ENTITY_SLUGS } from './series.js'
 

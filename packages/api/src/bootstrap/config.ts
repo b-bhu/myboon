@@ -1,4 +1,4 @@
-import { DEFAULT_PRICES_TTL_MS } from '../hyperliquid.js'
+import { DEFAULT_PRICES_TTL_MS } from '../hyperliquid/prices.js'
 import {
   DEFAULT_BRIDGE_URL,
   DEFAULT_CLOB_HOST,

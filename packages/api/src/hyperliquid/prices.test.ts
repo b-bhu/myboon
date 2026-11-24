@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHyperliquidPrices } from './hyperliquid.js'
+import { createHyperliquidPrices } from './prices.js'
 
 const T0 = Date.parse('2026-11-20T10:00:00.000Z')
 

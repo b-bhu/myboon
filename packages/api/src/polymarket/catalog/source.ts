@@ -1,4 +1,4 @@
-import { deriveCategoryFromText } from '../../curated.js'
+import { deriveCategoryFromText } from '../curated.js'
 import { gammaFetch } from '../read/market-read.js'
 import type { PolymarketCatalogItemInput } from './contracts.js'
 import { PolymarketCatalogValidationError } from './contracts.js'
