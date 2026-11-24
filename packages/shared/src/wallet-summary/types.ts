@@ -92,6 +92,43 @@ export interface MeteoraSummary {
   pools: WalletMeteoraPool[]
 }
 
+/**
+ * One open Meteora position (#867) for GET /wallet/meteora/positions. The
+ * upstream position answer has no fee field, so `poolUnclaimedFeesUsd` is
+ * the owning pool's unclaimed fees (the same number the summary's pool row
+ * carries), repeated on each of that pool's positions. Prices and
+ * percentages are numbers; `null` means unknown.
+ */
+export interface WalletMeteoraPosition {
+  address: string
+  poolAddress: string
+  poolName: string
+  minPrice: number | null
+  maxPrice: number | null
+  lowerBinId: number
+  upperBinId: number
+  outOfRange: boolean | null
+  pnlUsd: number | null
+  pnlPct: number | null
+  feeTvl24hPct: number | null
+  poolUnclaimedFeesUsd: number | null
+}
+
+/**
+ * GET /wallet/meteora/positions (#867): every open position across the
+ * first 50 pools. `status` follows the summary's Meteora slot: `ok`,
+ * `not_connected` (no solana address) or `unavailable` (with `error`).
+ * `hasMore` is true when pools (or one pool's positions) sit beyond what
+ * this response returns.
+ */
+export interface MeteoraPositionsResponse {
+  status: VenueStatus
+  positions: WalletMeteoraPosition[]
+  totalPools: number
+  hasMore: boolean
+  error?: string
+}
+
 /** One spot token holding; icon URL when the upstream provides one. */
 export interface WalletSpotToken {
   mint: string

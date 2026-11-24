@@ -13,7 +13,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { getConnInfo } from '@hono/node-server/conninfo'
+import type { MeteoraPositionsResponse } from '@myboon/shared/wallet-summary'
 import type { WalletSummaryService } from './service.js'
+import { fetchMeteoraPositions } from './venues/meteora.js'
 
 // Same base58 pattern as /spot/:wallet/balances (src/spot/routes.ts).
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
@@ -75,12 +77,15 @@ function identityFromContext(context: Context, trustForwardedHeaders: boolean): 
 
 export function createWalletSummaryRoutes(options: {
   service: WalletSummaryService
+  /** Reads every Meteora position (#867); production uses the venue's reader. */
+  meteoraPositions?: (solana: string | null) => Promise<MeteoraPositionsResponse>
   rateLimiter?: WalletRateLimiter
   trustForwardedHeaders?: boolean
 }): Hono {
   const routes = new Hono()
   const { service } = options
   const limiter = options.rateLimiter ?? createWalletRateLimiter()
+  const meteoraPositions = options.meteoraPositions ?? fetchMeteoraPositions
   const identityFor = (c: Context) => identityFromContext(c, options.trustForwardedHeaders === true)
 
   routes.get('/summary', async (c) => {
@@ -104,6 +109,25 @@ export function createWalletSummaryRoutes(options: {
       )
     }
     return c.json(await service.getSummary({ solana, evm }))
+  })
+
+  // GET /wallet/meteora/positions?solana= (#867): read-only, same address
+  // check and per-IP limiter as the summary. No address = no Meteora
+  // account: `not_connected`, as the summary's Meteora slot answers.
+  routes.get('/meteora/positions', async (c) => {
+    const solana = c.req.query('solana') || null
+    if (solana && !SOLANA_ADDRESS_PATTERN.test(solana)) {
+      return c.json({ error: 'Invalid solana address', code: 'INVALID_ADDRESS' }, 400)
+    }
+    const quota = limiter.consume(identityFor(c), 1)
+    if (!quota.ok) {
+      return c.json(
+        { error: 'Wallet summary rate limit exceeded', code: 'RATE_LIMITED' },
+        429,
+        { 'Retry-After': String(quota.retryAfterSeconds) },
+      )
+    }
+    return c.json(await meteoraPositions(solana))
   })
 
   return routes
