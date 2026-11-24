@@ -38,7 +38,10 @@ export function AppTopBar({ left, center, right }: AppTopBarProps) {
   );
 }
 
-export function AppTopBarLogo({ tintColor }: { tintColor?: string } = {}) {
+export function AppTopBarLogo({
+  tintColor,
+  logoHeight,
+}: { tintColor?: string; logoHeight?: number } = {}) {
   const router = useRouter();
 
   return (
@@ -50,7 +53,18 @@ export function AppTopBarLogo({ tintColor }: { tintColor?: string } = {}) {
     >
       <Image
         source={require('../assets/branding/myboon-wordmark-header.png')}
-        style={[styles.logo, tintColor ? { tintColor } : undefined]}
+        style={[
+          styles.logo,
+          logoHeight
+            ? {
+                height: logoHeight,
+                width: Math.round(
+                  (tokens.sizing.headerLogoWidth / tokens.sizing.headerLogoHeight) * logoHeight,
+                ),
+              }
+            : undefined,
+          tintColor ? { tintColor } : undefined,
+        ]}
         resizeMode="contain"
       />
     </Pressable>

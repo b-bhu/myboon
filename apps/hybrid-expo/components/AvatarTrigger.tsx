@@ -30,10 +30,16 @@ export function AvatarTrigger({ onPress, onBeforeOpen, tone }: { onPress?: () =>
       accessibilityLabel="Wallet account and connection"
       style={[styles.trigger, tone === 'wallet' && styles.walletTrigger]}
     >
-      <View style={[styles.ring, !connected && styles.ringDisconnected]}>
-        <View style={styles.inner}>
+      <View
+        style={[
+          styles.ring,
+          tone === 'wallet' && connected && styles.walletRing,
+          !connected && styles.ringDisconnected,
+        ]}
+      >
+        <View style={[styles.inner, tone === 'wallet' && connected && styles.walletInner]}>
           {connected ? (
-            <Text style={styles.letter}>{letter}</Text>
+            <Text style={[styles.letter, tone === 'wallet' && styles.walletLetter]}>{letter}</Text>
           ) : (
             <MaterialIcons name="account-balance-wallet" size={12} color={semantic.text.dim} />
           )}
@@ -51,6 +57,19 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   walletTrigger: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  // Wallet tone, connected (mock wallet.html .av): 30px circle filled #021B26
+  // with the gold mark, in place of the gold border ring. Not connected keeps
+  // the dashed state — only size and fill change there.
+  walletRing: {
+    borderWidth: 0,
+    backgroundColor: '#021B26',
+  },
+  walletInner: {
+    backgroundColor: 'transparent',
+  },
+  walletLetter: {
+    color: tokens.colors.primaryDim,
+  },
   ring: {
     width: 30,
     height: 30,
