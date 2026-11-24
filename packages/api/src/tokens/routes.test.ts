@@ -2,15 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 
-// createTokenRoutes({ enabled: true, ... }) calls into resolveRef(), which
-// reads process.env.TOKEN_IDENTITY_ENABLED via perpIconPath() for icon
-// paths. Set the flag BEFORE importing so module-level env reads see it —
-// tsx --test shares a process per file, so flag-ON and flag-OFF tests must
-// stay in separate files (see routes-flag-off.test.ts).
-process.env.TOKEN_IDENTITY_ENABLED = '1'
-
+// The identity flag used to be read from process.env here; since #833,
+// perpIconPath() receives it from bootstrap/config.ts via
+// configureTokenIdentityFlag(). Pass the value explicitly — flag-ON (this
+// file) and flag-OFF (routes-flag-off.test.ts) keep separate files so each
+// process wires its own flag value.
 const { createTokenRoutes } = await import('./routes.js')
-const { resolveRef, iconSourceUrlForAssetId, resolveCatalog } = await import('./identity-service.js')
+const { resolveRef, iconSourceUrlForAssetId, resolveCatalog, configureTokenIdentityFlag } = await import('./identity-service.js')
+configureTokenIdentityFlag(true)
 const seedEntries = (await import('./seed/token-identities.seed.json', { with: { type: 'json' } })).default as Array<{ assetId: string; mint: string | null }>
 
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'

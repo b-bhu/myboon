@@ -278,9 +278,19 @@ export function resolveRef(
  * Icon path helper for venue adapters (pacifica.ts / phoenix.ts) to call
  * directly. Returns `/tokens/icon/<assetId>` when the identity flag is on
  * and the perp symbol map hits, else null.
+ *
+ * Flag wiring (#833): the value lives on bootstrap/config.ts
+ * (`tokenIdentityEnabled`, from TOKEN_IDENTITY_ENABLED); bootstrap/create-app.ts
+ * passes it in once at startup. Default is off, matching an unset variable.
  */
+let tokenIdentityEnabled = false
+
+export function configureTokenIdentityFlag(enabled: boolean): void {
+  tokenIdentityEnabled = enabled
+}
+
 export function perpIconPath(venueSymbol: string): string | null {
-  if (process.env.TOKEN_IDENTITY_ENABLED !== 'true' && process.env.TOKEN_IDENTITY_ENABLED !== '1') return null
+  if (!tokenIdentityEnabled) return null
   const assetId = perpAssetId(venueSymbol)
   return assetId ? `/tokens/icon/${assetId}` : null
 }

@@ -34,15 +34,21 @@ import {
   resolveRef,
   warmMintIdentities,
   tokenRegistrySeeds,
+  configureTokenIdentityFlag,
 } from '../tokens/identity-service.js'
 import { createOptionalTokenRegistry, TokenRegistry } from '../tokens/registry/token-registry.js'
 import { SupabaseTokenRegistryStore } from '../tokens/registry/store.js'
 import type { RegistryConfig } from '../tokens/registry/token-registry.js'
+import { configureJupiterSearch } from '../tokens/jupiter-tokens.js'
 import { createTokenRoutes } from '../tokens/routes.js'
 import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../rpc/routes.js'
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
+  // Env-derived settings arrive only through ApiConfig (#833): the venue
+  // modules take their values from here instead of reading the raw env.
+  configureTokenIdentityFlag(config.tokenIdentityEnabled)
+  configureJupiterSearch({ apiBase: config.jupiterApiBase, apiKey: config.jupApiKey })
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -77,7 +83,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
   // One Hyperliquid price cache per process (#691), shared by /stories markets and the candles route.
-  const hyperliquidPrices = createHyperliquidPrices()
+  const hyperliquidPrices = createHyperliquidPrices({ ttlMs: config.hyperliquidPricesTtlMs })
 
   const publicCors = cors()
   app.use('*', async (c, next) => {

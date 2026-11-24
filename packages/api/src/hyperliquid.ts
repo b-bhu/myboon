@@ -10,7 +10,7 @@ import type { MarketCandle } from '@myboon/shared/stories'
 
 const INFO_URL = 'https://api.hyperliquid.xyz/info'
 const UPSTREAM_TIMEOUT_MS = 5_000
-const DEFAULT_PRICES_TTL_MS = 30_000
+export const DEFAULT_PRICES_TTL_MS = 30_000
 /** A price entry answers with nulls once its snapshot is older than this (never a guess). */
 const PRICE_STALE_MS = 15 * 60 * 1000
 const CANDLES_TTL_MS = 60_000
@@ -80,12 +80,17 @@ interface MergedEntry extends PriceEntry {
 }
 
 export function createHyperliquidPrices(
-  options: { fetch?: typeof globalThis.fetch, now?: () => number } = {},
+  options: { fetch?: typeof globalThis.fetch, now?: () => number, ttlMs?: number } = {},
 ): HyperliquidPriceService {
   const fetchImpl = options.fetch ?? globalThis.fetch
   const nowMs = options.now ?? Date.now
-  const envTtlMs = Number(process.env.HYPERLIQUID_PRICES_TTL_MS)
-  const pricesTtlMs = Number.isSafeInteger(envTtlMs) && envTtlMs > 0 ? envTtlMs : DEFAULT_PRICES_TTL_MS
+  // TTL arrives from bootstrap/config.ts (HYPERLIQUID_PRICES_TTL_MS); a safe
+  // positive integer wins, anything else keeps the built-in default.
+  const requestedTtlMs = options.ttlMs
+  const pricesTtlMs = requestedTtlMs !== undefined
+    && Number.isSafeInteger(requestedTtlMs) && requestedTtlMs > 0
+    ? requestedTtlMs
+    : DEFAULT_PRICES_TTL_MS
 
   let coreSnapshot: DexSnapshot | null = null
   let xyzSnapshot: DexSnapshot | null = null

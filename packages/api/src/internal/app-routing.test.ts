@@ -19,6 +19,7 @@ test('routes catalog writes to their dedicated credential before broad internal 
     internalPolymarketCatalogWriteToken: catalogWriteToken,
     port: 3000,
     host: '127.0.0.1',
+    hyperliquidPricesTtlMs: 30_000,
     tokenIdentityEnabled: false,
     tokenRegistryEnabled: false,
     tokenRegistryLruMax: 100,
