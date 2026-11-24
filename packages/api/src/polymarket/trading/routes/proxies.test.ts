@@ -25,9 +25,7 @@ let receivedBody = ''
 const PORT = 39517
 const BUILDER_SECRET = Buffer.from('test-builder-secret-material').toString('base64')
 
-process.env.POLYMARKET_BUILDER_API_KEY = 'test-key'
-process.env.POLYMARKET_BUILDER_SECRET = BUILDER_SECRET
-process.env.POLYMARKET_BUILDER_PASSPHRASE = 'test-passphrase'
+const BUILDER = { apiKey: 'test-key', secret: BUILDER_SECRET, passphrase: 'test-passphrase' }
 
 before(async () => {
   upstream = createServer((req, res) => {
@@ -44,12 +42,11 @@ before(async () => {
   })
   await new Promise<void>((resolve) => upstream.listen(PORT, resolve))
 
-  // Point the relay at the stub before the module reads it at import time.
-  process.env.CLOB_HOST = `http://127.0.0.1:${PORT}`
+  // Point the relay at the stub through options (ApiConfig supplies these in production).
   const { registerProxyRoutes } = await import('./proxies.js')
   app = new Hono()
   const clob = new Hono()
-  registerProxyRoutes(clob)
+  registerProxyRoutes(clob, { clobHost: `http://127.0.0.1:${PORT}`, builder: BUILDER })
   app.route('/clob', clob)
 })
 

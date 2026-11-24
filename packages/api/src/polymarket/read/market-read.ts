@@ -1,5 +1,11 @@
 const GAMMA_BASE = 'https://gamma-api.polymarket.com'
-const CLOB_BASE = process.env.CLOB_HOST || 'https://clob.polymarket.com'
+// createApp hands in ApiConfig's CLOB_HOST through configureClobBase; this is the fallback.
+let clobBase = 'https://clob.polymarket.com'
+
+/** Sets the CLOB base that clobFetch and the live price poll use. Called once by createApp. */
+export function configureClobBase(base: string): void {
+  clobBase = base
+}
 
 // --- TTL cache for Gamma API responses ---
 const CACHE_TTL_MS = 60_000 // 60 seconds
@@ -23,7 +29,7 @@ export async function gammaFetchCached<T>(path: string): Promise<T | null> {
 }
 
 export async function clobFetch(path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${CLOB_BASE}/${path}`, options)
+  return fetch(`${clobBase}/${path}`, options)
 }
 
 // --- live price cache (background poll) ---
