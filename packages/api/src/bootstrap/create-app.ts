@@ -9,7 +9,8 @@ import { createWalletActivityRoutes, createWalletActivityService } from '../wall
 import { createClobRoutes } from '../clob.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createLatestUpdateRoutes } from '../latest-updates.js'
-import { pacificaRoutes } from '../pacifica.js'
+import { configurePacificaClient } from '../pacifica/client.js'
+import { createPacificaRoutes } from '../pacifica/routes.js'
 import { phoenixRoutes } from '../phoenix.js'
 import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
 import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-store.js'
@@ -18,7 +19,8 @@ import {
   SupabaseUpDownReferencePriceStore,
   UpDownPriceService,
 } from '../polymarket/read/updown-prices.js'
-import { spotRoutes } from '../spot.js'
+import { configureSpotBalances, createSpotBalances } from '../spot/balances.js'
+import { createSpotRoutes } from '../spot/routes.js'
 import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
 import { createWalletSummaryService } from '../wallet-summary/service.js'
 import { createWalletMoveRoutes } from '../wallet-move/routes.js'
@@ -51,6 +53,11 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   configureTokenIdentityFlag(config.tokenIdentityEnabled)
   configureJupiterSearch({ apiBase: config.jupiterApiBase, apiKey: config.jupApiKey })
   configureClobBase(config.polymarketClobHost)
+  // The wallet summary's Pacifica and spot venues read through these (#831);
+  // /spot shares the same balances instance so both keep one cache.
+  configurePacificaClient({ apiBase: config.pacificaApiBase })
+  const spotBalances = createSpotBalances({ heliusRpcUrl: config.heliusRpcUrl })
+  configureSpotBalances(spotBalances)
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -148,9 +155,12 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     },
   }) }))
   app.route('/market/hyperliquid', createHyperliquidRoutes({ prices: hyperliquidPrices }))
-  app.route('/perps/pacifica', pacificaRoutes)
+  app.route('/perps/pacifica', createPacificaRoutes({
+    apiBase: config.pacificaApiBase,
+    iconBase: config.pacificaIconBase,
+  }))
   app.route('/perps/phoenix', phoenixRoutes)
-  app.route('/spot', spotRoutes)
+  app.route('/spot', createSpotRoutes({ heliusRpcUrl: config.heliusRpcUrl, balances: spotBalances }))
   app.route('/wallet', createWalletSummaryRoutes({
     service: createWalletSummaryService(),
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
