@@ -27,9 +27,12 @@
  * left, two short bars right, nothing spinning — and the app/spot counts
  * show short skeleton bars instead of a zero; nothing has loaded yet.
  *
- * Table view only; Map and Cards views come later. Spot rows open `/spot`
- * (the venue's current profile route); app rows open theirs via callbacks,
- * like the old rows below that #770 removes.
+ * The body is still the table (#841, #842 add Map and Cards): the header's
+ * Table | Map | Cards switch (#840, the design's ".vs" in frame
+ * "Portfolio · Map") carries and remembers the choice, and its disabled
+ * segments reopen as Table via `portfolio-view`'s parse. Spot rows open
+ * `/spot` (the venue's current profile route); app rows open theirs via
+ * callbacks, like the old rows below that #770 removes.
  */
 
 import { memo, useCallback, useEffect, useState } from 'react';
@@ -52,6 +55,13 @@ import {
   type PortfolioAppKey,
   type SpotPortfolioRow,
 } from '@/features/wallet/wallet-portfolio.rows';
+import {
+  DEFAULT_PORTFOLIO_VIEW,
+  ENABLED_PORTFOLIO_VIEWS,
+  readPortfolioView,
+  writePortfolioView,
+  type PortfolioView,
+} from '@/features/wallet/portfolio-view';
 
 const APP_NAME: Record<PortfolioAppKey, string> = {
   polymarket: 'Polymarket',
@@ -116,6 +126,19 @@ export const PortfolioSection = memo(function PortfolioSection({
   const { summary, loading, error, errorStatus, retry } = useWalletSummary(solana, evm);
   const [seg, setSeg] = useState<'apps' | 'spot'>('apps');
   const [showAll, setShowAll] = useState(false);
+  // The remembered view (#840): Table first open, the stored choice once the
+  // read settles. The body is still the table; Map and Cards are dimmed
+  // inert segments until #841 and #842 add their views.
+  const [view, setView] = useState<PortfolioView>(DEFAULT_PORTFOLIO_VIEW);
+  useEffect(() => {
+    let cancelled = false;
+    readPortfolioView().then((stored) => {
+      if (!cancelled) setView(stored);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Freshness labels tick like WalletHero's so ages never read frozen.
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -160,6 +183,14 @@ export const PortfolioSection = memo(function PortfolioSection({
   const selectSeg = useCallback((next: 'apps' | 'spot') => {
     setShowAll(false);
     setSeg(next);
+  }, []);
+
+  // Disabled segments are inert (their button is disabled); the guard also
+  // keeps the choice write to enabled views only (issue #840).
+  const selectView = useCallback((next: PortfolioView) => {
+    if (!ENABLED_PORTFOLIO_VIEWS.includes(next)) return;
+    setView(next);
+    void writePortfolioView(next);
   }, []);
 
   // A first load that failed with anything but a "not deployed" 404 shows no
@@ -260,6 +291,7 @@ export const PortfolioSection = memo(function PortfolioSection({
       <View style={styles.headerRow}>
         <Text accessibilityRole="header" style={styles.title}>Portfolio</Text>
         {isMock ? <Text style={styles.demoTag}>demo data</Text> : null}
+        <ViewSwitch view={view} onSelect={selectView} />
       </View>
 
       {showSkeletons ? (
@@ -510,6 +542,76 @@ function RetrySpinner() {
   );
 }
 
+/**
+ * The Table | Map | Cards switch from the design's ".vs" (wallet.html at
+ * 02b98eba, frame "Portfolio · Map"; PROTO_NOTES: "34×28 buttons, on
+ * #0E3A4C + gold icon", space-between against the ".ph" title). Map and
+ * Cards are dimmed and inert until #841 and #842 enable them (#840): the
+ * choice can only be an enabled view, and it is remembered through
+ * `portfolio-view`.
+ */
+function ViewSwitch({ view, onSelect }: { view: PortfolioView; onSelect: (next: PortfolioView) => void }) {
+  const views: readonly PortfolioView[] = ['table', 'map', 'cards'];
+  return (
+    <View accessibilityRole="tablist" accessibilityLabel="Portfolio view" style={styles.vs}>
+      {views.map((next) => {
+        const enabled = ENABLED_PORTFOLIO_VIEWS.includes(next);
+        const selected = view === next;
+        return (
+          <Pressable
+            key={next}
+            accessibilityRole="tab"
+            accessibilityLabel={`${next} view`}
+            accessibilityState={{ selected, disabled: !enabled }}
+            disabled={!enabled}
+            onPress={() => onSelect(next)}
+            hitSlop={4}
+            style={[styles.vsButton, selected && styles.vsButtonOn]}
+          >
+            <ViewGlyph view={next} selected={selected} dimmed={!enabled} />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/**
+ * One 16px glyph per view, drawn like the design's ic('table' | 'map' |
+ * 'cards', 16): three rules for table, a tall tile beside two stacked tiles
+ * for map (the treemap), a 2×2 grid for cards — stroke 1.8 at 24px scales
+ * to 1.2 here.
+ */
+function ViewGlyph({ view, selected, dimmed }: { view: PortfolioView; selected: boolean; dimmed: boolean }) {
+  const tone: 'on' | 'idle' | 'dimmed' = selected ? 'on' : dimmed ? 'dimmed' : 'idle';
+  if (view === 'table') {
+    return (
+      <View style={styles.glyph}>
+        <View style={[styles.glyphRule, GLYPH_TONE[tone].rule, { top: 3.5 }]} />
+        <View style={[styles.glyphRule, GLYPH_TONE[tone].rule, { top: 8 }]} />
+        <View style={[styles.glyphRule, GLYPH_TONE[tone].rule, { top: 12.5 }]} />
+      </View>
+    );
+  }
+  if (view === 'map') {
+    return (
+      <View style={styles.glyph}>
+        <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 2, top: 2.7, width: 6.7, height: 10.7 }]} />
+        <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 8.7, top: 2.7, width: 5.3, height: 6 }]} />
+        <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 8.7, top: 8.7, width: 5.3, height: 4.7 }]} />
+      </View>
+    );
+  }
+  return (
+    <View style={styles.glyph}>
+      <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 2, top: 2.7, width: 5.3, height: 4.7 }]} />
+      <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 8.7, top: 2.7, width: 5.3, height: 4.7 }]} />
+      <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 2, top: 8.7, width: 5.3, height: 4.7 }]} />
+      <View style={[styles.glyphTile, GLYPH_TONE[tone].tile, { left: 8.7, top: 8.7, width: 5.3, height: 4.7 }]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   section: { gap: 10 },
   headerRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
@@ -572,6 +674,31 @@ const styles = StyleSheet.create({
   segButtonOn: { backgroundColor: semantic.background.lift },
   segLabel: { color: semantic.text.faint, fontSize: 11, fontWeight: '600', letterSpacing: 0.8, textTransform: 'uppercase' },
   segLabelOn: { color: semantic.text.primary },
+  // Design ".vs" (issue #840): card-coloured track on --bg, 2px padding,
+  // hairline edge, pushed to the header row's right end like the mock.
+  vs: {
+    flexDirection: 'row',
+    gap: 2,
+    marginLeft: 'auto',
+    alignSelf: 'center',
+    padding: 2,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(24,90,112,0.78)',
+    backgroundColor: tokens.colors.ground,
+  },
+  vsButton: {
+    width: 34,
+    height: 28,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Design ".vs .on": #0E3A4C with a gold icon (not a token yet).
+  vsButtonOn: { backgroundColor: '#0E3A4C' },
+  glyph: { width: 16, height: 16 },
+  glyphRule: { position: 'absolute', left: 2, width: 12, height: 1.2, borderRadius: 1 },
+  glyphTile: { position: 'absolute', borderWidth: 1.2 },
   table: { gap: 0 },
   row: {
     minHeight: 64,
@@ -641,3 +768,10 @@ const styles = StyleSheet.create({
   },
   failRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
 });
+
+/** Glyph strokes for the ".vs" segments: on = gold, idle = dim, dimmed = faint. */
+const GLYPH_TONE = {
+  on: { rule: { backgroundColor: tokens.colors.accent }, tile: { borderColor: tokens.colors.accent } },
+  idle: { rule: { backgroundColor: semantic.text.dim }, tile: { borderColor: semantic.text.dim } },
+  dimmed: { rule: { backgroundColor: semantic.text.faint }, tile: { borderColor: semantic.text.faint } },
+} as const;
