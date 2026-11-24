@@ -333,7 +333,7 @@ export const PortfolioSection = memo(function PortfolioSection({
                     {name}
                   </Text>
                   <Text numberOfLines={1} style={styles.failLine}>
-                    {entry.error ?? "Couldn't load · the rest are fine"}
+                    {"Couldn't load · the rest are fine"}
                   </Text>
                 </View>
                 {rowSpinner(true)}
