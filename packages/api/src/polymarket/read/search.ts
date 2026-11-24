@@ -1,3 +1,4 @@
+import { isRecord } from '@myboon/shared/guards'
 import {
   gammaFetchCached,
   parseNullableNumber,
@@ -234,10 +235,6 @@ function sportsLeagueHint(slug: string): string | null {
   return /^(?:epl|ucl|uel|efl|lal|bun|sea|lig|mls|nba|wnba|nfl|nhl|mlb|ipl|cr[a-z]+)$/.test(prefix)
     ? prefix
     : null
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }
 
 function identifier(value: unknown): string | null {

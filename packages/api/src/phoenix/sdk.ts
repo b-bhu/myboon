@@ -2,7 +2,7 @@
 
 import { Direction, OrderFlags, Side, StopLossOrderKind, baseUnitsToBaseLotsWithMarketParams, priceUsdToTicksWithMarketParams } from '@ellipsis-labs/rise'
 import type { Authority, BaseLots, Symbol as PhoenixSymbol, TriggerOrderParams } from '@ellipsis-labs/rise'
-import { asRecord, asString } from './parse.js'
+import { asRecordLoose, asStringRaw } from './parse.js'
 import type {
   PhoenixInstructionBuilderResult,
   PhoenixSdkClient,
@@ -34,15 +34,15 @@ export function serializeInstructionData(data: unknown): number[] {
 }
 
 export function serializeSdkInstruction(raw: unknown) {
-  const ix = asRecord(raw) ?? {}
+  const ix = asRecordLoose(raw) ?? {}
   const accounts = Array.isArray(ix.accounts) ? ix.accounts : []
   return {
-    programId: asString(ix.programAddress) ?? asString(ix.programId),
+    programId: asStringRaw(ix.programAddress) ?? asStringRaw(ix.programId),
     keys: accounts.map((rawAccount) => {
-      const account = asRecord(rawAccount) ?? {}
+      const account = asRecordLoose(rawAccount) ?? {}
       const role = account.role
       return {
-        pubkey: asString(account.address) ?? asString(account.pubkey),
+        pubkey: asStringRaw(account.address) ?? asStringRaw(account.pubkey),
         isSigner: account.isSigner === true || roleIsSigner(role),
         isWritable: account.isWritable === true || roleIsWritable(role),
       }
@@ -54,7 +54,7 @@ export function serializeSdkInstruction(raw: unknown) {
 export function sdkInstructionsFromRaw(raw: unknown): unknown[] {
   if (Array.isArray(raw)) return raw.map(serializeSdkInstruction)
 
-  const rawRecord = asRecord(raw)
+  const rawRecord = asRecordLoose(raw)
   if (Array.isArray(rawRecord?.instructions)) {
     return rawRecord.instructions.map(serializeSdkInstruction)
   }
@@ -70,7 +70,7 @@ export function sdkInstructionBuilderResponse(
   endpoint: string,
   raw: unknown,
 ): PhoenixInstructionBuilderResult {
-  const rawRecord = asRecord(raw)
+  const rawRecord = asRecordLoose(raw)
   const instructions = sdkInstructionsFromRaw(raw)
 
   return {
@@ -81,7 +81,7 @@ export function sdkInstructionBuilderResponse(
     instructions,
     raw: {
       instructionCount: instructions.length,
-      named: rawRecord && asRecord(rawRecord.named) ? Object.keys(asRecord(rawRecord.named) ?? {}) : [],
+      named: rawRecord && asRecordLoose(rawRecord.named) ? Object.keys(asRecordLoose(rawRecord.named) ?? {}) : [],
     },
   }
 }

@@ -1,6 +1,6 @@
 import { createPhoenixClient } from '@ellipsis-labs/rise'
 import type { PhoenixConfig } from './config.js'
-import { asRecord, asString, normalizeVenueSymbol, parseNullableNumber, safeJsonParse } from './parse.js'
+import { asRecordLoose, asStringRaw, normalizeVenueSymbol, parseNullableNumber, safeJsonParse } from './parse.js'
 import { sdkAuthority } from './sdk.js'
 import type {
   CacheEntry,
@@ -33,7 +33,7 @@ export function upstreamProxyStatusCode(err: unknown): 400 | 404 | 409 | 422 | 4
 
 export function upstreamErrorPayload(err: unknown, fallback: string) {
   if (err instanceof PhoenixUpstreamError) {
-    const upstream = err.upstreamBody ? asRecord(safeJsonParse(err.upstreamBody)) : null
+    const upstream = err.upstreamBody ? asRecordLoose(safeJsonParse(err.upstreamBody)) : null
     const upstreamError = upstream?.error
     const upstreamText = err.upstreamBody.trim()
     return {
@@ -116,10 +116,10 @@ function parseMarketStatsMessage(input: unknown): PhoenixMarketStats | null {
   const raw = typeof input === 'string' ? input : input instanceof Buffer ? input.toString('utf8') : null
   if (!raw) return null
 
-  const record = asRecord(safeJsonParse(raw))
+  const record = asRecordLoose(safeJsonParse(raw))
   if (!record || record.channel !== 'market') return null
 
-  const symbol = normalizeVenueSymbol(asString(record.symbol))
+  const symbol = normalizeVenueSymbol(asStringRaw(record.symbol))
   if (!symbol) return null
 
   return {
@@ -191,7 +191,7 @@ export function createPhoenixUpstream(config: PhoenixConfig) {
 
   async function getMarketByVenueSymbol(venueSymbol: string): Promise<{ market: PhoenixMarketConfig; fetchedAt: number } | null> {
     const entry = await getRawMarkets()
-    const market = entry.data.find((candidate) => normalizeVenueSymbol(asString(candidate.symbol)) === venueSymbol)
+    const market = entry.data.find((candidate) => normalizeVenueSymbol(asStringRaw(candidate.symbol)) === venueSymbol)
     return market ? { market, fetchedAt: entry.fetchedAt } : null
   }
 

@@ -1,10 +1,18 @@
 /** Pure coercion and symbol helpers for Phoenix payloads (#831). */
 
-export function asRecord(input: unknown): Record<string, unknown> | null {
+/**
+ * Differs from @myboon/shared/guards asRecord: arrays pass through as
+ * records instead of mapping to null (#896).
+ */
+export function asRecordLoose(input: unknown): Record<string, unknown> | null {
   return input && typeof input === 'object' ? input as Record<string, unknown> : null
 }
 
-export function asString(input: unknown): string | null {
+/**
+ * Differs from @myboon/shared/guards asString: keeps whitespace-only
+ * strings and rejects numbers instead of stringifying them (#896).
+ */
+export function asStringRaw(input: unknown): string | null {
   return typeof input === 'string' && input.length > 0 ? input : null
 }
 
