@@ -22,6 +22,11 @@
  * with one Retry in the Portfolio area. No addresses at all renders nothing
  * (the hook makes no call).
  *
+ * While that first summary call is in flight (#858, frame "Portfolio
+ * loading") the table shows five skeleton rows — icon block, two text bars
+ * left, two short bars right, nothing spinning — and the app/spot counts
+ * show short skeleton bars instead of a zero; nothing has loaded yet.
+ *
  * Table view only; Map and Cards views come later. Spot rows open `/spot`
  * (the venue's current profile route); app rows open theirs via callbacks,
  * like the old rows below that #770 removes.
@@ -54,6 +59,9 @@ const APP_NAME: Record<PortfolioAppKey, string> = {
   pacifica: 'Pacifica',
   meteora: 'Meteora',
 };
+
+/** #858: the loading table shows five skRow-shaped placeholders; stable keys. */
+const SKELETON_ROW_KEYS = ['skel:0', 'skel:1', 'skel:2', 'skel:3', 'skel:4'];
 
 function formatUsd(value: number): string {
   return value.toLocaleString('en-US', {
@@ -254,7 +262,15 @@ export const PortfolioSection = memo(function PortfolioSection({
         {isMock ? <Text style={styles.demoTag}>demo data</Text> : null}
       </View>
 
-      <Text style={styles.label}>{`Total balance · ${appCount} apps`}</Text>
+      {showSkeletons ? (
+        <View style={styles.countLabelRow}>
+          <Text style={styles.label}>Total balance · </Text>
+          <View style={[styles.countSkeleton, styles.skeleton]} />
+          <Text style={styles.label}> apps</Text>
+        </View>
+      ) : (
+        <Text style={styles.label}>{`Total balance · ${appCount} apps`}</Text>
+      )}
       {showSkeletons ? (
         <>
           <View style={[styles.totalSkeleton, styles.skeleton]} />
@@ -287,7 +303,14 @@ export const PortfolioSection = memo(function PortfolioSection({
           onPress={() => selectSeg('apps')}
           style={[styles.segButton, seg === 'apps' && styles.segButtonOn]}
         >
-          <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>{`Apps · ${appCount}`}</Text>
+          {showSkeletons ? (
+            <View style={styles.countLabelRow}>
+              <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>Apps · </Text>
+              <View style={[styles.countSkeleton, styles.skeleton]} />
+            </View>
+          ) : (
+            <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>{`Apps · ${appCount}`}</Text>
+          )}
         </Pressable>
         <Pressable
           accessibilityRole="tab"
@@ -296,12 +319,21 @@ export const PortfolioSection = memo(function PortfolioSection({
           onPress={() => selectSeg('spot')}
           style={[styles.segButton, seg === 'spot' && styles.segButtonOn]}
         >
-          <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>{`Spot · ${state ? state.spotRows.length : 0}`}</Text>
+          {showSkeletons ? (
+            <View style={styles.countLabelRow}>
+              <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>Spot · </Text>
+              <View style={[styles.countSkeleton, styles.skeleton]} />
+            </View>
+          ) : (
+            <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>{`Spot · ${state ? state.spotRows.length : 0}`}</Text>
+          )}
         </Pressable>
       </View>
 
       <View style={styles.table}>
-        {top.map((entry) => {
+        {showSkeletons
+          ? SKELETON_ROW_KEYS.map((key) => <PortfolioSkeletonRow key={key} />)
+          : top.map((entry) => {
           if (entry.kind === 'spot') {
             return (
               <View key={`spot:${entry.row.mint}`} style={styles.row}>
@@ -417,6 +449,24 @@ export const PortfolioSection = memo(function PortfolioSection({
   );
 });
 
+/** One #858 loading row, as the frame's skRow draws it: a square icon block,
+ * two text bars on the left and two short bars on the right — never a spinner. */
+function PortfolioSkeletonRow() {
+  return (
+    <View style={styles.row}>
+      <View style={[styles.skelIcon, styles.skeleton]} />
+      <View style={styles.skelNameCol}>
+        <View style={[styles.skelBarLg, styles.skeleton]} />
+        <View style={[styles.skelBarMd, styles.skeleton]} />
+      </View>
+      <View style={styles.skelValueCol}>
+        <View style={[styles.skelBarLg, styles.skeleton]} />
+        <View style={[styles.skelBarSm, styles.skeleton]} />
+      </View>
+    </View>
+  );
+}
+
 /** The unused mix bar from WalletHero, reused: brand-colored flex segments. */
 function AllocationBar({
   segments,
@@ -482,6 +532,16 @@ const styles = StyleSheet.create({
   totalSkeleton: { width: 160, height: 30, borderRadius: 5 },
   barSkeleton: { height: 8, borderRadius: 4 },
   skeleton: { backgroundColor: semantic.background.lift },
+  // #858 skRow placeholders: 28×28 rounded icon, left text bars, right value bars.
+  skelIcon: { width: 28, height: 28, borderRadius: 6 },
+  skelNameCol: { flex: 1, minWidth: 0, gap: 8 },
+  skelValueCol: { alignItems: 'flex-end', gap: 8 },
+  skelBarLg: { width: 96, height: 12, borderRadius: 4 },
+  skelBarMd: { width: 170, height: 10, borderRadius: 4 },
+  skelBarSm: { width: 32, height: 10, borderRadius: 4 },
+  // Short bar where a count goes while nothing has loaded yet (#858).
+  countLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  countSkeleton: { width: 22, height: 10, borderRadius: 4 },
   bar: {
     flexDirection: 'row',
     width: '100%',
