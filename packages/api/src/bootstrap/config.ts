@@ -5,6 +5,7 @@ import {
   DEFAULT_POLYMARKET_BUILDER_CODE,
   DEFAULT_RELAYER_URL,
 } from '../polymarket/trading/contracts.js'
+import { createPhoenixConfig, type PhoenixConfig } from '../phoenix/config.js'
 
 export type ApiConfig = {
   supabaseUrl: string
@@ -15,6 +16,8 @@ export type ApiConfig = {
   host: string
   /** HYPERLIQUID_PRICES_TTL_MS: createHyperliquidPrices()'s freshness window. */
   hyperliquidPricesTtlMs: number
+  /** PHOENIX_* settings (#831); omitted means the built-in defaults. */
+  phoenix?: PhoenixConfig
   tokenIdentityEnabled: boolean
   tokenRegistryEnabled: boolean
   tokenRegistryLruMax: number
@@ -143,6 +146,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     tokenUpstreamRequestBudgetMs: positiveInt('TOKEN_UPSTREAM_REQUEST_BUDGET_MS', 2_000),
     tokenUpstreamQueueMax: positiveInt('TOKEN_UPSTREAM_QUEUE_MAX', 1000),
     hyperliquidPricesTtlMs,
+    phoenix: loadPhoenixConfig(env),
     tokensApiKey: env.TOKENS_API_KEY,
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,
@@ -170,4 +174,32 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     calendarBackpackEnabled: env.CALENDAR_BACKPACK_ENABLED !== '0' && env.CALENDAR_BACKPACK_ENABLED !== 'false',
     birdeyeApiKey: env.BIRDEYE_API_KEY?.trim() || undefined,
   }
+}
+
+/** The PHOENIX_* env vars, read here only (#831). An unset or invalid value falls through to the default in phoenix/config.ts. */
+export function loadPhoenixConfig(env: NodeJS.ProcessEnv = process.env): PhoenixConfig {
+  const positiveInt = (name: string): number | undefined => {
+    const parsed = Number.parseInt(env[name] ?? '', 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+  }
+  const indexInt = (name: string): number | undefined => {
+    const parsed = Number.parseInt(env[name] ?? '', 10)
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
+  }
+
+  return createPhoenixConfig({
+    apiBase: env.PHOENIX_API_BASE || undefined,
+    wsUrl: env.PHOENIX_WS_URL || undefined,
+    rpcUrl: env.PHOENIX_RPC_URL || env.SOLANA_RPC_URL || undefined,
+    builderAuthority: env.PHOENIX_BUILDER_AUTHORITY || undefined,
+    builderPdaIndex: indexInt('PHOENIX_BUILDER_PDA_INDEX'),
+    builderSubaccountIndex: indexInt('PHOENIX_BUILDER_SUBACCOUNT_INDEX'),
+    requestTimeoutMs: positiveInt('PHOENIX_REQUEST_TIMEOUT_MS'),
+    statusCacheTtlMs: positiveInt('PHOENIX_STATUS_CACHE_TTL_MS'),
+    marketsCacheTtlMs: positiveInt('PHOENIX_MARKETS_CACHE_TTL_MS'),
+    marketStatsCacheTtlMs: positiveInt('PHOENIX_MARKET_STATS_CACHE_TTL_MS'),
+    marketStatsTimeoutMs: positiveInt('PHOENIX_MARKET_STATS_TIMEOUT_MS'),
+    candlesCacheTtlMs: positiveInt('PHOENIX_CANDLES_CACHE_TTL_MS'),
+    maxCandleLimit: positiveInt('PHOENIX_MAX_CANDLE_LIMIT'),
+  })
 }
