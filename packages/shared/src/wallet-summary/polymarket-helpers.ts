@@ -12,6 +12,8 @@
  * rows unchanged.
  */
 
+import { toNumber } from '../guards.js';
+
 /**
  * Structural stand-in for the SDK's parsed `Position`. Only the fields the
  * helpers touch are declared. The DecimalString-ish fields are typed
@@ -62,15 +64,9 @@ export interface PortfolioPosition {
   negativeRisk: boolean;
 }
 
-// Duplicated (private) local helpers from the app's polymarket.api.ts so this
-// module stays dependency-free.
-function toNumber(value: unknown): number | null {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value !== 'string') return null;
-
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
+// toNumber used to be a duplicated private helper from the app's
+// polymarket.api.ts; it is @myboon/shared's guards.toNumber since #896 —
+// identical on every input guards.test.ts pins. numberOrZero stays local.
 
 function numberOrZero(value: unknown): number {
   return toNumber(value) ?? 0;

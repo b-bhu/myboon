@@ -4,8 +4,8 @@ import { perpIconPath } from '../tokens/identity-service.js'
 import {
   appSymbolFromVenueSymbol,
   asBoolean,
-  asRecord,
-  asString,
+  asRecordLoose,
+  asStringRaw,
   normalizeVenueSymbol,
   parseNullableInt,
   parseNullableNumber,
@@ -72,10 +72,10 @@ export function mergeMarketStats(market: NormalizedPhoenixMarket, stats: Phoenix
 }
 
 export function normalizeMarket(market: PhoenixMarketConfig, fetchedAt: number): NormalizedPhoenixMarket | null {
-  const venueSymbol = normalizeVenueSymbol(asString(market.symbol))
+  const venueSymbol = normalizeVenueSymbol(asStringRaw(market.symbol))
   if (!venueSymbol) return null
 
-  const marketStatus = asString(market.marketStatus) ?? 'unknown'
+  const marketStatus = asStringRaw(market.marketStatus) ?? 'unknown'
   const config = fundingConfig(market)
 
   return {
@@ -125,8 +125,8 @@ export function normalizeMarket(market: PhoenixMarketConfig, fetchedAt: number):
     },
     metadata: {
       assetId: parseNullableInt(market.assetId),
-      marketPubkey: asString(market.marketPubkey),
-      splinePubkey: asString(market.splinePubkey),
+      marketPubkey: asStringRaw(market.marketPubkey),
+      splinePubkey: asStringRaw(market.splinePubkey),
       isolatedOnly: asBoolean(market.isolatedOnly),
       riskFactors: market.riskFactors ?? null,
       commodityMetadata: market.commodityMetadata ?? null,
@@ -148,16 +148,16 @@ export function normalizedStatus(snapshot: CacheEntry<PhoenixExchangeSnapshot>) 
     sequenceNumber: stringifyNullable(snapshot.data.sequenceNumber),
     features: Array.isArray(exchange.exchangeStatusFeatures) ? exchange.exchangeStatusFeatures : [],
     exchangeStatusBits: parseNullableInt(exchange.exchangeStatusBits),
-    programId: asString(exchange.programId),
-    canonicalMint: asString(exchange.canonicalMint),
-    usdcMint: asString(exchange.usdcMint),
+    programId: asStringRaw(exchange.programId),
+    canonicalMint: asStringRaw(exchange.canonicalMint),
+    usdcMint: asStringRaw(exchange.usdcMint),
     dataFreshness: 'snapshot',
     fetchedAt: new Date(snapshot.fetchedAt).toISOString(),
   }
 }
 
 export function normalizeCandle(raw: unknown) {
-  const candle = asRecord(raw) as PhoenixCandle | null
+  const candle = asRecordLoose(raw) as PhoenixCandle | null
   if (!candle) return null
 
   const time = parseNullableInt(candle.time)
@@ -182,6 +182,6 @@ export function normalizeCandle(raw: unknown) {
       low: parseNullableNumber(candle.markLow),
       close: parseNullableNumber(candle.markClose),
     },
-    externalSource: asString(candle.externalSource),
+    externalSource: asStringRaw(candle.externalSource),
   }
 }

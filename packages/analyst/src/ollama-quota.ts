@@ -44,12 +44,12 @@ export async function readOllamaQuota(apiKey: string, fetchImpl: typeof fetch = 
   }
   let body: Record<string, unknown>;
   try {
-    body = asRecord(await response.json());
+    body = asRecordOrEmpty(await response.json());
   } catch (e) {
     throw new Error(`ollama quota: no reliable remaining signal (invalid JSON: ${redactKey(asMessage(e), apiKey)})`);
   }
-  const included = asRecord(body['included']);
-  const weekly = asRecord(included['weekly']);
+  const included = asRecordOrEmpty(body['included']);
+  const weekly = asRecordOrEmpty(included['weekly']);
   const percent = weekly['remaining_percent'];
   if (typeof percent === 'number' && Number.isFinite(percent)) {
     return { source: 'weekly', remainingPercent: percent };
@@ -104,7 +104,11 @@ function stoppedReason(reading: QuotaReading, minPercent: number): string {
   return `${reading.source} remaining ${reading.remainingPercent}% is below the minimum ${minPercent}%`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
+/**
+ * Differs from @myboon/shared/guards asRecord: non-records fall back to {}
+ * instead of mapping to null (#896).
+ */
+function asRecordOrEmpty(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
