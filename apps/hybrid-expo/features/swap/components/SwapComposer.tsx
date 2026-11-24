@@ -311,7 +311,7 @@ export function SwapComposer({
         {hasAmount ? <Animated.View style={quoteReveal}>
         <View style={styles.quoteStrip}>
           <View style={styles.metric}>
-            <Text style={styles.metricLabel}>Exchange rate</Text>
+            <Text style={styles.metricLabel}>{inWallet ? 'Rate' : 'Exchange rate'}</Text>
             <View accessible accessibilityLabel={exchangeRate(order, c.inputToken, c.outputToken)} style={styles.compactValue}>
               <Text style={styles.metricValue}>1</Text><SwapTokenAvatar token={c.inputToken} size={14} />
               <Text style={styles.metricValue}>= {rate}</Text><SwapTokenAvatar token={c.outputToken} size={14} />
@@ -323,19 +323,20 @@ export function SwapComposer({
             <Text style={styles.metricValue}>{c.slippageMode === 'auto' ? 'Auto' : c.slippageBps === undefined ? 'Invalid' : `${c.slippageBps / 100}%`} ⌄</Text>
           </Pressable>
           <View style={styles.metric}>
-            <Text style={styles.metricLabel}>Minimum received</Text>
+            <Text style={styles.metricLabel}>{inWallet ? 'Min received' : 'Minimum received'}</Text>
             <View accessible accessibilityLabel={`Minimum received ${minimum} ${c.outputToken.symbol}`} style={styles.compactValue}>
               <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.metricValue}>{minimum}</Text><SwapTokenAvatar token={c.outputToken} size={14} />
             </View>
           </View>
         </View>
-        <Pressable style={styles.feeToggle} onPress={() => openSurface('details')} disabled={c.interactionBusy}
+        {/* The Wallet mock has no fee row; the details dialog stays for the routed Buy and Sell screen. */}
+        {!inWallet && <Pressable style={styles.feeToggle} onPress={() => openSurface('details')} disabled={c.interactionBusy}
           accessibilityRole="button" accessibilityLabel="Swap fees and route details"
           accessibilityHint="Opens the swap details dialog"
           accessibilityState={{ disabled: c.interactionBusy, expanded: surface === 'details' }}>
           <Text style={[styles.feeText, styles.feeSummary]}>{feeSummary}</Text>
           <Text style={styles.feeText}>Details ⌄</Text>
-        </Pressable>
+        </Pressable>}
         </Animated.View> : null}
         {/* Input validation and retry actions belong in the button. Keep raw
             transaction/RPC diagnostics out of the composer. */}
