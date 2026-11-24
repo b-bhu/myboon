@@ -5,20 +5,23 @@
  * answers `not_connected` when no `evm` address was sent. Later issues
  * add one file and one list entry per app — nothing else changes.
  */
+import { createPhoenixConfig, createPhoenixUpstream, type PhoenixUpstream } from '../../phoenix/index.js'
 import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
 import { meteoraVenue } from './meteora.js'
 import { pacificaVenue } from './pacifica.js'
-import { phoenixVenue } from './phoenix.js'
+import { createPhoenixVenue } from './phoenix.js'
 import { spotVenue } from './spot.js'
 
-export function walletVenues(): WalletVenue[] {
+export function walletVenues(
+  options: { phoenix?: PhoenixUpstream } = {},
+): WalletVenue[] {
   return [
     // Polymarket: EVM-only. Its summary needs the `evm` address (#742 et al.
     // in the #714 checklist); without it this person has no account there.
     { id: 'polymarket', fetch: async ({ evm }) => (evm ? unavailableApp() : notConnectedApp()) },
     // Phoenix perps account: Solana side (#744), read through the same
     // trader-state reader the Phoenix routes serve.
-    phoenixVenue,
+    createPhoenixVenue(options.phoenix ?? createPhoenixUpstream(createPhoenixConfig())),
     // Pacifica perps account: Solana side (#728), read from the same
     // three upstream calls the phone makes.
     pacificaVenue,

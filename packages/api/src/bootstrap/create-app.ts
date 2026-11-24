@@ -11,7 +11,7 @@ import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-ca
 import { createLatestUpdateRoutes } from '../latest-updates.js'
 import { configurePacificaClient } from '../pacifica/client.js'
 import { createPacificaRoutes } from '../pacifica/routes.js'
-import { phoenixRoutes } from '../phoenix.js'
+import { createPhoenixConfig, createPhoenixRoutes, createPhoenixUpstream } from '../phoenix/index.js'
 import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
 import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-store.js'
 import { PolymarketUpDownService } from '../polymarket/read/updown.js'
@@ -23,6 +23,7 @@ import { configureSpotBalances, createSpotBalances } from '../spot/balances.js'
 import { createSpotRoutes } from '../spot/routes.js'
 import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
 import { createWalletSummaryService } from '../wallet-summary/service.js'
+import { walletVenues } from '../wallet-summary/venues/index.js'
 import { createWalletMoveRoutes } from '../wallet-move/routes.js'
 import { createHyperliquidPrices } from '../hyperliquid.js'
 import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
@@ -159,10 +160,12 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     apiBase: config.pacificaApiBase,
     iconBase: config.pacificaIconBase,
   }))
-  app.route('/perps/phoenix', phoenixRoutes)
+  // One Phoenix upstream (caches + SDK clients) shared by the routes and the wallet summary.
+  const phoenixUpstream = createPhoenixUpstream(config.phoenix ?? createPhoenixConfig())
+  app.route('/perps/phoenix', createPhoenixRoutes({ upstream: phoenixUpstream }))
   app.route('/spot', createSpotRoutes({ heliusRpcUrl: config.heliusRpcUrl, balances: spotBalances }))
   app.route('/wallet', createWalletSummaryRoutes({
-    service: createWalletSummaryService(),
+    service: createWalletSummaryService({ venues: walletVenues({ phoenix: phoenixUpstream }) }),
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
     trustForwardedHeaders: config.trustProxyHeaders,
   }))
