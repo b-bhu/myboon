@@ -9,9 +9,6 @@ let upstream: Server
 let app: Hono
 let received: { method: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }
 
-process.env.POLYMARKET_BRIDGE_URL = `http://127.0.0.1:${PORT}`
-process.env.POLYMARKET_BUILDER_CODE = BUILDER_CODE
-
 before(async () => {
   upstream = createServer((request, response) => {
     let body = ''
@@ -36,7 +33,7 @@ before(async () => {
   await new Promise<void>((resolve) => upstream.listen(PORT, resolve))
   const { registerFundRoutes } = await import('./funds.js')
   const routes = new Hono()
-  registerFundRoutes(routes)
+  registerFundRoutes(routes, { bridgeUrl: `http://127.0.0.1:${PORT}`, builderCode: BUILDER_CODE })
   app = new Hono().route('/clob', routes)
 })
 

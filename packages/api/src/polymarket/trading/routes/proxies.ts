@@ -1,17 +1,30 @@
 import type { Hono } from 'hono'
-import { CLOB_HOST, RELAYER_URL } from '../contracts.js'
+import { DEFAULT_CLOB_HOST, DEFAULT_RELAYER_URL } from '../contracts.js'
 import {
   logPredictRequest,
   materializeBuilderPassphrase,
   normalizedObservedPath,
+  type BuilderCredentials,
 } from './builder-sign.js'
 
-export function registerProxyRoutes(routes: Hono) {
+export type ProxyRouteOptions = {
+  /** clobHost: upstream for the CLOB read proxies and the /proxy relay. */
+  clobHost?: string
+  /** POLYMARKET_RELAYER_URL: upstream for the /relayer-proxy relay. */
+  relayerUrl?: string
+  /** Builder API credentials, used to materialize the passphrase on relayed requests. */
+  builder?: BuilderCredentials
+}
+
+export function registerProxyRoutes(
+  routes: Hono,
+  { clobHost = DEFAULT_CLOB_HOST, relayerUrl = DEFAULT_RELAYER_URL, builder = {} }: ProxyRouteOptions = {},
+) {
   routes.get('/book', async (c) => {
     const tokenId = c.req.query('token_id')
     if (!tokenId) return c.json({ error: 'Missing token_id query param' }, 400)
     try {
-      const res = await fetch(`${CLOB_HOST}/book?token_id=${encodeURIComponent(tokenId)}`)
+      const res = await fetch(`${clobHost}/book?token_id=${encodeURIComponent(tokenId)}`)
       const data = await res.json()
       return c.json(data, (res.ok ? 200 : res.status) as any)
     } catch (err: any) {
@@ -23,7 +36,7 @@ export function registerProxyRoutes(routes: Hono) {
     const tokenId = c.req.query('token_id')
     if (!tokenId) return c.json({ error: 'Missing token_id query param' }, 400)
     try {
-      const res = await fetch(`${CLOB_HOST}/midpoint?token_id=${encodeURIComponent(tokenId)}`)
+      const res = await fetch(`${clobHost}/midpoint?token_id=${encodeURIComponent(tokenId)}`)
       const data = await res.json()
       return c.json(data, (res.ok ? 200 : res.status) as any)
     } catch (err: any) {
@@ -35,7 +48,7 @@ export function registerProxyRoutes(routes: Hono) {
     const tokenId = c.req.query('token_id')
     if (!tokenId) return c.json({ error: 'Missing token_id query param' }, 400)
     try {
-      const res = await fetch(`${CLOB_HOST}/last-trade-price?token_id=${encodeURIComponent(tokenId)}`)
+      const res = await fetch(`${clobHost}/last-trade-price?token_id=${encodeURIComponent(tokenId)}`)
       const data = await res.json()
       return c.json(data, (res.ok ? 200 : res.status) as any)
     } catch (err: any) {
@@ -46,7 +59,7 @@ export function registerProxyRoutes(routes: Hono) {
   routes.get('/markets/:conditionId', async (c) => {
     const conditionId = c.req.param('conditionId')
     try {
-      const res = await fetch(`${CLOB_HOST}/markets/${encodeURIComponent(conditionId)}`)
+      const res = await fetch(`${clobHost}/markets/${encodeURIComponent(conditionId)}`)
       const data = await res.json()
       return c.json(data, (res.ok ? 200 : res.status) as any)
     } catch (err: any) {
@@ -83,11 +96,11 @@ export function registerProxyRoutes(routes: Hono) {
 
   routes.get('/v2/health', async (c) => {
     try {
-      const res = await fetch(`${CLOB_HOST}/time`)
+      const res = await fetch(`${clobHost}/time`)
       const data = await res.json().catch(() => null)
-      return c.json({ ok: res.ok, host: CLOB_HOST, status: res.status, serverTime: data })
+      return c.json({ ok: res.ok, host: clobHost, status: res.status, serverTime: data })
     } catch (err: any) {
-      return c.json({ ok: false, host: CLOB_HOST, error: err.message }, 502)
+      return c.json({ ok: false, host: clobHost, error: err.message }, 502)
     }
   })
 
@@ -117,7 +130,7 @@ export function registerProxyRoutes(routes: Hono) {
     const startedAt = Date.now()
     const url = new URL(c.req.url)
     const path = url.pathname.replace(/^\/clob\/proxy/, '') || '/'
-    const target = `${CLOB_HOST}${path}${url.search}`
+    const target = `${clobHost}${path}${url.search}`
 
     const headers: Record<string, string> = { Accept: 'application/json' }
     for (const [name, value] of Object.entries(c.req.header())) {
@@ -134,7 +147,7 @@ export function registerProxyRoutes(routes: Hono) {
     // ServiceClient keeps query parameters in `request.params` and Builder
     // authorization signs `request.path` only. Verify the same canonical value
     // the SDK signed; the query is still forwarded unchanged to the fixed host.
-    const authorization = materializeBuilderPassphrase(headers, method, path, body)
+    const authorization = materializeBuilderPassphrase(headers, method, path, body, builder)
     const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
     if (!authorization.ok) {
       logPredictRequest('warn', {
@@ -194,7 +207,7 @@ export function registerProxyRoutes(routes: Hono) {
     const startedAt = Date.now()
     const url = new URL(c.req.url)
     const path = url.pathname.replace(/^\/clob\/relayer-proxy/, '') || '/'
-    const target = `${RELAYER_URL}${path}${url.search}`
+    const target = `${relayerUrl}${path}${url.search}`
 
     const method = c.req.method
     const headers: Record<string, string> = { Accept: 'application/json' }
@@ -212,7 +225,7 @@ export function registerProxyRoutes(routes: Hono) {
     // `@polymarket/client` signs the pathname, not URLSearchParams. Including
     // `url.search` here rejects every valid parameterized relayer request (the
     // first one is GET /deployed?address=...&type=WALLET).
-    const authorization = materializeBuilderPassphrase(headers, method, path, body)
+    const authorization = materializeBuilderPassphrase(headers, method, path, body, builder)
     const requestId = authorization.requestId ?? c.req.header('x-predict-request-id') ?? null
     if (!authorization.ok) {
       logPredictRequest('warn', {

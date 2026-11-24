@@ -40,6 +40,7 @@ import { createOptionalTokenRegistry, TokenRegistry } from '../tokens/registry/t
 import { SupabaseTokenRegistryStore } from '../tokens/registry/store.js'
 import type { RegistryConfig } from '../tokens/registry/token-registry.js'
 import { configureJupiterSearch } from '../tokens/jupiter-tokens.js'
+import { configureClobBase } from '../polymarket/read/market-read.js'
 import { createTokenRoutes } from '../tokens/routes.js'
 import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../rpc/routes.js'
 import type { ApiConfig } from './config.js'
@@ -49,6 +50,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   // modules take their values from here instead of reading the raw env.
   configureTokenIdentityFlag(config.tokenIdentityEnabled)
   configureJupiterSearch({ apiBase: config.jupiterApiBase, apiKey: config.jupApiKey })
+  configureClobBase(config.polymarketClobHost)
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -114,7 +116,17 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
   }))
 
-  app.route('/clob', createClobRoutes())
+  app.route('/clob', createClobRoutes({
+    clobHost: config.polymarketClobHost,
+    relayerUrl: config.polymarketRelayerUrl,
+    bridgeUrl: config.polymarketBridgeUrl,
+    builderCode: config.polymarketBuilderCode,
+    builder: {
+      apiKey: config.polymarketBuilderApiKey,
+      secret: config.polymarketBuilderSecret,
+      passphrase: config.polymarketBuilderPassphrase,
+    },
+  }))
   app.route('/calendar', createCalendarRoutes({
     enabled: config.calendarBackpackEnabled,
     supabaseUrl: config.supabaseUrl,

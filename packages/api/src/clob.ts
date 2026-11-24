@@ -7,15 +7,28 @@
  */
 
 import { Hono } from 'hono'
-import { registerBuilderSignRoutes } from './polymarket/trading/routes/builder-sign.js'
+import { registerBuilderSignRoutes, type BuilderCredentials } from './polymarket/trading/routes/builder-sign.js'
 import { registerFundRoutes } from './polymarket/trading/routes/funds.js'
 import { registerProxyRoutes } from './polymarket/trading/routes/proxies.js'
 
-export function createClobRoutes(): Hono {
+/** Every value is optional; an omitted one takes the polymarket/trading/contracts.ts default (builder credentials: none, so builder routes refuse). */
+export type ClobRouteOptions = {
+  clobHost?: string
+  relayerUrl?: string
+  bridgeUrl?: string
+  builderCode?: string
+  builder?: BuilderCredentials
+}
+
+export function createClobRoutes(options: ClobRouteOptions = {}): Hono {
   const routes = new Hono()
-  registerFundRoutes(routes)
-  registerProxyRoutes(routes)
-  registerBuilderSignRoutes(routes)
+  registerFundRoutes(routes, { bridgeUrl: options.bridgeUrl, builderCode: options.builderCode })
+  registerProxyRoutes(routes, {
+    clobHost: options.clobHost,
+    relayerUrl: options.relayerUrl,
+    builder: options.builder,
+  })
+  registerBuilderSignRoutes(routes, options.builder)
   console.log('[clob] Routes loaded: transparent CLOB/Relayer proxies, Builder signing, stateless Bridge proxies')
   return routes
 }

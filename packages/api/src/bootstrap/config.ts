@@ -1,4 +1,10 @@
 import { DEFAULT_PRICES_TTL_MS } from '../hyperliquid.js'
+import {
+  DEFAULT_BRIDGE_URL,
+  DEFAULT_CLOB_HOST,
+  DEFAULT_POLYMARKET_BUILDER_CODE,
+  DEFAULT_RELAYER_URL,
+} from '../polymarket/trading/contracts.js'
 
 export type ApiConfig = {
   supabaseUrl: string
@@ -26,6 +32,18 @@ export type ApiConfig = {
   jupApiBase?: string
   /** JUPITER_API_BASE: token-search base override; unset keeps the lite-api.jup.ag default. */
   jupiterApiBase?: string
+  /** CLOB_HOST: Polymarket CLOB base for the market reads and /clob proxies; unset keeps clob.polymarket.com. */
+  polymarketClobHost: string
+  /** POLYMARKET_RELAYER_URL: Relayer base for /clob/relayer-proxy; unset keeps relayer-v2.polymarket.com. */
+  polymarketRelayerUrl: string
+  /** POLYMARKET_BRIDGE_URL: Bridge base for the /clob/bridge routes; unset keeps bridge.polymarket.com. */
+  polymarketBridgeUrl: string
+  /** POLYMARKET_BUILDER_CODE: public attribution code sent on Bridge requests. */
+  polymarketBuilderCode: string
+  /** POLYMARKET_BUILDER_API_KEY/SECRET/PASSPHRASE: missing values make /clob/builder/sign refuse, never sign. */
+  polymarketBuilderApiKey?: string
+  polymarketBuilderSecret?: string
+  polymarketBuilderPassphrase?: string
   /** Relay's wallet Move key, read from RELAY_API_KEY; optional so a missing key degrades instead of stopping the API. */
   relayApiKey?: string
   swapPriorityFeeMaxLamports?: string
@@ -80,6 +98,12 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     ? envPricesTtlMs
     : DEFAULT_PRICES_TTL_MS
 
+  // Polymarket env: same fallbacks the trading and read modules used to read inline.
+  const polymarketClobHost = env.CLOB_HOST || DEFAULT_CLOB_HOST
+  const polymarketRelayerUrl = env.POLYMARKET_RELAYER_URL || DEFAULT_RELAYER_URL
+  const polymarketBridgeUrl = env.POLYMARKET_BRIDGE_URL || DEFAULT_BRIDGE_URL
+  const polymarketBuilderCode = env.POLYMARKET_BUILDER_CODE || DEFAULT_POLYMARKET_BUILDER_CODE
+
   const solanaRpcUrl = env.SOLANA_RPC_URL?.trim() || env.HELIUS_RPC_URL?.trim() || 'https://api.mainnet-beta.solana.com'
   const solanaDevnetRpcUrl = env.SOLANA_DEVNET_RPC_URL?.trim() || 'https://api.devnet.solana.com'
   const polygonRpcUrl = env.POLYGON_RPC_URL?.trim() || 'https://polygon-rpc.com'
@@ -118,6 +142,13 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     jupApiKey,
     jupApiBase: env.JUP_API_BASE,
     jupiterApiBase: env.JUPITER_API_BASE,
+    polymarketClobHost,
+    polymarketRelayerUrl,
+    polymarketBridgeUrl,
+    polymarketBuilderCode,
+    polymarketBuilderApiKey: env.POLYMARKET_BUILDER_API_KEY,
+    polymarketBuilderSecret: env.POLYMARKET_BUILDER_SECRET,
+    polymarketBuilderPassphrase: env.POLYMARKET_BUILDER_PASSPHRASE,
     relayApiKey,
     swapPriorityFeeMaxLamports: priorityFee,
     swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',
