@@ -4,9 +4,10 @@
  *
  * Card A is the amount (USDC on Solana) with the 25 / 50 / 75 / Max chips
  * under the pair of cards; card B is the address with a Paste button. Launch
- * scope is Solana USDC only. Nothing is validated or signed here: address
- * checks are #823, the slider and signing #824 / #825. The slot where the
- * slider will sit only says what is missing.
+ * scope is Solana USDC only. The address is format-checked as it is typed or
+ * pasted (#823, pure rules in ../send-address) and shows a plain error line
+ * under the input while it is wrong; the slider (still #825) and signing #824.
+ * The slot where the slider will sit only says what is missing.
  *
  * The chips read the Spot USDC balance from the wallet summary
  * (`useWalletSummary`); with no balance they are disabled but the amount can
@@ -28,6 +29,7 @@ import {
   spotUsdcAtomic,
   type SendChipPercent,
 } from '@/features/wallet/send-panel.state';
+import { sendAddressError } from '@/features/wallet/send-address';
 
 export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
   const { summary } = useWalletSummary(solanaAddress, null);
@@ -35,6 +37,9 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
   const [amount, setAmount] = useState('');
   const [address, setAddress] = useState('');
   const [activeChip, setActiveChip] = useState<SendChipPercent | null>(null);
+  // Issue #823: derived from the field, so typing and pasting recheck on every
+  // change — empty shows nothing, a fix clears the line.
+  const addressError = sendAddressError(address);
 
   const handleChip = useCallback((percent: SendChipPercent) => {
     if (balanceAtomic === null) return;
@@ -102,7 +107,13 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
           accessibilityLabel="Recipient Solana address"
           style={styles.address}
         />
-        <Text style={styles.cap}>Solana address</Text>
+        {addressError ? (
+          <Text style={styles.cardError} accessibilityLabel="Address error">
+            {addressError}
+          </Text>
+        ) : (
+          <Text style={styles.cap}>Solana address</Text>
+        )}
       </View>
 
       <View style={[styles.chips, chipsDisabled && styles.chipsOff]}>
@@ -181,6 +192,14 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'monospace',
     color: tokens.colors.bone,
+  },
+  // Issue #823: the plain address error, in the card's bottom caption slot
+  // (the mock swaps that slot for address status) while the text is invalid.
+  cardError: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    letterSpacing: 0.6,
+    color: tokens.colors.vermillion,
   },
   // Design `.mini`: 28-tall hairline button.
   mini: {
