@@ -30,6 +30,7 @@ import {
   walletAppViewReducer,
 } from '@/features/wallet/app-view.state';
 import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
+import { SendPanel } from '@/features/wallet/components/SendPanel';
 import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
 import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { PortfolioSection } from '@/features/wallet/components/PortfolioSection';
@@ -370,7 +371,9 @@ export function HomeWalletOverview({
             }}>
               {/* Receive (#719) renders its QR card in the same fixed frame;
                   anything signed stays on the swap composer. */}
-              {mode === 'receive' ? (
+              {mode === 'send' ? (
+                <SendPanel solanaAddress={chainAddress('solana')} />
+              ) : mode === 'receive' ? (
                 <ReceivePanel
                   solanaAddress={chainAddress('solana')}
                   evmAddress={chainAddress('evm')}
