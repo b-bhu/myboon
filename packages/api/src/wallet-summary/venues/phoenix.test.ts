@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createPhoenixConfig, createPhoenixUpstream } from '../../phoenix/index.js'
+import { createWalletSummaryService } from '../service.js'
+import { createPhoenixVenue } from './phoenix.js'
 
-// getPhoenixTraderState (the shared trader-state reader, #727) reads
-// PHOENIX_API_BASE at module load; pin it so the tests never depend on a
+// getPhoenixTraderState (the shared trader-state reader, #727) takes its
+// upstream by option (#831); pin the base so the tests never depend on a
 // developer's environment. The tests stub globalThis.fetch, so no request
 // leaves the process. The legacy trader-state call and the optional v1 call
 // go to distinct paths; the v1 answer below is a 404 every time, which the
 // reader swallows (triggerSource stays 'legacy').
-process.env.PHOENIX_API_BASE = process.env.PHOENIX_API_BASE || 'https://phoenix.test'
-
-const { phoenixVenue } = await import('./phoenix.js')
-const { createWalletSummaryService } = await import('../service.js')
+const phoenixVenue = createPhoenixVenue(createPhoenixUpstream(createPhoenixConfig({ apiBase: 'https://phoenix.test' })))
 
 const WALLET = '7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C'
 const WALLET_EMPTY = 'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1'

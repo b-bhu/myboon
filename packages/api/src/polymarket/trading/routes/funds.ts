@@ -1,11 +1,18 @@
 import type { Hono } from 'hono'
-import { BRIDGE_URL, POLYMARKET_BUILDER_CODE } from '../contracts.js'
+import { DEFAULT_BRIDGE_URL, DEFAULT_POLYMARKET_BUILDER_CODE } from '../contracts.js'
 
-function bridgeHeaders(withBody = false): Record<string, string> {
+export type FundRouteOptions = {
+  /** POLYMARKET_BRIDGE_URL, defaulted by bootstrap/config.ts. */
+  bridgeUrl?: string
+  /** POLYMARKET_BUILDER_CODE, defaulted by bootstrap/config.ts. */
+  builderCode?: string
+}
+
+function bridgeHeaders(builderCode: string, withBody = false): Record<string, string> {
   return {
     Accept: 'application/json',
     ...(withBody ? { 'Content-Type': 'application/json' } : {}),
-    ...(POLYMARKET_BUILDER_CODE ? { 'X-Builder-Code': POLYMARKET_BUILDER_CODE } : {}),
+    ...(builderCode ? { 'X-Builder-Code': builderCode } : {}),
   }
 }
 
@@ -16,11 +23,14 @@ async function relayBridgeResponse(response: Response): Promise<Response> {
   })
 }
 
-export function registerFundRoutes(routes: Hono) {
+export function registerFundRoutes(
+  routes: Hono,
+  { bridgeUrl = DEFAULT_BRIDGE_URL, builderCode = DEFAULT_POLYMARKET_BUILDER_CODE }: FundRouteOptions = {},
+) {
   routes.get('/bridge/supported-assets', async (c) => {
     try {
-      return relayBridgeResponse(await fetch(`${BRIDGE_URL}/supported-assets`, {
-        headers: bridgeHeaders(),
+      return relayBridgeResponse(await fetch(`${bridgeUrl}/supported-assets`, {
+        headers: bridgeHeaders(builderCode),
       }))
     } catch {
       return c.json({ error: 'Bridge supported-assets proxy failed' }, 502)
@@ -47,9 +57,9 @@ export function registerFundRoutes(routes: Hono) {
       return c.json({ error: 'Invalid bridge quote request' }, 400)
     }
     try {
-      return relayBridgeResponse(await fetch(`${BRIDGE_URL}/quote`, {
+      return relayBridgeResponse(await fetch(`${bridgeUrl}/quote`, {
         method: 'POST',
-        headers: bridgeHeaders(true),
+        headers: bridgeHeaders(builderCode, true),
         body: rawBody,
       }))
     } catch {
@@ -60,9 +70,9 @@ export function registerFundRoutes(routes: Hono) {
   routes.get('/deposit/:walletAddress', async (c) => {
     const walletAddress = c.req.param('walletAddress')
     try {
-      const response = await fetch(`${BRIDGE_URL}/deposit`, {
+      const response = await fetch(`${bridgeUrl}/deposit`, {
         method: 'POST',
-        headers: bridgeHeaders(true),
+        headers: bridgeHeaders(builderCode, true),
         body: JSON.stringify({ address: walletAddress }),
       })
       if (!response.ok) console.warn(`[bridge-proxy] POST /deposit -> ${response.status}`)
@@ -75,8 +85,8 @@ export function registerFundRoutes(routes: Hono) {
   routes.get('/deposit-status/:depositAddress', async (c) => {
     const depositAddress = c.req.param('depositAddress')
     try {
-      const response = await fetch(`${BRIDGE_URL}/status/${encodeURIComponent(depositAddress)}`, {
-        headers: bridgeHeaders(),
+      const response = await fetch(`${bridgeUrl}/status/${encodeURIComponent(depositAddress)}`, {
+        headers: bridgeHeaders(builderCode),
       })
       if (!response.ok) console.warn(`[bridge-proxy] GET /status/:address -> ${response.status}`)
       return relayBridgeResponse(response)
@@ -102,9 +112,9 @@ export function registerFundRoutes(routes: Hono) {
       return c.json({ error: 'Missing bridge withdrawal fields' }, 400)
     }
     try {
-      const response = await fetch(`${BRIDGE_URL}/withdraw`, {
+      const response = await fetch(`${bridgeUrl}/withdraw`, {
         method: 'POST',
-        headers: bridgeHeaders(true),
+        headers: bridgeHeaders(builderCode, true),
         body: JSON.stringify({ address, toChainId, toTokenAddress, recipientAddr }),
       })
       if (!response.ok) console.warn(`[bridge-proxy] POST /withdraw -> ${response.status}`)

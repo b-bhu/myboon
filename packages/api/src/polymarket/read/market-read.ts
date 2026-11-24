@@ -1,7 +1,11 @@
-import { isDomeAvailable } from '../../dome.js'
-
 const GAMMA_BASE = 'https://gamma-api.polymarket.com'
-const CLOB_BASE = process.env.CLOB_HOST || 'https://clob.polymarket.com'
+// createApp hands in ApiConfig's CLOB_HOST through configureClobBase; this is the fallback.
+let clobBase = 'https://clob.polymarket.com'
+
+/** Sets the CLOB base that clobFetch and the live price poll use. Called once by createApp. */
+export function configureClobBase(base: string): void {
+  clobBase = base
+}
 
 // --- TTL cache for Gamma API responses ---
 const CACHE_TTL_MS = 60_000 // 60 seconds
@@ -25,7 +29,7 @@ export async function gammaFetchCached<T>(path: string): Promise<T | null> {
 }
 
 export async function clobFetch(path: string, options?: RequestInit): Promise<Response> {
-  return fetch(`${CLOB_BASE}/${path}`, options)
+  return fetch(`${clobBase}/${path}`, options)
 }
 
 // --- live price cache (background poll) ---
@@ -201,20 +205,4 @@ export function parseNullableString(input: unknown): string | null {
 export function normalizeSoccerOutcomeLabel(input: unknown): string {
   const label = String(input ?? '').trim()
   return label.startsWith('Draw ') ? 'Draw' : label
-}
-
-// --- dome fallback wrapper ---
-
-export async function withDomeFallback<T>(
-  label: string,
-  domeFn: () => Promise<T>,
-  gammaFn: () => Promise<T>,
-): Promise<T> {
-  if (!isDomeAvailable()) return gammaFn()
-  try {
-    return await domeFn()
-  } catch (err) {
-    console.warn(`[api] Dome failed for ${label}, falling back to Gamma:`, err instanceof Error ? err.message : err)
-    return gammaFn()
-  }
 }

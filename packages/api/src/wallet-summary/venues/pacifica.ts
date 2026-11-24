@@ -17,7 +17,7 @@
  */
 import type { AppSummary, PacificaSummary, WalletPerpPosition } from '@myboon/shared/wallet-summary'
 import { pacificaUnrealizedPnl, safeNum } from '@myboon/shared/wallet-summary'
-import { PacificaApiError, pacificaGetJson } from '../../pacifica.js'
+import { PacificaApiError, pacificaGetJson } from '../../pacifica/client.js'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
 
 // The upstream answers for accounts that never traded / never existed.

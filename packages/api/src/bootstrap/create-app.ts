@@ -6,11 +6,12 @@ import { createCalendarRoutes } from '../calendar/routes.js'
 import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
 import { MarketHeatmapService } from '../market-heatmap/service.js'
 import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
-import { clobRoutes } from '../clob.js'
+import { createClobRoutes } from '../clob.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
-import { createLatestUpdateRoutes } from '../latest-updates.js'
-import { pacificaRoutes } from '../pacifica.js'
-import { phoenixRoutes } from '../phoenix.js'
+import { createLatestUpdateRoutes } from '../latest-updates/routes.js'
+import { configurePacificaClient } from '../pacifica/client.js'
+import { createPacificaRoutes } from '../pacifica/routes.js'
+import { createPhoenixConfig, createPhoenixRoutes, createPhoenixUpstream } from '../phoenix/index.js'
 import { createPolymarketReadRoutes } from '../polymarket/routes/index.js'
 import { SupabasePolymarketCatalogStore } from '../polymarket/catalog/supabase-store.js'
 import { PolymarketUpDownService } from '../polymarket/read/updown.js'
@@ -18,14 +19,16 @@ import {
   SupabaseUpDownReferencePriceStore,
   UpDownPriceService,
 } from '../polymarket/read/updown-prices.js'
-import { spotRoutes } from '../spot.js'
+import { configureSpotBalances, createSpotBalances } from '../spot/balances.js'
+import { createSpotRoutes } from '../spot/routes.js'
 import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
 import { createWalletSummaryService } from '../wallet-summary/service.js'
+import { walletVenues } from '../wallet-summary/venues/index.js'
 import { createWalletMoveRoutes } from '../wallet-move/routes.js'
-import { createHyperliquidPrices } from '../hyperliquid.js'
-import { createHyperliquidRoutes } from '../hyperliquid-routes.js'
-import { createStoryRoutes } from '../stories.js'
-import { createSwapRoutes } from '../swap.js'
+import { createHyperliquidPrices } from '../hyperliquid/prices.js'
+import { createHyperliquidRoutes } from '../hyperliquid/routes.js'
+import { createStoryRoutes } from '../stories/routes.js'
+import { createSwapRoutes } from '../swap/routes.js'
 import { createSqliteSwapExecutionStore } from '../swap/store.js'
 import {
   iconSourceUrlForAssetId,
@@ -34,15 +37,28 @@ import {
   resolveRef,
   warmMintIdentities,
   tokenRegistrySeeds,
+  configureTokenIdentityFlag,
 } from '../tokens/identity-service.js'
 import { createOptionalTokenRegistry, TokenRegistry } from '../tokens/registry/token-registry.js'
 import { SupabaseTokenRegistryStore } from '../tokens/registry/store.js'
 import type { RegistryConfig } from '../tokens/registry/token-registry.js'
+import { configureJupiterSearch } from '../tokens/jupiter-tokens.js'
+import { configureClobBase } from '../polymarket/read/market-read.js'
 import { createTokenRoutes } from '../tokens/routes.js'
 import { createRpcRoutes, createRpcRateLimiter, type RpcRateLimiter } from '../rpc/routes.js'
 import type { ApiConfig } from './config.js'
 
 export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRateLimiter } = {}): Hono {
+  // Env-derived settings arrive only through ApiConfig (#833): the venue
+  // modules take their values from here instead of reading the raw env.
+  configureTokenIdentityFlag(config.tokenIdentityEnabled)
+  configureJupiterSearch({ apiBase: config.jupiterApiBase, apiKey: config.jupApiKey })
+  configureClobBase(config.polymarketClobHost)
+  // The wallet summary's Pacifica and spot venues read through these (#831);
+  // /spot shares the same balances instance so both keep one cache.
+  configurePacificaClient({ apiBase: config.pacificaApiBase })
+  const spotBalances = createSpotBalances({ heliusRpcUrl: config.heliusRpcUrl })
+  configureSpotBalances(spotBalances)
   const tokenRegistry = createOptionalTokenRegistry(config.tokenRegistryEnabled, () => new TokenRegistry({
     store: new SupabaseTokenRegistryStore(config.supabaseUrl, config.supabaseServiceRoleKey),
     seeds: tokenRegistrySeeds(),
@@ -77,7 +93,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     priceService: new UpDownPriceService(upDownReferenceStore),
   })
   // One Hyperliquid price cache per process (#691), shared by /stories markets and the candles route.
-  const hyperliquidPrices = createHyperliquidPrices()
+  const hyperliquidPrices = createHyperliquidPrices({ ttlMs: config.hyperliquidPricesTtlMs })
 
   const publicCors = cors()
   app.use('*', async (c, next) => {
@@ -108,7 +124,17 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
   }))
 
-  app.route('/clob', clobRoutes)
+  app.route('/clob', createClobRoutes({
+    clobHost: config.polymarketClobHost,
+    relayerUrl: config.polymarketRelayerUrl,
+    bridgeUrl: config.polymarketBridgeUrl,
+    builderCode: config.polymarketBuilderCode,
+    builder: {
+      apiKey: config.polymarketBuilderApiKey,
+      secret: config.polymarketBuilderSecret,
+      passphrase: config.polymarketBuilderPassphrase,
+    },
+  }))
   app.route('/calendar', createCalendarRoutes({
     enabled: config.calendarBackpackEnabled,
     supabaseUrl: config.supabaseUrl,
@@ -130,11 +156,16 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     },
   }) }))
   app.route('/market/hyperliquid', createHyperliquidRoutes({ prices: hyperliquidPrices }))
-  app.route('/perps/pacifica', pacificaRoutes)
-  app.route('/perps/phoenix', phoenixRoutes)
-  app.route('/spot', spotRoutes)
+  app.route('/perps/pacifica', createPacificaRoutes({
+    apiBase: config.pacificaApiBase,
+    iconBase: config.pacificaIconBase,
+  }))
+  // One Phoenix upstream (caches + SDK clients) shared by the routes and the wallet summary.
+  const phoenixUpstream = createPhoenixUpstream(config.phoenix ?? createPhoenixConfig())
+  app.route('/perps/phoenix', createPhoenixRoutes({ upstream: phoenixUpstream }))
+  app.route('/spot', createSpotRoutes({ heliusRpcUrl: config.heliusRpcUrl, balances: spotBalances }))
   app.route('/wallet', createWalletSummaryRoutes({
-    service: createWalletSummaryService(),
+    service: createWalletSummaryService({ venues: walletVenues({ phoenix: phoenixUpstream }) }),
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
     trustForwardedHeaders: config.trustProxyHeaders,
   }))

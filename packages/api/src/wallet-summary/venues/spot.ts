@@ -14,7 +14,7 @@
  * the detail.
  */
 import type { AppSummary, SpotSummary } from '@myboon/shared/wallet-summary'
-import { fetchWalletBalances } from '../../spot.js'
+import { fetchWalletBalances } from '../../spot/balances.js'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
 
 export const spotVenue = {

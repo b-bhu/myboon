@@ -2,7 +2,7 @@
  * GET /wallet/summary (#725): one server call that returns every app's
  * summary, so the phone stops fetching from five places. Shape:
  * `?solana=<address>&evm=<address>` — both optional, at least one
- * required. The Solana regex is copied from src/spot.ts so both routes
+ * required. The Solana regex is copied from src/spot/routes.ts so both routes
  * accept exactly the same addresses; EVM is `0x` + 40 hex characters.
  *
  * Guard (#743): per-IP rate limit copied from `createRpcRateLimiter`
@@ -15,7 +15,7 @@ import type { Context } from 'hono'
 import { getConnInfo } from '@hono/node-server/conninfo'
 import type { WalletSummaryService } from './service.js'
 
-// Same base58 pattern as /spot/:wallet/balances (src/spot.ts).
+// Same base58 pattern as /spot/:wallet/balances (src/spot/routes.ts).
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 // EVM: 0x plus 40 hex characters.
 const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/

@@ -102,6 +102,14 @@ const ALLOWED_BUILDER_WRITES: ReadonlyArray<{ method: string; path: RegExp }> = 
  * exact method, path, and body being forwarded.
  */
 export const SERVER_INJECTED_BUILDER_PASSPHRASE = 'myboon-server-injected'
+
+/** Builder API credentials from ApiConfig (POLYMARKET_BUILDER_*). Any missing field makes the builder routes refuse. */
+export type BuilderCredentials = {
+  apiKey?: string
+  secret?: string
+  passphrase?: string
+}
+
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/
 
 function requestIdFrom(value: string | undefined): string {
@@ -148,6 +156,7 @@ export function materializeBuilderPassphrase(
   method: string,
   path: string,
   body = '',
+  builder: BuilderCredentials,
 ): { ok: boolean; requestId: string | null } {
   const passphraseEntry = headerEntry(headers, 'POLY_BUILDER_PASSPHRASE')
   if (!passphraseEntry || !passphraseEntry[1].startsWith(SERVER_INJECTED_BUILDER_PASSPHRASE)) {
@@ -159,9 +168,7 @@ export function materializeBuilderPassphrase(
     : null
   if (!requestId) return { ok: false, requestId: null }
 
-  const builderKey = process.env.POLYMARKET_BUILDER_API_KEY
-  const builderSecret = process.env.POLYMARKET_BUILDER_SECRET
-  const builderPassphrase = process.env.POLYMARKET_BUILDER_PASSPHRASE
+  const { apiKey: builderKey, secret: builderSecret, passphrase: builderPassphrase } = builder
   const apiKey = headerEntry(headers, 'POLY_BUILDER_API_KEY')?.[1]
   const signature = headerEntry(headers, 'POLY_BUILDER_SIGNATURE')?.[1]
   const timestamp = headerEntry(headers, 'POLY_BUILDER_TIMESTAMP')?.[1]
@@ -252,10 +259,8 @@ setInterval(() => {
   }
 }, RATE_LIMIT_WINDOW_MS).unref?.()
 
-export function registerBuilderSignRoutes(routes: Hono) {
-  const builderKey = process.env.POLYMARKET_BUILDER_API_KEY
-  const builderSecret = process.env.POLYMARKET_BUILDER_SECRET
-  const builderPassphrase = process.env.POLYMARKET_BUILDER_PASSPHRASE
+export function registerBuilderSignRoutes(routes: Hono, builder: BuilderCredentials = {}) {
+  const { apiKey: builderKey, secret: builderSecret, passphrase: builderPassphrase } = builder
 
   routes.post('/builder/sign', async (c) => {
     const startedAt = Date.now()

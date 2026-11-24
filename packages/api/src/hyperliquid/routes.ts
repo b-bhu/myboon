@@ -6,7 +6,7 @@ import {
   parseCandleCount,
   type CandleInterval,
   type HyperliquidPriceService,
-} from './hyperliquid.js'
+} from './prices.js'
 
 /**
  * `GET /market/hyperliquid/candles#691`: OHLCV candles for the details chart,

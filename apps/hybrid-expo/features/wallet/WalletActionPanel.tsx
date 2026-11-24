@@ -13,5 +13,5 @@ export function WalletActionPanel({ active, controllerActive = active, surfaceKe
 }) {
   const controller = useSwapController({ mode: 'swap', active: controllerActive, controllerOptions });
   return <SwapComposer active={active} surfaceKey={surfaceKey} onBusyChange={onBusyChange}
-    controller={controller} walletSheet={controllerOptions?.walletSheet} />;
+    controller={controller} walletSheet={controllerOptions?.walletSheet} inWallet />;
 }

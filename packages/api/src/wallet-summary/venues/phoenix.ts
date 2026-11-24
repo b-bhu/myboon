@@ -18,7 +18,7 @@
  */
 import type { AppSummary, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition } from '@myboon/shared/wallet-summary'
 import { accountSummary, sumPhoenixPortfolioValue, toNumber, toUsd } from '@myboon/shared/wallet-summary'
-import { getPhoenixTraderState } from '../../phoenix.js'
+import { getPhoenixTraderState, type PhoenixUpstream } from '../../phoenix/index.js'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
 
 function asRecord(input: unknown): Record<string, unknown> | null {
@@ -57,53 +57,55 @@ function toPositions(traders: PhoenixTraderRecord[]): WalletPerpPosition[] {
   return rows.map(({ notional: _notional, ...position }) => position)
 }
 
-export const phoenixVenue = {
-  id: 'phoenix',
-  /** @throws when the upstream trader-state call fails (the service maps it to `unavailable`). */
-  async fetch({ solana }: WalletFetchContext): Promise<AppSummary<PhoenixSummary>> {
-    if (!solana) return notConnectedApp()
+export function createPhoenixVenue(upstream: PhoenixUpstream) {
+  return {
+    id: 'phoenix',
+    /** @throws when the upstream trader-state call fails (the service maps it to `unavailable`). */
+    async fetch({ solana }: WalletFetchContext): Promise<AppSummary<PhoenixSummary>> {
+      if (!solana) return notConnectedApp()
 
-    // The same reader the routes serve; pdaIndex 0 is the primary account,
-    // matching the phone's fetchPhoenixTraderState default.
-    const result = await getPhoenixTraderState(solana, '0')
-    if (result.status !== 200) {
-      throw new Error(`Phoenix trader state unavailable (${result.status}): ${result.body.error}`)
-    }
+      // The same reader the routes serve; pdaIndex 0 is the primary account,
+      // matching the phone's fetchPhoenixTraderState default.
+      const result = await getPhoenixTraderState(upstream, solana, '0')
+      if (result.status !== 200) {
+        throw new Error(`Phoenix trader state unavailable (${result.status}): ${result.body.error}`)
+      }
 
-    const traders = result.body.traders
-      .map(asRecord)
-      .filter((record): record is PhoenixTraderRecord => record !== null)
-    // A successful lookup with no trader records is a legitimate $0 — the
-    // same reading `sumPhoenixPortfolioValue` documents and the phone's
-    // Wallet row shows. Literal zeros, not `accountSummary([])`'s nulls.
-    if (traders.length === 0) {
+      const traders = result.body.traders
+        .map(asRecord)
+        .filter((record): record is PhoenixTraderRecord => record !== null)
+      // A successful lookup with no trader records is a legitimate $0 — the
+      // same reading `sumPhoenixPortfolioValue` documents and the phone's
+      // Wallet row shows. Literal zeros, not `accountSummary([])`'s nulls.
+      if (traders.length === 0) {
+        return {
+          status: 'ok',
+          valueUsd: 0,
+          summary: { equityUsd: 0, collateralUsd: 0, unrealizedPnlUsd: 0, positionCount: 0, positions: [] },
+        }
+      }
+
+      // Same totals the phone sums (portfolioValue, collateralBalance,
+      // effectiveCollateral, unrealizedPnl) via the shared helpers.
+      const summary = accountSummary(traders)
+      const valueUsd = sumPhoenixPortfolioValue(traders)
+      // Traders exist but none reported a parseable portfolioValue: the phone
+      // throws here too, so the service answers `unavailable`.
+      if (valueUsd === null) throw new Error('Phoenix value unavailable')
+
+      const positions = toPositions(traders)
+
       return {
         status: 'ok',
-        valueUsd: 0,
-        summary: { equityUsd: 0, collateralUsd: 0, unrealizedPnlUsd: 0, positionCount: 0, positions: [] },
+        valueUsd,
+        summary: {
+          equityUsd: valueUsd,
+          collateralUsd: summary.collateralBalance,
+          unrealizedPnlUsd: summary.unrealizedPnl,
+          positionCount: positions.length,
+          positions,
+        },
       }
-    }
-
-    // Same totals the phone sums (portfolioValue, collateralBalance,
-    // effectiveCollateral, unrealizedPnl) via the shared helpers.
-    const summary = accountSummary(traders)
-    const valueUsd = sumPhoenixPortfolioValue(traders)
-    // Traders exist but none reported a parseable portfolioValue: the phone
-    // throws here too, so the service answers `unavailable`.
-    if (valueUsd === null) throw new Error('Phoenix value unavailable')
-
-    const positions = toPositions(traders)
-
-    return {
-      status: 'ok',
-      valueUsd,
-      summary: {
-        equityUsd: valueUsd,
-        collateralUsd: summary.collateralBalance,
-        unrealizedPnlUsd: summary.unrealizedPnl,
-        positionCount: positions.length,
-        positions,
-      },
-    }
-  },
-} satisfies WalletVenue
+    },
+  } satisfies WalletVenue
+}

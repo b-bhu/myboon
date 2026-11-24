@@ -13,9 +13,7 @@ import { Wallet } from 'ethers'
 
 const SECRET_B64 = Buffer.from('test-builder-secret-material').toString('base64')
 
-process.env.POLYMARKET_BUILDER_API_KEY = 'test-key'
-process.env.POLYMARKET_BUILDER_SECRET = SECRET_B64
-process.env.POLYMARKET_BUILDER_PASSPHRASE = 'test-passphrase'
+const BUILDER = { apiKey: 'test-key', secret: SECRET_B64, passphrase: 'test-passphrase' }
 
 let app: Hono
 const wallet = Wallet.createRandom()
@@ -51,7 +49,7 @@ const DEPLOYED = { method: 'GET', path: '/deployed?address=0xabc' }
 before(async () => {
   const { registerBuilderSignRoutes } = await import('./builder-sign.js')
   app = new Hono()
-  registerBuilderSignRoutes(app)
+  registerBuilderSignRoutes(app, BUILDER)
 })
 
 describe('/builder/sign authentication', () => {
@@ -99,7 +97,7 @@ describe('/builder/sign authentication', () => {
     const json = await res.json() as Record<string, string>
     assert.equal(json.POLY_BUILDER_API_KEY, 'test-key')
     assert.match(json.POLY_BUILDER_PASSPHRASE, /^myboon-server-injected:[A-Za-z0-9-]{8,64}$/)
-    assert.notEqual(json.POLY_BUILDER_PASSPHRASE, process.env.POLYMARKET_BUILDER_PASSPHRASE)
+    assert.notEqual(json.POLY_BUILDER_PASSPHRASE, BUILDER.passphrase)
     assert.ok(json.POLY_BUILDER_SIGNATURE?.length > 0)
     assert.ok(json.POLY_BUILDER_TIMESTAMP?.length > 0)
     // base64url — a raw base64 '+' or '/' would be rejected upstream.

@@ -1,5 +1,5 @@
 /**
- * E2E tests for /polymarket/featured-markets + live Dome data checks.
+ * E2E tests for /polymarket/featured-markets.
  *
  * Usage: API_BASE=http://<vps-ip>:3000 npx tsx src/e2e/api-e2e.ts
  *        npx tsx src/e2e/api-e2e.ts              (defaults to localhost:3000)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHyperliquidPrices } from './hyperliquid.js'
+import { createHyperliquidPrices } from './prices.js'
 
 const T0 = Date.parse('2026-11-20T10:00:00.000Z')
 
@@ -159,22 +159,19 @@ test('a fresh snapshot answers quotes without fetching', async () => {
   assert.equal(upstream.calls.length, 4, 'an expired snapshot triggers a refresh')
 })
 
-test('HYPERLIQUID_PRICES_TTL_MS widens the freshness window', async () => {
+test('a ttlMs option widens the freshness window', async () => {
   const upstream = fakeUpstream({ core: [BTC], xyz: [] })
   const time = clock()
-  process.env.HYPERLIQUID_PRICES_TTL_MS = '60000'
-  try {
-    const prices = createHyperliquidPrices({ fetch: upstream.fetchImpl, now: time.now })
-    await prices.quotes(['BTC'], { waitMs: 1500 })
-    time.advance(45_000)
-    await prices.quotes(['BTC'], { waitMs: 1500 })
-    assert.equal(upstream.calls.length, 2, 'still fresh at 45 s with a 60 s TTL')
-    time.advance(20_000)
-    await prices.quotes(['BTC'], { waitMs: 1500 })
-    assert.equal(upstream.calls.length, 4, 'refreshes past the 60 s TTL')
-  } finally {
-    delete process.env.HYPERLIQUID_PRICES_TTL_MS
-  }
+  // #833: the TTL now arrives through createHyperliquidPrices options
+  // (bootstrap/config.ts parses HYPERLIQUID_PRICES_TTL_MS for production).
+  const prices = createHyperliquidPrices({ fetch: upstream.fetchImpl, now: time.now, ttlMs: 60_000 })
+  await prices.quotes(['BTC'], { waitMs: 1500 })
+  time.advance(45_000)
+  await prices.quotes(['BTC'], { waitMs: 1500 })
+  assert.equal(upstream.calls.length, 2, 'still fresh at 45 s with a 60 s TTL')
+  time.advance(20_000)
+  await prices.quotes(['BTC'], { waitMs: 1500 })
+  assert.equal(upstream.calls.length, 4, 'refreshes past the 60 s TTL')
 })
 
 test('parallel quotes calls share one refresh in flight', async () => {

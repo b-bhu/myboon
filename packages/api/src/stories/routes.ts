@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { StoryMarket } from '@myboon/shared/stories'
-import type { HyperliquidQuoteMap, HyperliquidQuotes } from './hyperliquid.js'
-import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from './hyperliquid-names.js'
+import { createSupabaseRest } from '@myboon/shared/supabase-rest'
+import type { HyperliquidQuoteMap, HyperliquidQuotes } from '../hyperliquid/prices.js'
+import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from '../hyperliquid/names.js'
 
 // Atlas Feed: how many topics the stories list returns (two full 10-tile mosaic pages) (#797).
 const MAX_ATLAS_STORIES = 20
@@ -122,37 +123,13 @@ export interface StoryRoutesConfig {
  */
 export function createStoryRoutes(config: StoryRoutesConfig): Hono {
   const app = new Hono()
-  const fetchImpl = config.fetch ?? globalThis.fetch
-  const restBaseUrl = `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1`
-
-  function restUrl(table: string, params: URLSearchParams): URL {
-    const url = new URL(`${restBaseUrl}/${table}`)
-    params.forEach((value, key) => url.searchParams.append(key, value))
-    return url
-  }
-
-  function restHeaders(schema?: 'atlas'): Record<string, string> {
-    return {
-      apikey: config.serviceRoleKey,
-      Authorization: `Bearer ${config.serviceRoleKey}`,
-      Accept: 'application/json',
-      // PostgREST schema select: only the atlas source switches the profile header.
-      ...(schema === 'atlas' ? { 'Accept-Profile': 'atlas' } : {}),
-    }
-  }
-
-  async function readRows<T>(table: string, params: URLSearchParams, schema?: 'atlas'): Promise<T[]> {
-    const response = await fetchImpl(restUrl(table, params), {
-      headers: restHeaders(schema),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(`Supabase read failed for ${table}: ${response.status}`)
-    }
-    const body: unknown = await response.json()
-    if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
-    return body as T[]
-  }
+  // Every Supabase read in this file goes through the one shared helper (#832).
+  const rest = createSupabaseRest({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.serviceRoleKey,
+    ...(config.fetch ? { fetch: config.fetch } : {}),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  })
 
   /**
    * Atlas Stories pick themselves: entities with ATLAS_MIN_ITEMS+ active, unmerged
@@ -169,7 +146,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       status: 'eq.active',
       limit: String(candidates.length),
     })
-    const rows = await readRows<AtlasEntityRow>('entities', params, 'atlas')
+    const rows = await rest.readRows<AtlasEntityRow>('entities', params, 'atlas')
     const byId = new Map<string, SelectedEntity>()
     for (const row of rows) {
       const entity = atlasSelectedEntity(row)
@@ -186,7 +163,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     // Offset paging over a live table can skip or double-count a row if the entity
     // manager writes mid-read. Harmless for an eligibility threshold at 1-2 pages.
     for (let page = 0; page < ATLAS_WINDOW_MAX_PAGES; page += 1) {
-      const rows = await readRows<AtlasWindowRow>('entity_items', atlasWindowParams(since, now, page), 'atlas')
+      const rows = await rest.readRows<AtlasWindowRow>('entity_items', atlasWindowParams(since, now, page), 'atlas')
       if (rows.length === 0) break
       for (const row of rows) {
         if (typeof row.main_entity_id !== 'string' || !UUID_RE.test(row.main_entity_id)) continue
@@ -220,21 +197,13 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       status: 'eq.active',
       limit: '1',
     })
-    const rows = await readRows<AtlasEntityRow>('entities', params, 'atlas')
+    const rows = await rest.readRows<AtlasEntityRow>('entities', params, 'atlas')
     return atlasSelectedEntity(rows[0])
   }
 
   async function atlasItemsTotal(entityId: string): Promise<number> {
-    const response = await fetchImpl(restUrl('entity_items', atlasItemFilterParams(entityId)), {
-      headers: { ...restHeaders('atlas'), Prefer: 'count=exact', Range: '0-0' },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(`Supabase read failed for entity_items: ${response.status}`)
-    }
-    const total = contentRangeTotal(response.headers.get('Content-Range'))
-    if (total === null) throw new Error('Supabase returned an invalid items count')
-    return total
+    // Count read: PostgREST answers with the total in Content-Range, not the rows.
+    return rest.readCount('entity_items', atlasItemFilterParams(entityId), 'atlas')
   }
 
   async function atlasStoryMemories(entityIds: string[]): Promise<{
@@ -246,7 +215,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     if (entityIds.length === 0) return { memoriesByEntity: grouped, totalsByEntity: totals }
     await Promise.all(entityIds.filter((entityId) => UUID_RE.test(entityId)).map(async (entityId) => {
       const [latestRows, total] = await Promise.all([
-        readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas'),
+        rest.readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas'),
         atlasItemsTotal(entityId),
       ])
       const expected = total > 0 ? 1 : 0
@@ -267,7 +236,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
   }> {
     if (!UUID_RE.test(entityId)) return { memories: [], total: 0, latest: null }
     const [rows, total] = await Promise.all([
-      readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, limit, offset), 'atlas'),
+      rest.readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, limit, offset), 'atlas'),
       atlasItemsTotal(entityId),
     ])
     const memories: StoryMemory[] = []
@@ -283,7 +252,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
       if (offset === 0) {
         latest = memories[0] ?? null
       } else {
-        const latestRows = await readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas')
+        const latestRows = await rest.readRows<AtlasItemRow>('entity_items', atlasItemParams(entityId, 1, 0), 'atlas')
         latest = atlasMemory(latestRows[0], entityId)
       }
       if (!latest) throw new Error('Atlas item page was incomplete')
@@ -326,7 +295,7 @@ export function createStoryRoutes(config: StoryRoutesConfig): Hono {
     const linksByEntity = new Map<string, EntityMarketLink[]>()
     try {
       if (entityIds.length === 0) return linksByEntity
-      const rows = await readRows<EntityMarketRow>('entity_markets', entityMarketsParams(entityIds), 'atlas')
+      const rows = await rest.readRows<EntityMarketRow>('entity_markets', entityMarketsParams(entityIds), 'atlas')
       for (const row of rows) {
         const entityId = row.entity_id
         const rank = row.rank
@@ -533,15 +502,6 @@ function atlasMemory(row: AtlasItemRow | undefined, entityId: string): StoryMemo
     imageKind: null,
     imageAttribution: null,
   }
-}
-
-/** Parses the total out of a PostgREST Content-Range header, e.g. "0-0/42" or the empty-window "star-slash-total" form; null when absent/invalid. */
-function contentRangeTotal(value: string | null): number | null {
-  if (!value) return null
-  const total = value.split('/')[1]
-  if (!total || !/^\d+$/.test(total)) return null
-  const parsed = Number(total)
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
 }
 
 function safeHttpUrl(value: unknown): string | null {

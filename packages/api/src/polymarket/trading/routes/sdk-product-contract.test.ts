@@ -22,11 +22,9 @@ let apiServer: ServerType
 let app: Hono
 let upstreamCalls = 0
 
-process.env.CLOB_HOST = `http://127.0.0.1:${PORT}`
-process.env.POLYMARKET_RELAYER_URL = `http://127.0.0.1:${PORT}`
-process.env.POLYMARKET_BUILDER_API_KEY = 'sdk-contract-key'
-process.env.POLYMARKET_BUILDER_SECRET = secret
-process.env.POLYMARKET_BUILDER_PASSPHRASE = 'sdk-contract-passphrase'
+// Upstream stub for both the CLOB and Relayer hosts; passed to the routes below.
+const UPSTREAM_BASE = `http://127.0.0.1:${PORT}`
+const BUILDER = { apiKey: 'sdk-contract-key', secret, passphrase: 'sdk-contract-passphrase' }
 
 function proofMessage(timestamp: number): string {
   return [
@@ -68,8 +66,8 @@ before(async () => {
     import('./proxies.js'),
   ])
   const routes = new Hono()
-  registerBuilderSignRoutes(routes)
-  registerProxyRoutes(routes)
+  registerBuilderSignRoutes(routes, BUILDER)
+  registerProxyRoutes(routes, { clobHost: UPSTREAM_BASE, relayerUrl: UPSTREAM_BASE, builder: BUILDER })
   app = new Hono().route('/clob', routes)
   await new Promise<void>((resolve) => {
     apiServer = serve({ fetch: app.fetch, port: API_PORT }, () => resolve())

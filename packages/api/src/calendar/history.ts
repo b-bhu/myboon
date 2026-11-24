@@ -14,8 +14,9 @@
  */
 import type { CalendarHistoryMarket, CalendarHistoryMove, CalendarHistoryRelease, CalendarHistoryResponse } from '@myboon/shared/calendar'
 import type { MarketCandle } from '@myboon/shared/stories'
-import type { CandleInterval } from '../hyperliquid.js'
-import { hyperliquidDisplaySymbol, hyperliquidDisplayName } from '../hyperliquid-names.js'
+import { createSupabaseRest } from '@myboon/shared/supabase-rest'
+import type { CandleInterval } from '../hyperliquid/prices.js'
+import { hyperliquidDisplaySymbol, hyperliquidDisplayName } from '../hyperliquid/names.js'
 import { parseCalendarDate } from './dates.js'
 import { RELEASE_ENTITY_SLUGS } from './series.js'
 
@@ -120,41 +121,22 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const YYYY_MM_DD_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export function createCalendarHistory(options: CalendarHistoryOptions): CalendarHistoryReader {
-  const fetchImpl = options.fetch ?? globalThis.fetch
   const nowMs = options.now ?? Date.now
   const responseTtlMs = options.ttlMs ?? RESPONSE_TTL_MS
-  const restBaseUrl = `${options.supabaseUrl.replace(/\/$/, '')}/rest/v1`
+  // Every Supabase read in this file goes through the one shared helper (#832); all of them are atlas-schema reads.
+  const rest = createSupabaseRest({
+    supabaseUrl: options.supabaseUrl,
+    serviceRoleKey: options.serviceRoleKey,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  })
   // Finished moves: symbol|startsAt (ms) -> changePct. Nulls and errors never enter.
   const moveCache = new Map<string, number>()
   // Whole responses: slug|before -> { at, body }; only failure-free responses are stored.
   const responseCache = new Map<string, { at: number, body: CalendarHistoryResponse }>()
 
-  function restUrl(table: string, params: URLSearchParams): URL {
-    const url = new URL(`${restBaseUrl}/${table}`)
-    params.forEach((value, key) => url.searchParams.append(key, value))
-    return url
-  }
-
-  function restHeaders(): Record<string, string> {
-    return {
-      apikey: options.serviceRoleKey,
-      Authorization: `Bearer ${options.serviceRoleKey}`,
-      Accept: 'application/json',
-      'Accept-Profile': 'atlas',
-    }
-  }
-
-  async function readRows<T>(table: string, params: URLSearchParams): Promise<T[]> {
-    const response = await fetchImpl(restUrl(table, params), {
-      headers: restHeaders(),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(`Supabase read failed for ${table}: ${response.status}`)
-    }
-    const body: unknown = await response.json()
-    if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
-    return body as T[]
+  function readRows<T>(table: string, params: URLSearchParams): Promise<T[]> {
+    return rest.readRows<T>(table, params, 'atlas')
   }
 
   async function getHistory(entitySlug: string, before: string): Promise<CalendarHistoryResponse> {

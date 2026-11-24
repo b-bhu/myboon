@@ -22,6 +22,11 @@
  * with one Retry in the Portfolio area. No addresses at all renders nothing
  * (the hook makes no call).
  *
+ * While that first summary call is in flight (#858, frame "Portfolio
+ * loading") the table shows five skeleton rows — icon block, two text bars
+ * left, two short bars right, nothing spinning — and the app/spot counts
+ * show short skeleton bars instead of a zero; nothing has loaded yet.
+ *
  * The body is still the table (#841, #842 add Map and Cards): the header's
  * Table | Map | Cards switch (#840, the design's ".vs" in frame
  * "Portfolio · Map") carries and remembers the choice, and its disabled
@@ -64,6 +69,9 @@ const APP_NAME: Record<PortfolioAppKey, string> = {
   pacifica: 'Pacifica',
   meteora: 'Meteora',
 };
+
+/** #858: the loading table shows five skRow-shaped placeholders; stable keys. */
+const SKELETON_ROW_KEYS = ['skel:0', 'skel:1', 'skel:2', 'skel:3', 'skel:4'];
 
 function formatUsd(value: number): string {
   return value.toLocaleString('en-US', {
@@ -240,7 +248,7 @@ export const PortfolioSection = memo(function PortfolioSection({
 
   type ListRow =
     // valueUsd at top level: every variant feeds #768's topFive.
-    | { kind: 'app'; appKey: PortfolioAppKey; row: AppPortfolioRow; valueUsd: number; stale: boolean; error: string | null }
+    | { kind: 'app'; appKey: PortfolioAppKey; row: AppPortfolioRow; valueUsd: number; stale: boolean }
     // valueUsd is 0: a never-loaded app carries no value.
     | { kind: 'appError'; appKey: PortfolioAppKey; error: string | null; valueUsd: number }
     | { kind: 'spot'; row: SpotPortfolioRow; valueUsd: number };
@@ -254,11 +262,11 @@ export const PortfolioSection = memo(function PortfolioSection({
         const app = state.byApp[key];
         const row = state.appRows[key];
         if (app.status === 'ok' && row) {
-          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: false, error: null });
+          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: false });
         } else if (app.status === 'stale' && row) {
-          // The mapping kept the venue's error text for stale rows (note 2);
-          // a whole-refresh failure from the hook explains itself otherwise.
-          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: true, error: app.error ?? error });
+          // The mapping still keeps the venue's error for stale states (#769),
+          // but the row holds the value dimmed with its age — no error line (#863).
+          listed.push({ kind: 'app', appKey: key, row, valueUsd: row.valueUsd, stale: true });
         } else if (app.status === 'unavailable') {
           failed.push({ kind: 'appError', appKey: key, error: app.error ?? null, valueUsd: 0 });
         }
@@ -286,7 +294,15 @@ export const PortfolioSection = memo(function PortfolioSection({
         <ViewSwitch view={view} onSelect={selectView} />
       </View>
 
-      <Text style={styles.label}>{`Total balance · ${appCount} apps`}</Text>
+      {showSkeletons ? (
+        <View style={styles.countLabelRow}>
+          <Text style={styles.label}>Total balance · </Text>
+          <View style={[styles.countSkeleton, styles.skeleton]} />
+          <Text style={styles.label}> apps</Text>
+        </View>
+      ) : (
+        <Text style={styles.label}>{`Total balance · ${appCount} apps`}</Text>
+      )}
       {showSkeletons ? (
         <>
           <View style={[styles.totalSkeleton, styles.skeleton]} />
@@ -319,7 +335,14 @@ export const PortfolioSection = memo(function PortfolioSection({
           onPress={() => selectSeg('apps')}
           style={[styles.segButton, seg === 'apps' && styles.segButtonOn]}
         >
-          <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>{`Apps · ${appCount}`}</Text>
+          {showSkeletons ? (
+            <View style={styles.countLabelRow}>
+              <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>Apps · </Text>
+              <View style={[styles.countSkeleton, styles.skeleton]} />
+            </View>
+          ) : (
+            <Text style={[styles.segLabel, seg === 'apps' && styles.segLabelOn]}>{`Apps · ${appCount}`}</Text>
+          )}
         </Pressable>
         <Pressable
           accessibilityRole="tab"
@@ -328,12 +351,21 @@ export const PortfolioSection = memo(function PortfolioSection({
           onPress={() => selectSeg('spot')}
           style={[styles.segButton, seg === 'spot' && styles.segButtonOn]}
         >
-          <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>{`Spot · ${state ? state.spotRows.length : 0}`}</Text>
+          {showSkeletons ? (
+            <View style={styles.countLabelRow}>
+              <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>Spot · </Text>
+              <View style={[styles.countSkeleton, styles.skeleton]} />
+            </View>
+          ) : (
+            <Text style={[styles.segLabel, seg === 'spot' && styles.segLabelOn]}>{`Spot · ${state ? state.spotRows.length : 0}`}</Text>
+          )}
         </Pressable>
       </View>
 
       <View style={styles.table}>
-        {top.map((entry) => {
+        {showSkeletons
+          ? SKELETON_ROW_KEYS.map((key) => <PortfolioSkeletonRow key={key} />)
+          : top.map((entry) => {
           if (entry.kind === 'spot') {
             return (
               <View key={`spot:${entry.row.mint}`} style={styles.row}>
@@ -365,7 +397,7 @@ export const PortfolioSection = memo(function PortfolioSection({
                     {name}
                   </Text>
                   <Text numberOfLines={1} style={styles.failLine}>
-                    {entry.error ?? "Couldn't load · the rest are fine"}
+                    {"Couldn't load · the rest are fine"}
                   </Text>
                 </View>
                 {rowSpinner(true)}
@@ -395,7 +427,6 @@ export const PortfolioSection = memo(function PortfolioSection({
                     {name}
                   </Text>
                   <Text numberOfLines={1} style={styles.line}>{entry.row.summaryLine}</Text>
-                  {entry.error ? <Text numberOfLines={1} style={styles.failLine}>{entry.error}</Text> : null}
                 </View>
                 <View style={styles.valueCol}>
                   <Text style={[styles.value, entry.stale && styles.rowStaleValue]}>
@@ -449,6 +480,24 @@ export const PortfolioSection = memo(function PortfolioSection({
     </View>
   );
 });
+
+/** One #858 loading row, as the frame's skRow draws it: a square icon block,
+ * two text bars on the left and two short bars on the right — never a spinner. */
+function PortfolioSkeletonRow() {
+  return (
+    <View style={styles.row}>
+      <View style={[styles.skelIcon, styles.skeleton]} />
+      <View style={styles.skelNameCol}>
+        <View style={[styles.skelBarLg, styles.skeleton]} />
+        <View style={[styles.skelBarMd, styles.skeleton]} />
+      </View>
+      <View style={styles.skelValueCol}>
+        <View style={[styles.skelBarLg, styles.skeleton]} />
+        <View style={[styles.skelBarSm, styles.skeleton]} />
+      </View>
+    </View>
+  );
+}
 
 /** The unused mix bar from WalletHero, reused: brand-colored flex segments. */
 function AllocationBar({
@@ -585,6 +634,16 @@ const styles = StyleSheet.create({
   totalSkeleton: { width: 160, height: 30, borderRadius: 5 },
   barSkeleton: { height: 8, borderRadius: 4 },
   skeleton: { backgroundColor: semantic.background.lift },
+  // #858 skRow placeholders: 28×28 rounded icon, left text bars, right value bars.
+  skelIcon: { width: 28, height: 28, borderRadius: 6 },
+  skelNameCol: { flex: 1, minWidth: 0, gap: 8 },
+  skelValueCol: { alignItems: 'flex-end', gap: 8 },
+  skelBarLg: { width: 96, height: 12, borderRadius: 4 },
+  skelBarMd: { width: 170, height: 10, borderRadius: 4 },
+  skelBarSm: { width: 32, height: 10, borderRadius: 4 },
+  // Short bar where a count goes while nothing has loaded yet (#858).
+  countLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  countSkeleton: { width: 22, height: 10, borderRadius: 4 },
   bar: {
     flexDirection: 'row',
     width: '100%',

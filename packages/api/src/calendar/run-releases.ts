@@ -21,7 +21,20 @@ import { runReleases } from './releases.js'
 const CA_PATH = fileURLToPath(new URL('../../certs/supabase-prod-ca-2021.crt', import.meta.url))
 const LOCAL_HOSTS = new Set(['', 'localhost', '127.0.0.1', '::1'])
 
-export function createPool(databaseUrl: string): pg.Pool {
+/** The job's env, read once by main() and passed down. Defaults match the old inline reads. */
+export function readRunReleasesEnv(): {
+  dailyGateOpen: boolean
+  databaseUrl: string | undefined
+  caFile: string | undefined
+} {
+  return {
+    dailyGateOpen: process.env.CALENDAR_RELEASES_ENABLED === 'true',
+    databaseUrl: process.env.CALENDAR_RELEASES_DATABASE_URL?.trim(),
+    caFile: process.env.CALENDAR_RELEASES_DATABASE_CA_FILE?.trim() || undefined,
+  }
+}
+
+export function createPool(databaseUrl: string, caFile?: string): pg.Pool {
   const url = new URL(databaseUrl)
   for (const key of [...url.searchParams.keys()].filter((key) => /^ssl/i.test(key))) {
     url.searchParams.delete(key)
@@ -30,7 +43,7 @@ export function createPool(databaseUrl: string): pg.Pool {
     ? false
     : {
         rejectUnauthorized: true as const,
-        ca: readFileSync(process.env.CALENDAR_RELEASES_DATABASE_CA_FILE?.trim() || CA_PATH, 'utf8'),
+        ca: readFileSync(caFile || CA_PATH, 'utf8'),
       }
   // calendar_worker allows 2 connections; one strictly sequential job needs less.
   return new pg.Pool({ connectionString: url.toString(), ssl, max: 1 })
@@ -38,13 +51,14 @@ export function createPool(databaseUrl: string): pg.Pool {
 
 async function main(): Promise<number> {
   const mode = process.argv.includes('--backfill') ? 'backfill' as const : 'daily' as const
+  const env = readRunReleasesEnv()
   // --backfill ignores the gate, so it can be run once by hand.
-  const enabled = mode === 'backfill' || process.env.CALENDAR_RELEASES_ENABLED === 'true'
-  const databaseUrl = process.env.CALENDAR_RELEASES_DATABASE_URL?.trim()
+  const enabled = mode === 'backfill' || env.dailyGateOpen
+  const databaseUrl = env.databaseUrl
   if (enabled && !databaseUrl) {
     throw new Error('CALENDAR_RELEASES_DATABASE_URL is not set')
   }
-  const pool = enabled && databaseUrl ? createPool(databaseUrl) : null
+  const pool = enabled && databaseUrl ? createPool(databaseUrl, env.caFile) : null
   try {
     const result = await runReleases({
       mode,
