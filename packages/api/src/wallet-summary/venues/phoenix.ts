@@ -19,15 +19,14 @@
 import type { AppSummary, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition } from '@myboon/shared/wallet-summary'
 import { accountSummary, sumPhoenixPortfolioValue, toNumber, toUsd } from '@myboon/shared/wallet-summary'
 import { getPhoenixTraderState, type PhoenixUpstream } from '../../phoenix/index.js'
+import { asRecord } from '@myboon/shared/guards'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
 
-function asRecord(input: unknown): Record<string, unknown> | null {
-  return input && typeof input === 'object' && !Array.isArray(input)
-    ? (input as Record<string, unknown>)
-    : null
-}
-
-function asString(input: unknown): string | null {
+/**
+ * Differs from @myboon/shared/guards asString: returns the trimmed value and
+ * never stringifies numbers (#896).
+ */
+function asStringTrimmed(input: unknown): string | null {
   return typeof input === 'string' && input.trim().length > 0 ? input.trim() : null
 }
 
@@ -41,7 +40,7 @@ function toPositions(traders: PhoenixTraderRecord[]): WalletPerpPosition[] {
     for (const item of positions) {
       const record = asRecord(item)
       if (!record) continue
-      const symbol = asString(record.symbol)
+      const symbol = asStringTrimmed(record.symbol)
       const size = toNumber(record.positionSize)
       if (!symbol || size === null || size === 0) continue
       rows.push({

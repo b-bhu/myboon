@@ -1,3 +1,4 @@
+import { isRecord } from '@myboon/shared/guards'
 import type { FeaturedMarket } from '../read/featured-markets.js'
 import { getMainSportsMarkets, mapGammaEventToFeaturedMarket } from '../read/featured-markets.js'
 import { gammaFetch, gammaFetchCached } from '../read/market-read.js'
@@ -320,8 +321,4 @@ function stringValue(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   return null
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

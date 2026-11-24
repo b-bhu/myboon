@@ -1,3 +1,4 @@
+import { isRecord } from '@myboon/shared/guards'
 import { deriveCategoryFromText } from '../curated.js'
 import { gammaFetch } from '../read/market-read.js'
 import type { PolymarketCatalogItemInput } from './contracts.js'
@@ -165,8 +166,4 @@ function stringValue(value: unknown): string | null {
   if (typeof value === 'string' && value.trim()) return value.trim()
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   return null
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

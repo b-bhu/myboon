@@ -12,6 +12,8 @@
  * unchanged (tests pin the threshold); see wallet-value.test.ts.
  */
 
+import { asRecord, asString } from '../guards.js';
+
 export type PhoenixTraderRecord = Record<string, unknown>;
 
 export interface PhoenixAccountSummary {
@@ -24,17 +26,6 @@ export interface PhoenixAccountSummary {
   maintenanceMargin: number | null;
   accountLeverage: number | null;
   riskLabel: string;
-}
-
-function asRecord(input: unknown): Record<string, unknown> | null {
-  return input && typeof input === 'object' && !Array.isArray(input)
-    ? (input as Record<string, unknown>)
-    : null;
-}
-
-function asString(input: unknown): string | null {
-  if (typeof input === 'number' && Number.isFinite(input)) return String(input);
-  return typeof input === 'string' && input.trim().length > 0 ? input : null;
 }
 
 function statusText(value: unknown): string {
@@ -83,6 +74,12 @@ export function sumPhoenixPortfolioValue(traders: unknown[]): number | null {
   return values.reduce((sum, value) => sum + value, 0);
 }
 
+/**
+ * Phoenix token amounts: on top of plain numbers and decimal strings this
+ * accepts {ui} or {value, decimals} records, so it is deliberately NOT the
+ * record-blind @myboon/shared/guards toNumber and keeps this name — the
+ * hybrid-expo app imports it through @myboon/shared/wallet-summary (#896).
+ */
 export function toNumber(input: unknown): number | null {
   if (typeof input === 'number') return Number.isFinite(input) ? input : null;
   const record = asRecord(input);

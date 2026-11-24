@@ -1,8 +1,8 @@
 /** Folds the v1 trader-state trigger rows into the legacy trader-state answer (#831). */
 
 import {
-  asRecord,
-  asString,
+  asRecordLoose,
+  asStringRaw,
   normalizeVenueSymbol,
   parseNullableInt,
   parseNullableNumber,
@@ -10,7 +10,7 @@ import {
 import type { PhoenixPositionTriggerEnrichment } from './types.js'
 
 export function triggerRecordPriceUsd(triggerRecord: Record<string, unknown>, positionRecord: Record<string, unknown>): number | null {
-  const trigger = asRecord(triggerRecord.trigger)
+  const trigger = asRecordLoose(triggerRecord.trigger)
   if (!trigger) return null
 
   const directPrice = parseNullableNumber(
@@ -34,17 +34,17 @@ export function activeTriggerRows(input: unknown): Record<string, unknown>[] {
   if (!Array.isArray(input)) return []
 
   return input
-    .map((item) => asRecord(item))
+    .map((item) => asRecordLoose(item))
     .filter((item): item is Record<string, unknown> => {
       if (!item) return false
-      const status = asString(item.status)?.toLowerCase()
+      const status = asStringRaw(item.status)?.toLowerCase()
       return status === null || status === 'active' || status === 'open'
     })
 }
 
 export function enrichTriggerPriceRows(rows: Record<string, unknown>[], positionRecord: Record<string, unknown>): unknown[] {
   return rows.map((row) => {
-    const trigger = asRecord(row.trigger)
+    const trigger = asRecordLoose(row.trigger)
     const triggerPriceUsd = triggerRecordPriceUsd(row, positionRecord)
 
     if (!trigger || triggerPriceUsd === null) {
@@ -76,7 +76,7 @@ export function syntheticOrderFromTrigger(
   row: Record<string, unknown>,
   positionRecord: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  const trigger = asRecord(row.trigger)
+  const trigger = asRecordLoose(row.trigger)
   if (!trigger) return null
 
   const price = triggerRecordPriceUsd(row, positionRecord)
@@ -86,18 +86,18 @@ export function syntheticOrderFromTrigger(
   const positionDecimals = parseNullableInt(positionRecord.baseLotsDecimals) ?? 2
   const sizeUi = positionLots > 0
     ? positionLots / (10 ** positionDecimals)
-    : parseNullableNumber(asRecord(positionRecord.positionSize)?.ui)
+    : parseNullableNumber(asRecordLoose(positionRecord.positionSize)?.ui)
   const percent = parseNullableNumber(trigger.percent)
-  const id = asString(row.conditionalTakeProfitId)
-    ?? asString(row.conditionalStopLossId)
-    ?? asString(row.orderId)
+  const id = asStringRaw(row.conditionalTakeProfitId)
+    ?? asStringRaw(row.conditionalStopLossId)
+    ?? asStringRaw(row.orderId)
     ?? `${symbol}-${kind}-${price}`
   const cancelMeta = conditionalTriggerCancelMeta(row, id)
 
   return {
     orderSequenceNumber: id,
     symbol,
-    side: asString(trigger.side),
+    side: asStringRaw(trigger.side),
     price,
     triggerPrice: price,
     tradeSizeRemaining: sizeUi === null ? null : { value: sizeUi, decimals: 0, ui: String(sizeUi) },
@@ -107,7 +107,7 @@ export function syntheticOrderFromTrigger(
     conditionalOrderKind: kind,
     conditionalOrderIndex: cancelMeta.conditionalOrderIndex,
     executionDirection: cancelMeta.executionDirection,
-    status: asString(row.status) ?? 'active',
+    status: asStringRaw(row.status) ?? 'active',
     percent,
     raw: row,
   }
@@ -118,7 +118,7 @@ export function conditionalTriggerCancelMeta(
   id: string,
 ): { conditionalOrderIndex: number | null; executionDirection: string | null } {
   const directIndex = parseNullableInt(row.conditionalOrderIndex ?? row.index)
-  const directDirection = asString(row.executionDirection ?? row.triggerDirection)
+  const directDirection = asStringRaw(row.executionDirection ?? row.triggerDirection)
   if (directIndex !== null && directDirection !== null) {
     return { conditionalOrderIndex: directIndex, executionDirection: directDirection }
   }
@@ -132,20 +132,20 @@ export function conditionalTriggerCancelMeta(
 
 export function buildPhoenixTriggerEnrichment(v1Raw: unknown): Map<string, PhoenixPositionTriggerEnrichment> {
   const result = new Map<string, PhoenixPositionTriggerEnrichment>()
-  const v1Record = asRecord(v1Raw)
-  const snapshot = asRecord(v1Record?.snapshot)
+  const v1Record = asRecordLoose(v1Raw)
+  const snapshot = asRecordLoose(v1Record?.snapshot)
   const subaccounts = Array.isArray(snapshot?.subaccounts) ? snapshot.subaccounts : []
 
   for (const rawSubaccount of subaccounts) {
-    const subaccount = asRecord(rawSubaccount)
+    const subaccount = asRecordLoose(rawSubaccount)
     if (!subaccount) continue
 
     const subaccountIndex = parseNullableInt(subaccount.subaccountIndex) ?? 0
     const positions = Array.isArray(subaccount.positions) ? subaccount.positions : []
 
     for (const rawPosition of positions) {
-      const position = asRecord(rawPosition)
-      const venueSymbol = normalizeVenueSymbol(asString(position?.symbol))
+      const position = asRecordLoose(rawPosition)
+      const venueSymbol = normalizeVenueSymbol(asStringRaw(position?.symbol))
       if (!position || !venueSymbol) continue
 
       const takeProfitRows = activeTriggerRows(position.takeProfitTriggers)
@@ -175,7 +175,7 @@ export function buildPhoenixTriggerEnrichment(v1Raw: unknown): Map<string, Phoen
 }
 
 export function mergePhoenixTraderState(raw: unknown, v1Raw: unknown | null): { traders: unknown[]; triggerSource: 'v1' | 'legacy' } {
-  const rawRecord = asRecord(raw)
+  const rawRecord = asRecordLoose(raw)
   const traders = Array.isArray(rawRecord?.traders) ? rawRecord.traders : []
   if (!v1Raw) return { traders, triggerSource: 'legacy' }
 
@@ -183,14 +183,14 @@ export function mergePhoenixTraderState(raw: unknown, v1Raw: unknown | null): { 
   if (enrichment.size === 0) return { traders, triggerSource: 'legacy' }
 
   const enrichedTraders = traders.map((rawTrader) => {
-    const trader = asRecord(rawTrader)
+    const trader = asRecordLoose(rawTrader)
     if (!trader) return rawTrader
 
     const traderSubaccountIndex = parseNullableInt(trader.traderSubaccountIndex) ?? 0
     const positions = Array.isArray(trader.positions)
       ? trader.positions.map((rawPosition) => {
-        const position = asRecord(rawPosition)
-        const venueSymbol = normalizeVenueSymbol(asString(position?.symbol))
+        const position = asRecordLoose(rawPosition)
+        const venueSymbol = normalizeVenueSymbol(asStringRaw(position?.symbol))
         const trigger = venueSymbol ? enrichment.get(`${traderSubaccountIndex}:${venueSymbol}`) : undefined
         if (!position || !trigger) return rawPosition
 
@@ -206,7 +206,7 @@ export function mergePhoenixTraderState(raw: unknown, v1Raw: unknown | null): { 
       })
       : trader.positions
 
-    const limitOrders = asRecord(trader.limitOrders) ? { ...asRecord(trader.limitOrders) } : {}
+    const limitOrders = asRecordLoose(trader.limitOrders) ? { ...asRecordLoose(trader.limitOrders) } : {}
     for (const [key, trigger] of enrichment.entries()) {
       const [subaccountIndex, venueSymbol] = key.split(':')
       if (Number(subaccountIndex) !== traderSubaccountIndex || trigger.syntheticOrders.length === 0) continue
@@ -214,11 +214,11 @@ export function mergePhoenixTraderState(raw: unknown, v1Raw: unknown | null): { 
       const existing = Array.isArray(limitOrders[venueSymbol]) ? limitOrders[venueSymbol] as unknown[] : []
       const existingIds = new Set(
         existing
-          .map((order) => asString(asRecord(order)?.orderSequenceNumber))
+          .map((order) => asStringRaw(asRecordLoose(order)?.orderSequenceNumber))
           .filter((id): id is string => id !== null),
       )
       const newOrders = trigger.syntheticOrders.filter((order) => {
-        const id = asString(asRecord(order)?.orderSequenceNumber)
+        const id = asStringRaw(asRecordLoose(order)?.orderSequenceNumber)
         return id === null || !existingIds.has(id)
       })
       limitOrders[venueSymbol] = [...existing, ...newOrders]

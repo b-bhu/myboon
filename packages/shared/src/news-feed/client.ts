@@ -34,6 +34,7 @@
  * See NEWS_FEED_MAX_LIMIT and the cadence note on each fetch function.
  */
 
+import { isRecord } from '../guards.js'
 import type {
   NewsFeedArticle,
   NewsFeedItem,
@@ -176,10 +177,6 @@ function buildQuery(
   if (terms.length > 0) params.set('terms', terms.join(','))
 
   return params
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function readString(value: unknown): string {
