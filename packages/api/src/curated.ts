@@ -2,7 +2,7 @@
 // Geopolitics uses curated market slugs. Sports uses supported league keys.
 //
 // Last refreshed: 2026-04-02
-// Source: Dome API, sorted by volume_1_week, filtered active (end_time > now)
+// Source: Polymarket, sorted by weekly volume, filtered active (end time in the future)
 
 // Geopolitics slugs disabled — most expired. Will refresh when we add back.
 // export const CURATED_GEOPOLITICS_SLUGS = [
@@ -31,7 +31,7 @@ export const CURATED_SLUGS = {
 }
 
 /**
- * Derive a display category from Dome market tags.
+ * Derive a display category from market tags.
  */
 export function deriveCategory(tags: string[]): string {
   const t = new Set(tags.map((s) => s.toLowerCase()))
