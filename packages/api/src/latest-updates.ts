@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { LatestUpdate, LatestUpdateSource, LatestUpdatesResponse } from '@myboon/shared/latest-updates'
+import { createSupabaseRest } from '@myboon/shared/supabase-rest'
 
 /**
  * Public read of the latest updates written by the myboon-latest-updates job (#623, D2 #633).
@@ -72,26 +73,16 @@ interface ValidUpdate {
 
 export function createLatestUpdateRoutes(config: LatestUpdateRoutesConfig): Hono {
   const app = new Hono()
-  const fetchImpl = config.fetch ?? globalThis.fetch
-  const restBaseUrl = `${config.supabaseUrl.replace(/\/$/, '')}/rest/v1`
+  // Every Supabase read in this file goes through the one shared helper (#832); all of them are atlas-schema reads.
+  const rest = createSupabaseRest({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.serviceRoleKey,
+    ...(config.fetch ? { fetch: config.fetch } : {}),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+  })
 
-  async function readRows<T>(table: string, params: URLSearchParams): Promise<T[]> {
-    const url = new URL(`${restBaseUrl}/${table}`)
-    params.forEach((value, key) => url.searchParams.append(key, value))
-    const response = await fetchImpl(url, {
-      method: 'GET',
-      headers: {
-        apikey: config.serviceRoleKey,
-        Authorization: `Bearer ${config.serviceRoleKey}`,
-        Accept: 'application/json',
-        'Accept-Profile': 'atlas',
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-    if (!response.ok) throw new Error(`Supabase read failed for ${table}: ${response.status}`)
-    const body: unknown = await response.json()
-    if (!Array.isArray(body)) throw new Error(`Supabase returned an invalid ${table} response`)
-    return body as T[]
+  function readRows<T>(table: string, params: URLSearchParams): Promise<T[]> {
+    return rest.readRows<T>(table, params, 'atlas')
   }
 
   /** `in.(...)` reads in parallel chunks; any failed chunk fails the whole read (no partial data). */
