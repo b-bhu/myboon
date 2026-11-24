@@ -28,7 +28,7 @@ export const PORTFOLIO_VIEW_STORAGE_KEY = 'wallet.portfolio.view';
  * enables the segment in WalletScreen's switch and lets parsePortfolioView
  * accept the stored value again.
  */
-export const ENABLED_PORTFOLIO_VIEWS: readonly PortfolioView[] = ['table'];
+export const ENABLED_PORTFOLIO_VIEWS: readonly PortfolioView[] = ['table', 'cards'];
 
 /**
  * Stored or raw values never select a view that cannot render: only values

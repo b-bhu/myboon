@@ -73,7 +73,7 @@ function formatUsd(value: number): string {
 }
 
 /** Signed P&L: "+$18.00" / "-$3.00"; zero is non-negative (="+$0.00"). */
-function formatPnlUsd(value: number | null): string {
+export function formatPnlUsd(value: number | null): string {
   if (value === null) return NO_DATA;
   const sign = value >= 0 ? '+' : '-';
   return `${sign}${formatUsd(Math.abs(value))}`;

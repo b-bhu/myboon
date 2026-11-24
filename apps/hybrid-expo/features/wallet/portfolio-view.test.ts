@@ -73,9 +73,10 @@ beforeEach(() => {
 });
 
 describe('parsePortfolioView', () => {
-  it('accepts the enabled view', () => {
+  it('accepts the enabled views', () => {
     const portfolioView = loadPortfolioView();
     assert.equal(portfolioView.parsePortfolioView('table'), 'table');
+    assert.equal(portfolioView.parsePortfolioView('cards'), 'cards');
   });
 
   it('falls back to table on unknown values and no value', () => {
@@ -86,12 +87,11 @@ describe('parsePortfolioView', () => {
     assert.equal(portfolioView.parsePortfolioView(null), 'table');
   });
 
-  it('falls back to table for views that exist but are disabled yet (#841, #842)', () => {
+  it('falls back to table for a view that exists but is disabled yet (#841)', () => {
     const portfolioView = loadPortfolioView();
-    // 'map' and 'cards' are real view names, so this is not a spelling
-    // check: the value is only honoured once its view is enabled.
+    // 'map' is a real view name, so this is not a spelling check: the value
+    // is only honoured once its view is enabled.
     assert.equal(portfolioView.parsePortfolioView('map'), 'table');
-    assert.equal(portfolioView.parsePortfolioView('cards'), 'table');
   });
 });
 
