@@ -7,6 +7,8 @@ import type {
   WalletLabel,
 } from './types.js'
 
+import { asRecord } from '@myboon/shared/guards'
+
 const DEFAULT_API_BASE = 'https://public-api.birdeye.so'
 const DEFAULT_CACHE_TTL_MS = 60 * 60 * 1000
 const DEFAULT_MAX_STALE_MS = 6 * 60 * 60 * 1000
@@ -95,12 +97,6 @@ function finiteNumber(value: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed
   }
   return null
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
 }
 
 function validAddress(value: unknown): value is string {

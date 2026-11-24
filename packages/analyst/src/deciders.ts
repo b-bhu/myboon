@@ -154,17 +154,17 @@ function requiredToken(envName: string): string {
 
 /** The pick answer, checked against the configured model and the case choices. */
 function mapAnswer(value: unknown, c: DecisionCase, name: string, model: string): DeciderAnswer {
-  const root = asRecord(value, 'response must be an object');
+  const root = asRecordOrThrow(value, 'response must be an object');
   if (root.model !== model) {
     throw new DeciderError('error', `${name} model mismatch: response model ${JSON.stringify(root.model ?? null)} but client pinned to ${model}`);
   }
-  const answers = asRecord(root.answers, 'response answers must be an object');
-  const pick = asRecord(answers[QUESTION_KEY], 'answers.pick must be an object');
+  const answers = asRecordOrThrow(root.answers, 'response answers must be an object');
+  const pick = asRecordOrThrow(answers[QUESTION_KEY], 'answers.pick must be an object');
   const choice = pick.choice;
   if (typeof choice !== 'string' || !c.choices.includes(choice)) {
     throw new DeciderError('error', `${name} pick.choice must be one of the case choices ${JSON.stringify(c.choices)}`);
   }
-  const rawProbabilities = asRecord(pick.probabilities, 'answers.pick.probabilities must be an object');
+  const rawProbabilities = asRecordOrThrow(pick.probabilities, 'answers.pick.probabilities must be an object');
   const probabilities: Record<string, number> = {};
   for (const [key, value] of Object.entries(rawProbabilities)) {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
@@ -199,7 +199,11 @@ function clean(text: string): string {
   return text.slice(0, 2_000);
 }
 
-function asRecord(value: unknown, message: string): Record<string, unknown> {
+/**
+ * Differs from @myboon/shared/guards asRecord: throws a DeciderError with the
+ * supplied message instead of returning null (#896).
+ */
+function asRecordOrThrow(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DeciderError('error', message);
   return value as Record<string, unknown>;
 }

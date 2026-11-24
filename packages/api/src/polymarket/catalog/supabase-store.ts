@@ -1,3 +1,4 @@
+import { isRecord } from '@myboon/shared/guards'
 import type {
   PolymarketCatalogCollectionState,
   PolymarketCatalogItem,
@@ -236,8 +237,4 @@ function mapSportsRuleConfig(value: unknown): PolymarketCatalogItem['ruleConfig'
   }
   const tagId = typeof value.tagId === 'string' && value.tagId.trim() ? value.tagId.trim() : null
   return { windowDays, limit, marketType: 'moneyline', ...(tagId ? { tagId } : {}) }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
 }

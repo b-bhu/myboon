@@ -3,8 +3,8 @@ import { OrderFlags } from '@ellipsis-labs/rise'
 import {
   asBoolean,
   asNonEmptyString,
-  asRecord,
-  asString,
+  asRecordLoose,
+  asStringRaw,
   historyLimit,
   normalizeMarketSymbol,
   normalizeVenueSymbol,
@@ -76,7 +76,7 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
       const markets = await upstream.getRawMarkets()
       const stats = await upstream.getMarketStats(
         markets.data
-          .map((market) => normalizeVenueSymbol(asString(market.symbol)))
+          .map((market) => normalizeVenueSymbol(asStringRaw(market.symbol)))
           .filter((symbol): symbol is string => symbol !== null),
       )
       const data = markets.data
@@ -143,15 +143,15 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
 
     try {
       const raw = await upstream.fetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/order-history?${params.toString()}`)
-      const rawRecord = asRecord(raw)
+      const rawRecord = asRecordLoose(raw)
       return c.json({
         venueId: 'phoenix',
         action: 'get_order_history',
         authority,
         data: Array.isArray(rawRecord?.data) ? rawRecord.data : [],
         hasMore: asBoolean(rawRecord?.hasMore) ?? false,
-        nextCursor: asString(rawRecord?.nextCursor),
-        prevCursor: asString(rawRecord?.prevCursor),
+        nextCursor: asStringRaw(rawRecord?.nextCursor),
+        prevCursor: asStringRaw(rawRecord?.prevCursor),
         raw,
       })
     } catch (err) {
@@ -178,15 +178,15 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
 
     try {
       const raw = await upstream.fetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/trades-history?${params.toString()}`)
-      const rawRecord = asRecord(raw)
+      const rawRecord = asRecordLoose(raw)
       return c.json({
         venueId: 'phoenix',
         action: 'get_trade_history',
         authority,
         data: Array.isArray(rawRecord?.data) ? rawRecord.data : [],
         hasMore: asBoolean(rawRecord?.hasMore) ?? false,
-        nextCursor: asString(rawRecord?.nextCursor),
-        prevCursor: asString(rawRecord?.prevCursor),
+        nextCursor: asStringRaw(rawRecord?.nextCursor),
+        prevCursor: asStringRaw(rawRecord?.prevCursor),
         raw,
       })
     } catch (err) {
@@ -210,15 +210,15 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
 
     try {
       const raw = await upstream.fetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/collateral-history?${params.toString()}`)
-      const rawRecord = asRecord(raw)
+      const rawRecord = asRecordLoose(raw)
       return c.json({
         venueId: 'phoenix',
         action: 'get_collateral_history',
         authority,
         data: Array.isArray(rawRecord?.data) ? rawRecord.data : [],
         hasMore: asBoolean(rawRecord?.hasMore) ?? false,
-        nextCursor: asString(rawRecord?.nextCursor),
-        prevCursor: asString(rawRecord?.prevCursor),
+        nextCursor: asStringRaw(rawRecord?.nextCursor),
+        prevCursor: asStringRaw(rawRecord?.prevCursor),
         raw,
       })
     } catch (err) {
@@ -237,12 +237,12 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
 
     try {
       const raw = await upstream.fetchJson<unknown>('/v1/invite/activate', { method: 'POST', body: parsed.body })
-      const rawRecord = asRecord(raw)
+      const rawRecord = asRecordLoose(raw)
       return c.json({
         venueId: 'phoenix',
         action: 'activate_invite',
         authority: asNonEmptyString(parsed.body.authority),
-        traderPda: asString(rawRecord?.trader_pda),
+        traderPda: asStringRaw(rawRecord?.trader_pda),
         raw,
       })
     } catch (err) {
@@ -261,12 +261,12 @@ export function createPhoenixRoutes(options: PhoenixRoutesOptions): Hono {
 
     try {
       const raw = await upstream.fetchJson<unknown>('/v1/invite/activate-with-referral', { method: 'POST', body: parsed.body })
-      const rawRecord = asRecord(raw)
+      const rawRecord = asRecordLoose(raw)
       return c.json({
         venueId: 'phoenix',
         action: 'activate_referral',
         authority: asNonEmptyString(parsed.body.authority),
-        traderPda: asString(rawRecord?.trader_pda),
+        traderPda: asStringRaw(rawRecord?.trader_pda),
         raw,
       })
     } catch (err) {

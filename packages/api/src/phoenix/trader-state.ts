@@ -1,4 +1,4 @@
-import { asRecord, parseNonNegativeInteger, parseNullableInt } from './parse.js'
+import { asRecordLoose, parseNonNegativeInteger, parseNullableInt } from './parse.js'
 import { mergePhoenixTraderState } from './triggers.js'
 import { upstreamErrorPayload, upstreamProxyStatusCode } from './upstream.js'
 import type { PhoenixUpstream } from './upstream.js'
@@ -50,8 +50,8 @@ export async function getPhoenixTraderState(
       upstream.fetchJson<unknown>(`/trader/${encodeURIComponent(authority)}/state?${params.toString()}`),
       getPhoenixTraderStateV1(upstream, authority, pdaIndex),
     ])
-    const rawRecord = asRecord(raw)
-    const v1Record = asRecord(v1Raw)
+    const rawRecord = asRecordLoose(raw)
+    const v1Record = asRecordLoose(v1Raw)
     const merged = mergePhoenixTraderState(raw, v1Raw)
     return {
       status: 200,

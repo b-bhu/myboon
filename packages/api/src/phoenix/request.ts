@@ -5,7 +5,7 @@ import type { Authority, BaseLots, Symbol as PhoenixSymbol } from '@ellipsis-lab
 import type { Context } from 'hono'
 import {
   asNonEmptyString,
-  asRecord,
+  asRecordLoose,
   isNonNegativeInteger,
   normalizeVenueSymbol,
   parseFiniteJsonNumber,
@@ -56,7 +56,7 @@ export async function readJsonRecord(c: Context): Promise<{ body: Record<string,
     return { response: c.json({ error: 'Invalid JSON body', code: 'INVALID_JSON' }, 400) }
   }
 
-  const body = !Array.isArray(parsed) ? asRecord(parsed) : null
+  const body = !Array.isArray(parsed) ? asRecordLoose(parsed) : null
   if (!body) {
     return { response: c.json({ error: 'Expected JSON object body', code: 'INVALID_JSON_OBJECT' }, 400) }
   }
@@ -93,7 +93,7 @@ export function instructionBuilderResponse(
   endpoint: string,
   raw: unknown,
 ): PhoenixInstructionBuilderResult {
-  const rawRecord = asRecord(raw)
+  const rawRecord = asRecordLoose(raw)
   const instructions = Array.isArray(raw)
     ? raw
     : (Array.isArray(rawRecord?.instructions) ? rawRecord.instructions : [])

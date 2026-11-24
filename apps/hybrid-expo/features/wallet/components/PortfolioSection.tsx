@@ -34,9 +34,16 @@
  * `portfolio-view`'s parse. Spot rows open
  * `/spot` (the venue's current profile route); app rows open theirs via
  * callbacks, like the old rows below that #770 removes.
+ *
+ * #843 keeps the table still while the sheet is dragged: every row is a `memo`
+ * component on its data props (the press handlers travel through stable
+ * dispatchers), so a drag-time render — the boundary flip, a refresh landing
+ * mid-drag, or the 30s age tick — re-renders only the rows whose displayed
+ * values changed, and the pull-to-refresh control in HomeWalletOverview is
+ * mounted only while the panel is expanded with its list at the top.
  */
 
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
@@ -209,6 +216,23 @@ export const PortfolioSection = memo(function PortfolioSection({
     void writePortfolioView(next);
   }, []);
 
+  // Press handlers travel by latest-ref (#843): the screen passes fresh
+  // closures on every render, and a memo'd row would see a new callback
+  // identity each time. Rows receive one stable dispatcher per segment that
+  // reads the newest closure here, so a drag-time re-render never rebuilds
+  // the table.
+  const openAppRef = useRef<Partial<Record<PortfolioAppKey, () => void>>>({});
+  openAppRef.current = {
+    polymarket: onOpenPolymarket,
+    phoenix: onOpenPhoenix,
+    pacifica: onOpenPacifica,
+    meteora: onOpenMeteora,
+  };
+  const openSpotRef = useRef(onOpenSpot);
+  openSpotRef.current = onOpenSpot;
+  const openAppRow = useCallback((key: PortfolioAppKey) => openAppRef.current[key]?.(), []);
+  const openSpotRow = useCallback(() => openSpotRef.current?.(), []);
+
   // A first load that failed with anything but a "not deployed" 404 shows no
   // numbers (#780): unknown is unknown, never a number — one Retry instead,
   // in the existing Portfolio area.
@@ -251,17 +275,6 @@ export const PortfolioSection = memo(function PortfolioSection({
     : null;
   const total = sumUsd([spotValue, ...PORTFOLIO_APP_KEYS.map(known)]);
 
-  // Only failed rows spin while the (single) summary call is in flight —
-  // #778 review note 3; healthy rows never do.
-  const rowSpinner = (failed: boolean) => (loading && failed ? <RetrySpinner /> : null);
-
-  const openApp: Record<PortfolioAppKey, () => void> = {
-    polymarket: onOpenPolymarket,
-    phoenix: onOpenPhoenix,
-    pacifica: onOpenPacifica,
-    meteora: onOpenMeteora,
-  };
-
   type ListRow =
     // valueUsd at top level: every variant feeds #768's topFive.
     | { kind: 'app'; appKey: PortfolioAppKey; row: AppPortfolioRow; valueUsd: number; stale: boolean }
@@ -301,6 +314,9 @@ export const PortfolioSection = memo(function PortfolioSection({
   const failedNames = state
     ? PORTFOLIO_APP_KEYS.filter((key) => state.byApp[key].status === 'unavailable').map((key) => APP_NAME[key])
     : [];
+  // The spot value dims only in the spot segment while the venue is stale —
+  // computed once so the memo'd spot row sees a plain boolean (#843).
+  const spotStale = !!(seg === 'spot' && state?.byApp.spot.status === 'stale');
 
   // Cards view (#842): the same top entries as the Table, drawn as cards. The
   // chip comes from the live summary, so a stale card (no live numbers) has none.
@@ -437,94 +453,35 @@ export const PortfolioSection = memo(function PortfolioSection({
           : top.map((entry) => {
           if (entry.kind === 'spot') {
             return (
-              <View key={`spot:${entry.row.mint}`} style={styles.row}>
-                <Pressable
-                  onPress={onOpenSpot}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open ${entry.row.symbol ?? 'token'} in Spot`}
-                  style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}
-                >
-                  <View style={styles.nameCol}>
-                    <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand.spot }]}>
-                      {entry.row.symbol ?? 'Token'}
-                    </Text>
-                  </View>
-                  <Text style={[styles.value, seg === 'spot' && state?.byApp.spot.status === 'stale' && styles.rowStaleValue]}>
-                    {formatUsd(entry.row.valueUsd)}
-                  </Text>
-                </Pressable>
-                <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
-              </View>
+              <PortfolioSpotRow
+                key={`spot:${entry.row.mint}`}
+                name={entry.row.symbol ?? 'Token'}
+                openLabel={`Open ${entry.row.symbol ?? 'token'} in Spot`}
+                valueText={formatUsd(entry.row.valueUsd)}
+                stale={spotStale}
+                onPress={openSpotRow}
+              />
             );
           }
           if (entry.kind === 'appError') {
-            const name = APP_NAME[entry.appKey];
             return (
-              <View key={`err:${entry.appKey}`} style={styles.row}>
-                <View style={[styles.rowMain, styles.nameCol]}>
-                  <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand[entry.appKey] }]}>
-                    {name}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.failLine}>
-                    {"Couldn't load · the rest are fine"}
-                  </Text>
-                </View>
-                {rowSpinner(true)}
-                <Pressable
-                  onPress={retry}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Retry ${name}`}
-                  hitSlop={8}
-                  style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
-                >
-                  <Text style={styles.retryLabel}>Retry</Text>
-                </Pressable>
-              </View>
+              <PortfolioAppErrorRow key={`err:${entry.appKey}`} appKey={entry.appKey} spin={loading} retry={retry} />
             );
           }
-          const name = APP_NAME[entry.appKey];
           return (
-            <View key={`app:${entry.appKey}`} style={styles.row}>
-              <Pressable
-                onPress={openApp[entry.appKey]}
-                accessibilityRole="button"
-                accessibilityLabel={`Open ${name} portfolio`}
-                style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}
-              >
-                <View style={styles.nameCol}>
-                  <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand[entry.appKey] }]}>
-                    {name}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.line}>{entry.row.summaryLine}</Text>
-                </View>
-                <View style={styles.valueCol}>
-                  <Text style={[styles.value, entry.stale && styles.rowStaleValue]}>
-                    {formatUsd(entry.row.valueUsd)}
-                  </Text>
-                  {entry.stale ? (
-                    <View style={styles.ageRow}>
-                      {rowSpinner(true)}
-                      <Text style={styles.ageLabel}>{ageLabel(state?.byApp[entry.appKey].asOf ?? null)}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              </Pressable>
-              {entry.stale ? (
-                <View style={styles.retryCol}>
-                  <Pressable
-                    onPress={retry}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Retry ${name}`}
-                    hitSlop={8}
-                    style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
-                  >
-                    <Text style={styles.retryLabel}>Retry</Text>
-                  </Pressable>
-                </View>
-              ) : (
-                <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
-              )}
-            </View>
+            <PortfolioAppRow
+              key={`app:${entry.appKey}`}
+              appKey={entry.appKey}
+              summaryLine={entry.row.summaryLine}
+              valueText={formatUsd(entry.row.valueUsd)}
+              stale={entry.stale}
+              // The freshness label ticks with the 30s age tick, so this
+              // string — not the row object — is what invalidates the memo.
+              ageText={ageLabel(state?.byApp[entry.appKey].asOf ?? null)}
+              spin={loading}
+              onOpen={openAppRow}
+              retry={retry}
+            />
           );
         })}
         {display !== null && list.length === 0 && !showSkeletons ? (
@@ -550,9 +507,151 @@ export const PortfolioSection = memo(function PortfolioSection({
   );
 });
 
+/**
+ * One table row, memo'd on its data only (#843): while the sheet is dragged
+ * nothing here re-renders, and a refresh or the age tick that lands
+ * mid-drag re-renders just the rows whose own displayed values changed.
+ * App names come from APP_NAME, and the press handlers are the section's
+ * stable dispatchers, so a row's props stay primitives or stable identity.
+ */
+const PortfolioSpotRow = memo(function PortfolioSpotRow({
+  name,
+  openLabel,
+  valueText,
+  stale,
+  onPress,
+}: {
+  name: string;
+  openLabel: string;
+  valueText: string;
+  stale: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <View style={styles.row}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={openLabel}
+        style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}
+      >
+        <View style={styles.nameCol}>
+          <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand.spot }]}>
+            {name}
+          </Text>
+        </View>
+        <Text style={[styles.value, stale && styles.rowStaleValue]}>{valueText}</Text>
+      </Pressable>
+      <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+    </View>
+  );
+});
+
+const PortfolioAppErrorRow = memo(function PortfolioAppErrorRow({
+  appKey,
+  spin,
+  retry,
+}: {
+  appKey: PortfolioAppKey;
+  spin: boolean;
+  retry: () => void;
+}) {
+  const name = APP_NAME[appKey];
+  return (
+    <View style={styles.row}>
+      <View style={[styles.rowMain, styles.nameCol]}>
+        <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand[appKey] }]}>
+          {name}
+        </Text>
+        {/* #862: a failing app row always shows the frame retry line. */}
+        <Text numberOfLines={1} style={styles.failLine}>
+          {"Couldn't load · the rest are fine"}
+        </Text>
+      </View>
+      {spin ? <RetrySpinner /> : null}
+      <Pressable
+        onPress={retry}
+        accessibilityRole="button"
+        accessibilityLabel={`Retry ${name}`}
+        hitSlop={8}
+        style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
+      >
+        <Text style={styles.retryLabel}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+});
+
+const PortfolioAppRow = memo(function PortfolioAppRow({
+  appKey,
+  summaryLine,
+  valueText,
+  stale,
+  ageText,
+  spin,
+  onOpen,
+  retry,
+}: {
+  appKey: PortfolioAppKey;
+  summaryLine: string;
+  valueText: string;
+  stale: boolean;
+  ageText: string;
+  spin: boolean;
+  onOpen: (appKey: PortfolioAppKey) => void;
+  retry: () => void;
+}) {
+  const name = APP_NAME[appKey];
+  return (
+    <View style={styles.row}>
+      <Pressable
+        onPress={() => onOpen(appKey)}
+        accessibilityRole="button"
+        accessibilityLabel={`Open ${name} portfolio`}
+        style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}
+      >
+        <View style={styles.nameCol}>
+          <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand[appKey] }]}>
+            {name}
+          </Text>
+          {/* The design's second summary line (Cash/Bets/P&L, Equity/open/P&L,
+              Pools/unclaimed — frame "Slide-up expanded"). */}
+          <Text numberOfLines={1} style={styles.line}>{summaryLine}</Text>
+        </View>
+        <View style={styles.valueCol}>
+          <Text style={[styles.value, stale && styles.rowStaleValue]}>{valueText}</Text>
+          {stale ? (
+            <View style={styles.ageRow}>
+              {/* Only failed rows spin while the (single) summary call is in
+                  flight — #778 review note 3; healthy rows never do. */}
+              {spin ? <RetrySpinner /> : null}
+              <Text style={styles.ageLabel}>{ageText}</Text>
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+      {stale ? (
+        <View style={styles.retryCol}>
+          <Pressable
+            onPress={retry}
+            accessibilityRole="button"
+            accessibilityLabel={`Retry ${name}`}
+            hitSlop={8}
+            style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
+          >
+            <Text style={styles.retryLabel}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+      )}
+    </View>
+  );
+});
+
 /** One #858 loading row, as the frame's skRow draws it: a square icon block,
  * two text bars on the left and two short bars on the right — never a spinner. */
-function PortfolioSkeletonRow() {
+const PortfolioSkeletonRow = memo(function PortfolioSkeletonRow() {
   return (
     <View style={styles.row}>
       <View style={[styles.skelIcon, styles.skeleton]} />
@@ -566,7 +665,7 @@ function PortfolioSkeletonRow() {
       </View>
     </View>
   );
-}
+});
 
 /** The unused mix bar from WalletHero, reused: brand-colored flex segments. */
 function AllocationBar({
