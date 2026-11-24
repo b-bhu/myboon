@@ -6,7 +6,7 @@ import { createCalendarRoutes } from '../calendar/routes.js'
 import { createMarketHeatmapRoutes } from '../market-heatmap/routes.js'
 import { MarketHeatmapService } from '../market-heatmap/service.js'
 import { createWalletActivityRoutes, createWalletActivityService } from '../wallet-activity/index.js'
-import { clobRoutes } from '../clob.js'
+import { createClobRoutes } from '../clob.js'
 import { createInternalPolymarketCatalogRoutes } from '../internal/polymarket-catalog.js'
 import { createLatestUpdateRoutes } from '../latest-updates.js'
 import { pacificaRoutes } from '../pacifica.js'
@@ -114,7 +114,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
     serviceRoleKey: config.supabaseServiceRoleKey,
   }))
 
-  app.route('/clob', clobRoutes)
+  app.route('/clob', createClobRoutes())
   app.route('/calendar', createCalendarRoutes({
     enabled: config.calendarBackpackEnabled,
     supabaseUrl: config.supabaseUrl,
