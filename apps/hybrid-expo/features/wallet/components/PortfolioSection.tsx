@@ -56,6 +56,12 @@ import {
   type PortfolioAppKey,
   type SpotPortfolioRow,
 } from '@/features/wallet/wallet-portfolio.rows';
+import {
+  METEORA_MARK_SVG,
+  PACIFICA_MARK_SVG,
+  PHOENIX_MARK_SVG,
+  POLYMARKET_MARK_SVG,
+} from '@/features/home/marketBrandAssets';
 import { PortfolioCards, type PortfolioCardItem } from '@/features/wallet/components/PortfolioCards';
 import { pnlChipText, portfolioCardPnl } from '@/features/wallet/portfolio-cards';
 import {
@@ -71,6 +77,14 @@ const APP_NAME: Record<PortfolioAppKey, string> = {
   phoenix: 'Phoenix',
   pacifica: 'Pacifica',
   meteora: 'Meteora',
+};
+
+/** The apps' brand marks (the Home screen's), drawn on the Cards view (#842). */
+const APP_MARK_SVG: Record<PortfolioAppKey, string> = {
+  polymarket: POLYMARKET_MARK_SVG,
+  phoenix: PHOENIX_MARK_SVG,
+  pacifica: PACIFICA_MARK_SVG,
+  meteora: METEORA_MARK_SVG,
 };
 
 /** #858: the loading table shows five skRow-shaped placeholders; stable keys. */
@@ -296,6 +310,10 @@ export const PortfolioSection = memo(function PortfolioSection({
       return {
         key: `spot:${entry.row.mint}`,
         name: entry.row.symbol ?? 'Token',
+        mark: {
+          uri: display?.apps.spot.summary?.tokens.find((token) => token.mint === entry.row.mint)?.iconUrl ?? null,
+          letter: (entry.row.symbol ?? '?').trim().charAt(0).toUpperCase() || '?',
+        },
         color: tokens.walletBrand.spot,
         state: stale ? 'stale' : 'ok',
         value: formatUsd(entry.row.valueUsd),
@@ -315,6 +333,7 @@ export const PortfolioSection = memo(function PortfolioSection({
     return {
       key: `app:${entry.appKey}`,
       name,
+      mark: { xml: APP_MARK_SVG[entry.appKey] },
       color: tokens.walletBrand[entry.appKey],
       state: failed ? 'error' : stale ? 'stale' : 'ok',
       value: entry.kind === 'app' ? formatUsd(entry.row.valueUsd) : '',
@@ -332,7 +351,7 @@ export const PortfolioSection = memo(function PortfolioSection({
     <View style={styles.section}>
       <View style={styles.headerRow}>
         <Text accessibilityRole="header" style={styles.title}>Portfolio</Text>
-        {isMock ?<Text style={styles.demoTag}>demo data</Text> : null}
+        {isMock ? <Text style={styles.demoTag}>demo data</Text> : null}
         <ViewSwitch view={view} onSelect={selectView} />
       </View>
 

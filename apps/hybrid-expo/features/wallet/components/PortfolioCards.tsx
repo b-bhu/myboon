@@ -7,13 +7,18 @@
  */
 
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SvgXml } from 'react-native-svg';
 
 import { semantic, tokens } from '@/theme';
+
+/** The card's 26px mark: an app's brand SVG, or a spot token's icon (letter if none). */
+export type PortfolioCardMark = { xml: string } | { uri: string | null; letter: string };
 
 export interface PortfolioCardItem {
   key: string;
   name: string;
+  mark: PortfolioCardMark;
   /** Brand colour of the name, as in the Table rows. */
   color: string;
   state: 'ok' | 'stale' | 'error';
@@ -67,6 +72,7 @@ export function PortfolioCards({
                 accessibilityLabel={item.accessibilityLabel}
                 style={({ pressed }) => [styles.body, pressed && styles.pressed]}
               >
+                <CardMark mark={item.mark} color={item.color} />
                 <Text numberOfLines={1} style={[styles.name, { color: item.color }]}>{item.name}</Text>
                 <Text style={[styles.value, item.state !== 'ok' && styles.dimValue]}>
                   {item.state === 'error' ? '—' : item.value}
@@ -110,6 +116,26 @@ export function PortfolioCards({
   );
 }
 
+/** The frame's ".mk": 26px tile on the card fill with a hairline edge, the mark at 62%. */
+function CardMark({ mark, color }: { mark: PortfolioCardMark; color: string }) {
+  if ('xml' in mark) {
+    return (
+      <View style={styles.mark}>
+        <SvgXml xml={mark.xml} width={16} height={16} />
+      </View>
+    );
+  }
+  return (
+    <View style={[styles.mark, styles.markRound]}>
+      {mark.uri ? (
+        <Image source={{ uri: mark.uri }} style={styles.markImage} />
+      ) : (
+        <Text style={[styles.markLetter, { color }]}>{mark.letter}</Text>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   // The frame's .grid3 (3 columns, gap 8): thirds with 4px cell padding and
   // a matching negative margin, since RN has no grid gap in percentages.
@@ -128,7 +154,21 @@ const styles = StyleSheet.create({
   },
   body: { gap: 6 },
   pressed: { opacity: 0.82 },
-  name: { fontSize: 12.5, fontWeight: '800' },
+  mark: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: semantic.border.muted,
+    backgroundColor: semantic.background.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  markRound: { borderRadius: 13 },
+  markImage: { width: '100%', height: '100%' },
+  markLetter: { fontSize: 12, fontWeight: '700' },
+  name: { fontSize: 12.5, fontWeight: '500' },
   value: { color: semantic.text.primary, fontFamily: 'monospace', fontSize: 13, fontWeight: '800' },
   dimValue: { opacity: 0.65 },
   chip: { fontFamily: 'monospace', fontSize: 11 },
