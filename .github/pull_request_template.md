@@ -3,9 +3,11 @@ Closes #
 
 ## What changed
 
-## UI changes
-Before/after screenshots:
-Matching mock in `docs/mockups/`:
+## Not in this unit
+<!-- Leftovers from the issue or mock frame that this PR does not do, each with its follow-up issue. "none" if nothing. -->
+
+## Issue-vs-frame calls
+<!-- UI only: where the issue and the mock disagreed, which one you followed and why. "none" if nothing. -->
 
 ## Test evidence
 Commands run and output:
