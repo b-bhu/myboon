@@ -1,16 +1,6 @@
 import { Hono } from 'hono'
 import type { SupportedSport } from '../../curated.js'
 import {
-  deriveMatchTitle,
-  domeEndTimeToIso,
-  domeGetMarketPrice,
-  domeGetMarketsByEventSlug,
-  domeGetSportMarkets,
-  domeGroupMatchOutcomes,
-  domeMarketToClobTokenIds,
-  domeOutcomeLabel,
-} from '../../dome.js'
-import {
   gammaFetch,
   gammaFetchCached,
   getLivePrice,
@@ -19,7 +9,6 @@ import {
   parseNullableString,
   parseStringArray,
   registerTokenIds,
-  withDomeFallback,
 } from '../read/market-read.js'
 import {
   deriveMatchStatus,
@@ -43,8 +32,8 @@ export function createPolymarketSportsRoutes(): Hono {
       return c.json({ error: `Unsupported sport. Supported: ${Object.keys(SPORT_SERIES).join(', ')}` }, 400)
     }
 
-    // Shared mapper: normalises an event (from either Dome or Gamma) into the response shape
-    function mapEventToGame(e: Record<string, unknown>, _source: 'dome' | 'gamma') {
+    // Maps a Gamma event into the response shape
+    function mapEventToGame(e: Record<string, unknown>, _source: 'gamma') {
       const markets = (e.markets ?? []) as Record<string, unknown>[]
 
       const outcomes = markets.map((m) => {
@@ -76,62 +65,13 @@ export function createPolymarketSportsRoutes(): Hono {
     }
 
     try {
-      const games = await withDomeFallback<unknown[]>(
-        `sports/list/${sport}`,
-        async () => {
-          // Dome: flat list of outcome markets → group by event_slug → fetch prices
-          const allMarkets = await domeGetSportMarkets(sport)
-          const now = Math.floor(Date.now() / 1000)
-          const matchGroups = domeGroupMatchOutcomes(allMarkets)
-            // Exclude matches that have already ended
-            .filter((g) => !g.endTime || g.endTime > now)
-
-          // Fetch all YES token prices in one parallel batch
-          const allTokenIds = matchGroups.flatMap((g) =>
-            g.outcomes.map((m) => m.side_a?.id).filter(Boolean) as string[]
-          )
-          const priceResults = await Promise.allSettled(
-            allTokenIds.map((id) => domeGetMarketPrice(id))
-          )
-          const priceMap = new Map<string, number | null>()
-          allTokenIds.forEach((id, i) => {
-            const r = priceResults[i]
-            priceMap.set(id, r.status === 'fulfilled' ? r.value : null)
-          })
-
-          return matchGroups.map((g) => {
-            const outcomes = g.outcomes.map((m) => ({
-              label: domeOutcomeLabel(m),
-              price: priceMap.get(m.side_a?.id ?? '') ?? null,
-              conditionId: m.condition_id ?? null,
-              clobTokenIds: domeMarketToClobTokenIds(m),
-            }))
-
-            return {
-              slug: g.eventSlug,
-              title: deriveMatchTitle(g.outcomes),
-              sport,
-              startDate: g.gameStartTime ?? null,
-              endDate: domeEndTimeToIso(g.endTime),
-              image: g.image ?? null,
-              active: true,
-              volume24h: g.volume1Week,
-              liquidity: null,
-              negRisk: true,
-              outcomes,
-            }
-          })
-        },
-        async () => {
-          const res = await gammaFetch(`events?series_id=${seriesId}&active=true&closed=false&limit=20`)
-          if (!res.ok) throw new Error(`Gamma API ${res.status} for sport ${sport}`)
-          const raw = await res.json()
-          if (!Array.isArray(raw)) throw new Error(`Gamma unexpected response for sport ${sport}`)
-          return (raw as Record<string, unknown>[])
-            .filter((e) => !String(e.slug ?? '').endsWith('-more-markets'))
-            .map((e) => mapEventToGame(e, 'gamma'))
-        },
-      )
+      const res = await gammaFetch(`events?series_id=${seriesId}&active=true&closed=false&limit=20`)
+      if (!res.ok) throw new Error(`Gamma API ${res.status} for sport ${sport}`)
+      const raw = await res.json()
+      if (!Array.isArray(raw)) throw new Error(`Gamma unexpected response for sport ${sport}`)
+      const games = (raw as Record<string, unknown>[])
+        .filter((e) => !String(e.slug ?? '').endsWith('-more-markets'))
+        .map((e) => mapEventToGame(e, 'gamma'))
 
       return c.json(games)
     } catch (err) {
@@ -254,7 +194,7 @@ export function createPolymarketSportsRoutes(): Hono {
       }
     }
 
-    // Shared outcome mapper — same shape from Dome or Gamma events
+    // Maps a Gamma market into the outcome shape
     function mapOutcome(m: Record<string, unknown>) {
       const outcomePrices = parseStringArray(m.outcomePrices)
       const clobTokenIds = parseStringArray(m.clobTokenIds)
@@ -273,136 +213,75 @@ export function createPolymarketSportsRoutes(): Hono {
     }
 
     try {
-      const detail = await withDomeFallback(
-        `sports/detail/${sport}/${slug}`,
-        async () => {
-          // Dome: fetch all outcome markets for this event slug, then get prices
-          if (!slug.startsWith(`${sport}-`)) {
-            throw new Error(`Dome: slug ${slug} does not match sport ${sport}`)
-          }
+      const res = await gammaFetch(`events?slug=${encodeURIComponent(slug)}`)
+      if (!res.ok) throw new Error(`Gamma API ${res.status} for slug ${slug}`)
 
-          const domeMarkets = await domeGetMarketsByEventSlug(slug)
-          if (!domeMarkets.length) throw new Error(`Dome: no markets found for event ${slug}`)
+      const events = await res.json() as Record<string, unknown>[]
+      if (!Array.isArray(events) || events.length === 0) throw new Error('not found')
 
-          // Parallel price fetches for all YES tokens
-          const priceResults = await Promise.allSettled(
-            domeMarkets.map((m) => domeGetMarketPrice(m.side_a?.id ?? ''))
-          )
-          const prices = priceResults.map((r) => (r.status === 'fulfilled' ? r.value : null))
+      const e = events[0]
+      const eventSlug = String(e.slug ?? '')
+      const eventSeries = Array.isArray(e.series) ? e.series : []
+      const belongsToSeries = eventSeries.some((row) => {
+        if (!row || typeof row !== 'object') return false
+        const id = (row as Record<string, unknown>).id
+        return String(id) === seriesId
+      })
 
-          const outcomes = domeMarkets.map((m, i) => ({
-            label: domeOutcomeLabel(m),
-            question: m.title,
-            price: prices[i],
-            conditionId: m.condition_id ?? null,
-            clobTokenIds: domeMarketToClobTokenIds(m),
-            liquidity: null,
-            volume24h: m.volume_1_week ?? null,
-            bestBid: null,
-            bestAsk: null,
-            acceptingOrders: m.status === 'open' ? true : false,
-          }))
+      const slugPrefix = sport === 'ipl' ? 'cricipl-' : `${sport}-`
+      if (!eventSlug.startsWith(slugPrefix) && !belongsToSeries) throw new Error('not found')
 
-          const first = domeMarkets[0]
-          return {
-            slug,
-            title: deriveMatchTitle(domeMarkets),
-            description: first.description ?? null,
-            sport,
-            status: deriveMatchStatus(
-              first.game_start_time ?? null,
-              first.status === 'open',
-              first.status === 'closed',
-              outcomes.map((outcome) => outcome.price),
-              sport,
-              null,
-              undefined,
-              slug,
-            ),
-            gameStartTime: first.game_start_time ?? null,
-            startDate: first.game_start_time ?? null,
-            endDate: domeEndTimeToIso(first.end_time),
-            image: first.image ?? null,
-            active: first.status === 'open',
-            negRisk: true,
-            volume24h: domeMarkets.reduce((sum, m) => sum + (m.volume_1_week ?? 0), 0),
-            liquidity: null,
-            teams: [],
-            outcomes,
-          }
-        },
-        async () => {
-          const res = await gammaFetch(`events?slug=${encodeURIComponent(slug)}`)
-          if (!res.ok) throw new Error(`Gamma API ${res.status} for slug ${slug}`)
+      const markets = (e.markets ?? []) as Record<string, unknown>[]
 
-          const events = await res.json() as Record<string, unknown>[]
-          if (!Array.isArray(events) || events.length === 0) throw new Error('not found')
+      // IPL: single market with outcomes embedded as string array — extract from main market
+      // EPL/UCL: each market = one outcome, label from groupItemTitle
+      let outcomes: ReturnType<typeof mapOutcome>[]
+      if (sport === 'ipl') {
+        const mainMarket = markets.find((m) => m.slug === slug) ?? markets[0]
+        if (!mainMarket) throw new Error('not found')
+        const outcomeLabels = typeof mainMarket.outcomes === 'string'
+          ? JSON.parse(mainMarket.outcomes as string) as string[]
+          : Array.isArray(mainMarket.outcomes) ? mainMarket.outcomes as string[] : []
+        const outcomePrices = parseStringArray(mainMarket.outcomePrices)
+        const clobTokenIds = parseStringArray(mainMarket.clobTokenIds)
+        outcomes = outcomeLabels.map((label, idx) => ({
+          label,
+          question: mainMarket.question ?? null,
+          price: parseNullableNumber(outcomePrices[idx]),
+          conditionId: parseNullableString(mainMarket.conditionId ?? mainMarket.condition_id),
+          clobTokenIds: clobTokenIds[idx] ? [clobTokenIds[idx]] : [],
+          liquidity: mainMarket.liquidityNum ?? null,
+          volume24h: mainMarket.volume24hr ?? null,
+          bestBid: mainMarket.bestBid ?? null,
+          bestAsk: mainMarket.bestAsk ?? null,
+          acceptingOrders: mainMarket.acceptingOrders ?? null,
+        }))
+      } else {
+        outcomes = markets.map(mapOutcome)
+      }
 
-          const e = events[0]
-          const eventSlug = String(e.slug ?? '')
-          const eventSeries = Array.isArray(e.series) ? e.series : []
-          const belongsToSeries = eventSeries.some((row) => {
-            if (!row || typeof row !== 'object') return false
-            const id = (row as Record<string, unknown>).id
-            return String(id) === seriesId
-          })
-
-          const slugPrefix = sport === 'ipl' ? 'cricipl-' : `${sport}-`
-          if (!eventSlug.startsWith(slugPrefix) && !belongsToSeries) throw new Error('not found')
-
-          const markets = (e.markets ?? []) as Record<string, unknown>[]
-
-          // IPL: single market with outcomes embedded as string array — extract from main market
-          // EPL/UCL: each market = one outcome, label from groupItemTitle
-          let outcomes: ReturnType<typeof mapOutcome>[]
-          if (sport === 'ipl') {
-            const mainMarket = markets.find((m) => m.slug === slug) ?? markets[0]
-            if (!mainMarket) throw new Error('not found')
-            const outcomeLabels = typeof mainMarket.outcomes === 'string'
-              ? JSON.parse(mainMarket.outcomes as string) as string[]
-              : Array.isArray(mainMarket.outcomes) ? mainMarket.outcomes as string[] : []
-            const outcomePrices = parseStringArray(mainMarket.outcomePrices)
-            const clobTokenIds = parseStringArray(mainMarket.clobTokenIds)
-            outcomes = outcomeLabels.map((label, idx) => ({
-              label,
-              question: mainMarket.question ?? null,
-              price: parseNullableNumber(outcomePrices[idx]),
-              conditionId: parseNullableString(mainMarket.conditionId ?? mainMarket.condition_id),
-              clobTokenIds: clobTokenIds[idx] ? [clobTokenIds[idx]] : [],
-              liquidity: mainMarket.liquidityNum ?? null,
-              volume24h: mainMarket.volume24hr ?? null,
-              bestBid: mainMarket.bestBid ?? null,
-              bestAsk: mainMarket.bestAsk ?? null,
-              acceptingOrders: mainMarket.acceptingOrders ?? null,
-            }))
-          } else {
-            outcomes = markets.map(mapOutcome)
-          }
-
-          const featured = mapGammaEventToFeaturedMarket(e, {
-            category: 'sports',
-            sport,
-            mainMoneylineOnly: true,
-          })
-          return {
-            slug: e.slug,
-            title: e.title,
-            description: e.description ?? null,
-            sport,
-            status: featured?.status ?? 'upcoming',
-            gameStartTime: featured?.gameStartTime ?? null,
-            startDate: e.startDate ?? null,
-            endDate: e.endDate ?? null,
-            image: e.image ?? null,
-            active: e.active ?? null,
-            negRisk: e.negRisk ?? false,
-            volume24h: e.volume24hr ?? null,
-            liquidity: e.liquidity ?? null,
-            teams: featured?.teams ?? [],
-            outcomes,
-          }
-        },
-      )
+      const featured = mapGammaEventToFeaturedMarket(e, {
+        category: 'sports',
+        sport,
+        mainMoneylineOnly: true,
+      })
+      const detail = {
+        slug: e.slug,
+        title: e.title,
+        description: e.description ?? null,
+        sport,
+        status: featured?.status ?? 'upcoming',
+        gameStartTime: featured?.gameStartTime ?? null,
+        startDate: e.startDate ?? null,
+        endDate: e.endDate ?? null,
+        image: e.image ?? null,
+        active: e.active ?? null,
+        negRisk: e.negRisk ?? false,
+        volume24h: e.volume24hr ?? null,
+        liquidity: e.liquidity ?? null,
+        teams: featured?.teams ?? [],
+        outcomes,
+      }
 
       // Override stale prices with live CLOB midpoints
       const detailObj = detail as Record<string, unknown>

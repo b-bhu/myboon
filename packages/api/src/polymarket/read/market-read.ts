@@ -1,5 +1,3 @@
-import { isDomeAvailable } from '../../dome.js'
-
 const GAMMA_BASE = 'https://gamma-api.polymarket.com'
 const CLOB_BASE = process.env.CLOB_HOST || 'https://clob.polymarket.com'
 
@@ -201,20 +199,4 @@ export function parseNullableString(input: unknown): string | null {
 export function normalizeSoccerOutcomeLabel(input: unknown): string {
   const label = String(input ?? '').trim()
   return label.startsWith('Draw ') ? 'Draw' : label
-}
-
-// --- dome fallback wrapper ---
-
-export async function withDomeFallback<T>(
-  label: string,
-  domeFn: () => Promise<T>,
-  gammaFn: () => Promise<T>,
-): Promise<T> {
-  if (!isDomeAvailable()) return gammaFn()
-  try {
-    return await domeFn()
-  } catch (err) {
-    console.warn(`[api] Dome failed for ${label}, falling back to Gamma:`, err instanceof Error ? err.message : err)
-    return gammaFn()
-  }
 }
