@@ -2,8 +2,8 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import type { StoryMarket } from '@myboon/shared/stories'
 import { createSupabaseRest } from '@myboon/shared/supabase-rest'
-import type { HyperliquidQuoteMap, HyperliquidQuotes } from './hyperliquid.js'
-import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from './hyperliquid-names.js'
+import type { HyperliquidQuoteMap, HyperliquidQuotes } from '../hyperliquid/prices.js'
+import { hyperliquidDisplayName, hyperliquidDisplaySymbol } from '../hyperliquid/names.js'
 
 // Atlas Feed: how many topics the stories list returns (two full 10-tile mosaic pages) (#797).
 const MAX_ATLAS_STORIES = 20

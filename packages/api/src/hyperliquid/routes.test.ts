@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHyperliquidPrices, parseCandleCount } from './hyperliquid.js'
-import { createHyperliquidRoutes } from './hyperliquid-routes.js'
+import { createHyperliquidPrices, parseCandleCount } from './prices.js'
+import { createHyperliquidRoutes } from './routes.js'
 
 const T0 = Date.parse('2026-11-20T10:00:00.000Z')
 const HOUR_MS = 60 * 60 * 1000

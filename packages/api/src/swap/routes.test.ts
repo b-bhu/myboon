@@ -8,9 +8,9 @@ import {
   createMemorySwapExecutionStore,
   createSwapRoutes,
   type SwapIdentityService,
-} from './swap.js'
-import { createSqliteSwapExecutionStore } from './swap/store.js'
-import type { TokenIdentity } from './tokens/types.js'
+} from './routes.js'
+import { createSqliteSwapExecutionStore } from './store.js'
+import type { TokenIdentity } from '../tokens/types.js'
 
 const SOL = 'So11111111111111111111111111111111111111112'
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'

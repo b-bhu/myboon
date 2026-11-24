@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { Hono } from 'hono'
 import type { LatestUpdatesResponse } from '@myboon/shared/latest-updates'
-import { createLatestUpdateRoutes, pickImageUrl, safeImageUrl } from './latest-updates.js'
-import { createStoryRoutes } from './stories.js'
+import { createLatestUpdateRoutes, pickImageUrl, safeImageUrl } from './routes.js'
+import { createStoryRoutes } from '../stories/routes.js'
 
 type Row = Record<string, unknown>
 interface Db {
@@ -449,7 +449,7 @@ test('/stories and /stories/:slug are unchanged and never touch the latest-updat
 })
 
 test('create-app mounts /latest-updates and leaves the /stories mount as it was', () => {
-  const source = readFileSync(new URL('./bootstrap/create-app.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../bootstrap/create-app.ts', import.meta.url), 'utf8')
   assert.match(source, /app\.route\('\/latest-updates', createLatestUpdateRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*\}\)\)/)
   assert.match(source, /app\.route\('\/stories', createStoryRoutes\(\{\s*supabaseUrl: config\.supabaseUrl,\s*serviceRoleKey: config\.supabaseServiceRoleKey,\s*prices: hyperliquidPrices,\s*\}\)\)/)
   // #691: /market/hyperliquid serves the same shared price instance /stories receives.

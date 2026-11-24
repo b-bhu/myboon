@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { SupportedSport } from '../../curated.js'
+import type { SupportedSport } from '../curated.js'
 import {
   gammaFetch,
   gammaFetchCached,

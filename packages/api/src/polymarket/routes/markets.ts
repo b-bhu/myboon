@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { CURATED_GEOPOLITICS_SLUGS } from '../../curated.js'
+import { CURATED_GEOPOLITICS_SLUGS } from '../curated.js'
 import {
   clobFetch,
   fetchBuyPricesForTokenIds,

@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import { assertSolanaAddress } from '@myboon/shared/spot'
-import type { TokenIdentity } from './tokens/types.js'
-import { resolveRef, warmMintIdentities } from './tokens/identity-service.js'
+import type { TokenIdentity } from '../tokens/types.js'
+import { resolveRef, warmMintIdentities } from '../tokens/identity-service.js'
 import {
   createMemorySwapExecutionStore,
   type SwapExecutionRecord,
   type SwapExecutionStore,
-} from './swap/store.js'
+} from './store.js'
 
 const DEFAULT_JUP_API_BASE = 'https://api.jup.ag'
 const REQUEST_TIMEOUT_MS = 10_000

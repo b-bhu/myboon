@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { StoryMarket } from '@myboon/shared/stories'
-import type { HyperliquidQuotes } from './hyperliquid.js'
-import { createStoryRoutes, storySummary } from './stories.js'
+import type { HyperliquidQuotes } from '../hyperliquid/prices.js'
+import { createStoryRoutes, storySummary } from './routes.js'
 
 const entityIds = [
   '00000000-0000-4000-8000-000000000001',

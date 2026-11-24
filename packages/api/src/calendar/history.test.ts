@@ -4,7 +4,7 @@ import {
   CalendarHistoryEntityError, CalendarHistoryParamError, CalendarHistoryUnavailableError,
   createCalendarHistory, type CalendarHistoryPrices, type CalendarHistoryReader,
 } from './history.js'
-import { createHyperliquidPrices } from '../hyperliquid.js'
+import { createHyperliquidPrices } from '../hyperliquid/prices.js'
 import type { MarketCandle } from '@myboon/shared/stories'
 
 const HOUR_MS = 3_600_000
