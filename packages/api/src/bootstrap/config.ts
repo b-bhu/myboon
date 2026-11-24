@@ -44,6 +44,11 @@ export type ApiConfig = {
   polymarketBuilderApiKey?: string
   polymarketBuilderSecret?: string
   polymarketBuilderPassphrase?: string
+  /** PACIFICA_API_BASE / PACIFICA_ICON_BASE: unset or empty keeps the Pacifica defaults. */
+  pacificaApiBase?: string
+  pacificaIconBase?: string
+  /** HELIUS_RPC_URL as set, for /spot; unlike solanaRpcUrl it has no SOLANA_RPC_URL fallback. */
+  heliusRpcUrl?: string
   /** Relay's wallet Move key, read from RELAY_API_KEY; optional so a missing key degrades instead of stopping the API. */
   relayApiKey?: string
   swapPriorityFeeMaxLamports?: string
@@ -149,6 +154,9 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     polymarketBuilderApiKey: env.POLYMARKET_BUILDER_API_KEY,
     polymarketBuilderSecret: env.POLYMARKET_BUILDER_SECRET,
     polymarketBuilderPassphrase: env.POLYMARKET_BUILDER_PASSPHRASE,
+    pacificaApiBase: env.PACIFICA_API_BASE,
+    pacificaIconBase: env.PACIFICA_ICON_BASE,
+    heliusRpcUrl: env.HELIUS_RPC_URL,
     relayApiKey,
     swapPriorityFeeMaxLamports: priorityFee,
     swapSqlitePath: env.SWAP_SQLITE_PATH?.trim() || '.data/swap.sqlite',

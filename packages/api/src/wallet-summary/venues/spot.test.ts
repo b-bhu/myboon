@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-// spot.ts reads HELIUS_RPC_URL at module load time (same setup as
-// src/spot.test.ts) — set a value before importing; the tests below fake
-// globalThis.fetch, so the value only needs to exist.
-process.env.HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || 'https://example.test/helius'
+import { configureSpotBalances, createSpotBalances, fetchWalletBalances } from '../../spot/balances.js'
+
+// The venue reads through the shared balances instance createApp installs
+// (#831); install one here — the tests below fake globalThis.fetch, so the
+// URL only needs to exist.
+configureSpotBalances(createSpotBalances({ heliusRpcUrl: 'https://example.test/helius' }))
 
 const { spotVenue } = await import('./spot.js')
-const { fetchWalletBalances } = await import('../../spot.js')
 
 // Each test uses its own wallet address so the module-level balances cache
 // (keyed by wallet) cannot leak state between tests in this process.

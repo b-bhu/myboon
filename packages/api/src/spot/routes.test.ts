@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Hono } from 'hono'
 
-// spot.ts reads HELIUS_RPC_URL at module load time — set a dummy value
-// before importing so requests reach the (mocked) fetch call instead of
-// short-circuiting on "not configured".
-process.env.HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || 'https://example.test/helius'
+import { createSpotRoutes } from './routes.js'
 
-const { spotRoutes } = await import('./spot.js')
+// createSpotRoutes takes the Helius URL as an option (#831) — pass a dummy
+// value so requests reach the (mocked) fetch call instead of short-circuiting
+// on "not configured".
+const spotRoutes = createSpotRoutes({ heliusRpcUrl: 'https://example.test/helius' })
 
 const MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 
