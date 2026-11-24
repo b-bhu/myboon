@@ -223,7 +223,7 @@ function controller(overrides: Record<string, unknown> = {}) {
 
 async function renderComposer(
   c: Record<string, unknown>,
-  options: { active?: boolean; surfaceKey?: string; walletActions?: boolean; timers?: ComposerTimers } = {},
+  options: { active?: boolean; surfaceKey?: string; walletActions?: boolean; inWallet?: boolean; timers?: ComposerTimers } = {},
 ) {
   const loaded = loadComposer(options.timers);
   const composer = loaded.SwapComposer;
@@ -243,6 +243,7 @@ async function renderComposer(
         controller: c,
         walletSheet,
         walletActions,
+        inWallet: options.inWallet,
       }),
     );
   });
@@ -589,6 +590,18 @@ test('empty draft hides quote controls and entering an amount reveals them', asy
       node.props.accessibilityLabel.includes(' = '),
     ).length > 0,
   );
+  await h.dispose();
+});
+
+test('Wallet swap body shows Rate, Slippage and Min received and no fees and route details row', async () => {
+  const state = controller({ amount: '1', amountAtomic: '1000000000', quote: order('quote-wallet-body') });
+  const h = await renderComposer(state.c, { inWallet: true });
+  await h.settle();
+  assert.equal(h.renderer.root.findAllByProps({ accessibilityLabel: 'Swap fees and route details' }).length, 0);
+  assert.ok(h.renderer.root.findAllByProps({ accessibilityLabel: 'Slippage settings' }).length > 0);
+  for (const label of ['Rate', 'Slippage', 'Min received']) {
+    assert.ok(h.renderer.root.findAll((node) => node.props.children === label).length > 0, label);
+  }
   await h.dispose();
 });
 
