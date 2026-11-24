@@ -6,7 +6,7 @@
  * The per-app content (stats, Deposit | Withdraw strip, Positions | Orders |
  * History) plugs in under the shell in later issues. Nothing dispatches
  * `select` yet (#856), so the shell never shows on screen for now; the
- * Meteora app view carries its top block (#852) already.
+ * Meteora (#852) and Phoenix (#848) app views carry their top blocks already.
  *
  * Generic by app id: today's ids are the Wallet protocol ids
  * (`WalletProtocolId`), and an unknown id falls back to the raw id for the
@@ -19,6 +19,7 @@ import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } fro
 
 import { swapTheme as color } from '@/features/swap/swap.theme';
 import { MeteoraAppTop } from './MeteoraAppTop';
+import { PhoenixAppTop } from './PhoenixAppTop';
 
 /** Display titles for the known Wallet apps; unknown ids fall back to the id. */
 const APP_TITLES: Readonly<Record<string, string>> = {
@@ -66,8 +67,9 @@ export const AppView = memo(function AppView({
           {appViewTitle(app)}
         </Text>
       </View>
-      {/* Meteora top block (#852): the other apps' blocks plug in later. */}
+      {/* App top blocks: Meteora (#852), Phoenix (#848); the others follow. */}
       {app === 'meteora' ? <MeteoraAppTop solana={solana} evm={evm} /> : null}
+      {app === 'phoenix' ? <PhoenixAppTop solana={solana} evm={evm} /> : null}
     </View>
   );
 });
