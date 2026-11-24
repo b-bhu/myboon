@@ -27,10 +27,11 @@
  * left, two short bars right, nothing spinning — and the app/spot counts
  * show short skeleton bars instead of a zero; nothing has loaded yet.
  *
- * The body is still the table (#841, #842 add Map and Cards): the header's
- * Table | Map | Cards switch (#840, the design's ".vs" in frame
- * "Portfolio · Map") carries and remembers the choice, and its disabled
- * segments reopen as Table via `portfolio-view`'s parse. Spot rows open
+ * The body is the table or, with Cards chosen (#842), `PortfolioCards` over
+ * the same entries (#841 adds Map): the header's Table | Map | Cards switch
+ * (#840, the design's ".vs" in frame "Portfolio · Map") carries and
+ * remembers the choice, and its disabled segments reopen as Table via
+ * `portfolio-view`'s parse. Spot rows open
  * `/spot` (the venue's current profile route); app rows open theirs via
  * callbacks, like the old rows below that #770 removes.
  */
@@ -56,6 +57,14 @@ import {
   type SpotPortfolioRow,
 } from '@/features/wallet/wallet-portfolio.rows';
 import {
+  METEORA_MARK_SVG,
+  PACIFICA_MARK_SVG,
+  PHOENIX_MARK_SVG,
+  POLYMARKET_MARK_SVG,
+} from '@/features/home/marketBrandAssets';
+import { PortfolioCards, type PortfolioCardItem } from '@/features/wallet/components/PortfolioCards';
+import { pnlChipText, portfolioCardPnl } from '@/features/wallet/portfolio-cards';
+import {
   DEFAULT_PORTFOLIO_VIEW,
   ENABLED_PORTFOLIO_VIEWS,
   readPortfolioView,
@@ -68,6 +77,14 @@ const APP_NAME: Record<PortfolioAppKey, string> = {
   phoenix: 'Phoenix',
   pacifica: 'Pacifica',
   meteora: 'Meteora',
+};
+
+/** The apps' brand marks (the Home screen's), drawn on the Cards view (#842). */
+const APP_MARK_SVG: Record<PortfolioAppKey, string> = {
+  polymarket: POLYMARKET_MARK_SVG,
+  phoenix: PHOENIX_MARK_SVG,
+  pacifica: PACIFICA_MARK_SVG,
+  meteora: METEORA_MARK_SVG,
 };
 
 /** #858: the loading table shows five skRow-shaped placeholders; stable keys. */
@@ -127,8 +144,7 @@ export const PortfolioSection = memo(function PortfolioSection({
   const [seg, setSeg] = useState<'apps' | 'spot'>('apps');
   const [showAll, setShowAll] = useState(false);
   // The remembered view (#840): Table first open, the stored choice once the
-  // read settles. The body is still the table; Map and Cards are dimmed
-  // inert segments until #841 and #842 add their views.
+  // read settles. Map is a dimmed inert segment until #841 adds its view.
   const [view, setView] = useState<PortfolioView>(DEFAULT_PORTFOLIO_VIEW);
   useEffect(() => {
     let cancelled = false;
@@ -286,6 +302,51 @@ export const PortfolioSection = memo(function PortfolioSection({
     ? PORTFOLIO_APP_KEYS.filter((key) => state.byApp[key].status === 'unavailable').map((key) => APP_NAME[key])
     : [];
 
+  // Cards view (#842): the same top entries as the Table, drawn as cards. The
+  // chip comes from the live summary, so a stale card (no live numbers) has none.
+  const cardItems: PortfolioCardItem[] = top.map((entry) => {
+    if (entry.kind === 'spot') {
+      const stale = state?.byApp.spot.status === 'stale';
+      return {
+        key: `spot:${entry.row.mint}`,
+        name: entry.row.symbol ?? 'Token',
+        mark: {
+          uri: display?.apps.spot.summary?.tokens.find((token) => token.mint === entry.row.mint)?.iconUrl ?? null,
+          letter: (entry.row.symbol ?? '?').trim().charAt(0).toUpperCase() || '?',
+        },
+        color: tokens.walletBrand.spot,
+        state: stale ? 'stale' : 'ok',
+        value: formatUsd(entry.row.valueUsd),
+        chip: null,
+        chipNegative: false,
+        age: ageLabel(state?.byApp.spot.asOf ?? null),
+        accessibilityLabel: `Open ${entry.row.symbol ?? 'token'} in Spot`,
+        onOpen: onOpenSpot,
+        onRetry: retry,
+        spinner: rowSpinner(stale),
+      };
+    }
+    const name = APP_NAME[entry.appKey];
+    const failed = entry.kind === 'appError';
+    const stale = entry.kind === 'app' && entry.stale;
+    const pnl = !stale && display ? portfolioCardPnl(display, entry.appKey) : null;
+    return {
+      key: `app:${entry.appKey}`,
+      name,
+      mark: { xml: APP_MARK_SVG[entry.appKey] },
+      color: tokens.walletBrand[entry.appKey],
+      state: failed ? 'error' : stale ? 'stale' : 'ok',
+      value: entry.kind === 'app' ? formatUsd(entry.row.valueUsd) : '',
+      chip: pnlChipText(pnl),
+      chipNegative: pnl !== null && pnl < 0,
+      age: ageLabel(state?.byApp[entry.appKey].asOf ?? null),
+      accessibilityLabel: `Open ${name} portfolio`,
+      onOpen: openApp[entry.appKey],
+      onRetry: retry,
+      spinner: rowSpinner(failed || stale),
+    };
+  });
+
   return (
     <View style={styles.section}>
       <View style={styles.headerRow}>
@@ -363,7 +424,15 @@ export const PortfolioSection = memo(function PortfolioSection({
       </View>
 
       <View style={styles.table}>
-        {showSkeletons
+        {view === 'cards' ? (
+          <PortfolioCards
+            items={cardItems}
+            skeleton={showSkeletons}
+            moreCount={moreCount}
+            moreValue={formatUsd(hiddenSum)}
+            onShowAll={() => setShowAll(true)}
+          />
+        ) : showSkeletons
           ? SKELETON_ROW_KEYS.map((key) => <PortfolioSkeletonRow key={key} />)
           : top.map((entry) => {
           if (entry.kind === 'spot') {
@@ -461,7 +530,7 @@ export const PortfolioSection = memo(function PortfolioSection({
         {display !== null && list.length === 0 && !showSkeletons ? (
           <Text style={styles.failLine}>{seg === 'spot' ? 'No spot holdings yet.' : 'No app balances yet.'}</Text>
         ) : null}
-        {moreCount > 0 ? (
+        {moreCount > 0 && view !== 'cards' ? (
           <Pressable
             onPress={() => setShowAll(true)}
             accessibilityRole="button"
