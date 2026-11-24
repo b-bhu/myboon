@@ -260,3 +260,108 @@ test('a summary request without a solana address answers not_connected and calls
     globalThis.fetch = originalFetch
   }
 })
+
+// --- GET /wallet/meteora/positions (#867) ---------------------------------
+const { fetchMeteoraPositions } = await import('./meteora.js')
+const { createWalletSummaryRoutes } = await import('../routes.js')
+const { Hono } = await import('hono')
+
+const POSITIONS_WALLET = 'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ'
+const POSITIONS_WALLET_MORE = 'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsHHe4YWrH'
+const POOL_A = 'BGm1tav58oGcsQJehL9WXBFXF7D27vZsKefj4xJKD5Y'
+const POOL_B = '5rCf1DM8LjKTw4YqhnoLcngyZYeNnQqztScTogYHAS6'
+
+const portfolioPool = (poolAddress: string, tokenX: string, unclaimedFees: string) =>
+  ({ poolAddress, tokenX, tokenY: 'USDC', balances: '10', unclaimedFees, pnl: '1', binStep: 10, outOfRange: false })
+const upstreamPosition = (positionAddress: string, isOutOfRange: boolean) => ({
+  positionAddress, minPrice: '90.5', maxPrice: '110', lowerBinId: -10, upperBinId: 10,
+  isOutOfRange, isClosed: false, pnlUsd: '2.5', pnlPctChange: '-1.2', feePerTvl24h: '0.8',
+})
+
+// Serves /portfolio/open and /positions/<pool>/pnl from the given tables.
+function positionsFetch(calls: URL[], portfolio: unknown, positions: Record<string, unknown>) {
+  return async (input: unknown) => {
+    const url = new URL(String(input))
+    calls.push(url)
+    if (url.pathname === '/portfolio/open') return Response.json(portfolio)
+    const pool = url.pathname.split('/')[2] ?? ''
+    return Response.json(positions[pool])
+  }
+}
+
+test('positions: each row carries range, in-range flag, P&L, its pool and that pool\'s unclaimed fees', async () => {
+  const calls: URL[] = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = positionsFetch(calls, {
+    page: 1, pageSize: 50, hasNext: false, totalCount: 2, totalPositions: 3,
+    pools: [portfolioPool(POOL_A, 'SOL', '4'), portfolioPool(POOL_B, 'JUP', '0.25')],
+  }, {
+    [POOL_A]: { page: 1, pageSize: 100, hasNext: false, totalCount: 2, positions: [upstreamPosition('pos-1', false), upstreamPosition('pos-2', true)] },
+    [POOL_B]: { page: 1, pageSize: 100, hasNext: false, totalCount: 1, positions: [upstreamPosition('pos-3', false)] },
+  })
+
+  try {
+    const body = await fetchMeteoraPositions(POSITIONS_WALLET)
+    // One route, every pool read on the server: 1 portfolio call + 1 per pool, open positions only.
+    assert.equal(calls.length, 3)
+    assert.equal(calls.find((url) => url.pathname.endsWith('/pnl'))?.searchParams.get('status'), 'open')
+    const row = (address: string, poolAddress: string, poolName: string, outOfRange: boolean, fees: number) => ({
+      address, poolAddress, poolName, minPrice: 90.5, maxPrice: 110, lowerBinId: -10, upperBinId: 10,
+      outOfRange, pnlUsd: 2.5, pnlPct: -1.2, feeTvl24hPct: 0.8, poolUnclaimedFeesUsd: fees,
+    })
+    assert.deepEqual(body, {
+      status: 'ok',
+      totalPools: 2,
+      hasMore: false,
+      positions: [
+        row('pos-1', POOL_A, 'SOL / USDC', false, 4),
+        row('pos-2', POOL_A, 'SOL / USDC', true, 4),
+        row('pos-3', POOL_B, 'JUP / USDC', false, 0.25),
+      ],
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('positions: hasMore is true past 50 pools and the true totalPools is returned', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = positionsFetch([], {
+    page: 1, pageSize: 50, hasNext: true, totalCount: 63, totalPositions: 70,
+    pools: [portfolioPool(POOL_A, 'SOL', '0')],
+  }, {
+    [POOL_A]: { page: 1, pageSize: 100, hasNext: false, totalCount: 1, positions: [upstreamPosition('pos-1', false)] },
+  })
+
+  try {
+    const body = await fetchMeteoraPositions(POSITIONS_WALLET_MORE)
+    assert.equal(body.hasMore, true)
+    assert.equal(body.totalPools, 63)
+    assert.equal(body.positions.length, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('positions route: no address answers not_connected, an upstream failure answers unavailable with a reason', async () => {
+  const originalFetch = globalThis.fetch
+  const routes = new Hono().route('/wallet', createWalletSummaryRoutes({ service: { getSummary: async () => { throw new Error('unused') } } }))
+  try {
+    globalThis.fetch = async () => { throw new Error('no address must not call upstream') }
+    const none = await routes.request('/wallet/meteora/positions')
+    assert.equal(none.status, 200)
+    assert.deepEqual(await none.json(), { status: 'not_connected', positions: [], totalPools: 0, hasMore: false })
+
+    assert.equal((await routes.request('/wallet/meteora/positions?solana=short')).status, 400)
+
+    globalThis.fetch = async () => new Response('db down', { status: 500 })
+    const down = await routes.request(`/wallet/meteora/positions?solana=${WALLET_DOWN}`)
+    assert.equal(down.status, 200)
+    const body = await down.json() as { status: string; positions: unknown[]; error?: string }
+    assert.equal(body.status, 'unavailable')
+    assert.deepEqual(body.positions, [])
+    assert.ok(body.error && body.error.length > 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

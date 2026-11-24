@@ -15,7 +15,13 @@
  * `not_connected`, the same no-account state Polymarket serves for a
  * missing `evm` address (#725).
  */
-import type { AppSummary, MeteoraSummary, WalletMeteoraPool } from '@myboon/shared/wallet-summary'
+import type {
+  AppSummary,
+  MeteoraPositionsResponse,
+  MeteoraSummary,
+  WalletMeteoraPool,
+  WalletMeteoraPosition,
+} from '@myboon/shared/wallet-summary'
 import { MeteoraDataApiClient } from '@myboon/shared/meteora/data-api'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
 
@@ -88,3 +94,45 @@ export const meteoraVenue = {
     }
   },
 } satisfies WalletVenue
+
+/**
+ * Every open position behind GET /wallet/meteora/positions (#867): the
+ * summary's pool read (first 50 pools), then one `getPositions` call per
+ * pool, all at once (each is cached 5 seconds by the shared client). Each
+ * position carries its pool's unclaimed fees, because the position answer
+ * has no fee field of its own. Never throws: a failed upstream call
+ * answers `unavailable` for the whole response, as the summary slot does.
+ */
+export async function fetchMeteoraPositions(solana: string | null): Promise<MeteoraPositionsResponse> {
+  if (!solana) return { status: 'not_connected', positions: [], totalPools: 0, hasMore: false }
+  try {
+    const portfolio = (await client.getOpenPortfolio(solana, { pageSize: 50 })).data
+    const perPool = await Promise.all(portfolio.pools.map(async (pool) => {
+      const page = (await client.getPositions(pool.poolAddress, solana, { status: 'open', pageSize: 100 })).data
+      const positions: WalletMeteoraPosition[] = page.items.map((position) => ({
+        address: position.address,
+        poolAddress: pool.poolAddress,
+        poolName: pool.pair,
+        minPrice: parseUsd(position.minPrice),
+        maxPrice: parseUsd(position.maxPrice),
+        lowerBinId: position.lowerBinId,
+        upperBinId: position.upperBinId,
+        outOfRange: position.isOutOfRange,
+        pnlUsd: parseUsd(position.pnlUsd),
+        pnlPct: parseUsd(position.pnlPct),
+        feeTvl24hPct: parseUsd(position.feeTvl24hPct),
+        poolUnclaimedFeesUsd: parseUsd(pool.unclaimedFeesUsd),
+      }))
+      return { positions, hasNext: page.hasNext }
+    }))
+    return {
+      status: 'ok',
+      positions: perPool.flatMap((entry) => entry.positions),
+      totalPools: portfolio.totalPools,
+      hasMore: portfolio.hasNext || perPool.some((entry) => entry.hasNext),
+    }
+  } catch (error) {
+    console.error('[api] wallet-meteora-positions failed:', error)
+    return { status: 'unavailable', positions: [], totalPools: 0, hasMore: false, error: 'meteora_positions_failed' }
+  }
+}
