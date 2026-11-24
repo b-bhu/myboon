@@ -9,6 +9,7 @@
     "api": "bash scripts/free-port-and-run.sh 3000 -- pnpm --filter @myboon/api dev",
     "mobile:web": "pnpm --filter hybrid-expo web",
     "build": "pnpm -r build",
+    "lint": "eslint packages/*/src",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -20,7 +21,10 @@
   "packageManager": "pnpm@10.28.0",
   "devDependencies": {
     "dotenv": "^17.4.2",
-    "tsx": "^4.21.0"
+    "eslint": "^9.25.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.74.0"
   },
   "pnpm": {
     "overrides": {
