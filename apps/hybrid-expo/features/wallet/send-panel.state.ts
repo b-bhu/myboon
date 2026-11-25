@@ -12,7 +12,7 @@
  */
 
 import type { WalletSummary } from '@myboon/shared/wallet-summary';
-import { formatAtomicAmount, percentageOfAtomic } from '../swap/swap.math';
+import { formatAtomicAmount, parseUiAmountToAtomic, percentageOfAtomic } from '../swap/swap.math';
 
 export const SEND_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const SEND_USDC_DECIMALS = 6;
@@ -58,4 +58,64 @@ export function sanitizeAmountText(text: string): string {
   const [whole = '', ...rest] = cleaned.split('.');
   if (rest.length === 0) return whole;
   return `${whole}.${rest.join('').slice(0, SEND_USDC_DECIMALS)}`;
+}
+
+// Slider states and copy — issue #825 (frames "Send · empty", "Send",
+// "Send · in progress", "Send · done", "Send · failed").
+
+export type SendStage = 'idle' | 'pending' | 'done' | 'failed';
+
+/** The cards, chips and Paste are locked while a send is pending. */
+export function sendInputsLocked(stage: SendStage): boolean {
+  return stage === 'pending';
+}
+
+/** Typed amount text to atomic units, or null while it is empty, zero or malformed. */
+export function sendAmountAtomic(text: string): string | null {
+  try {
+    return parseUiAmountToAtomic(text, SEND_USDC_DECIMALS);
+  } catch {
+    return null;
+  }
+}
+
+/** First 4 and last 4 characters of an address: "7xKX…gAsU". */
+export function shortSendAddress(address: string): string {
+  return address.length > 8 ? `${address.slice(0, 4)}…${address.slice(-4)}` : address;
+}
+
+/** The USDC amount as written in slider copy: plain decimal, no trailing zeros. */
+export function sendAmountLabel(amountAtomic: string): string {
+  return formatAtomicAmount(amountAtomic, SEND_USDC_DECIMALS, SEND_USDC_DECIMALS);
+}
+
+/** The rent line shown before the swipe and in the receipt. */
+export function rentLineText(rentLamports: number): string {
+  return `Includes ~${(rentLamports / 1e9).toFixed(3)} SOL to create their USDC account`;
+}
+
+export interface SendSliderInput {
+  stage: SendStage;
+  /** Valid address and an amount within the balance. */
+  ready: boolean;
+  /** Amount as written in copy (see `sendAmountLabel`). */
+  amount: string;
+  address: string;
+  tookSeconds?: number;
+}
+
+export interface SendSliderCopy {
+  small: string;
+  strong: string;
+}
+
+export function sendSliderCopy(input: SendSliderInput): SendSliderCopy {
+  const { stage, ready, amount, address, tookSeconds = 1 } = input;
+  if (stage === 'pending') return { small: 'Step 1 of 1', strong: 'Sending...' };
+  if (stage === 'done') {
+    return { small: `Done · ~$0.001 fees · took ${tookSeconds}s`, strong: `Sent · ${amount} USDC` };
+  }
+  if (stage === 'failed') return { small: 'Send failed · money is safe', strong: 'Slide to retry' };
+  if (!ready) return { small: 'Swipe to send', strong: 'Enter an address and amount' };
+  return { small: 'Swipe to send', strong: `${amount} USDC to ${shortSendAddress(address)}` };
 }

@@ -132,19 +132,8 @@ export async function sendUsdcOnSolana({
 }: UsdcTransferInput & { signTransaction: SendUsdcSignTransaction }): Promise<SendResult> {
   const retryKey = `${fromAddress}|${toAddress}|${amountAtomic}`;
 
-  // Build, part 1: parse and the over-balance rule happen before any signer
-  // or network use.
-  let amount: bigint;
-  try {
-    amount = parseAtomic('amountAtomic', amountAtomic);
-    const balance = parseAtomic('balanceAtomic', balanceAtomic);
-    if (amount > balance) {
-      throw new Error(`Send amount ${amountAtomic} exceeds the USDC balance ${balanceAtomic}.`);
-    }
-  } catch (error) {
-    return failAt('build', error);
-  }
-
+  // A saved signature is checked first: if that send landed, the balance has
+  // already dropped and the over-balance rule below would wrongly fail the retry.
   if (confirmTimeoutSignatures.has(retryKey)) {
     const savedSignature = confirmTimeoutSignatures.get(retryKey) as string;
     confirmTimeoutSignatures.delete(retryKey);
@@ -157,6 +146,19 @@ export async function sendUsdcOnSolana({
       // refuse to send a possible duplicate.
       return failAt('confirm', error, savedSignature);
     }
+  }
+
+  // Build, part 1: parse and the over-balance rule happen before any signer
+  // or network use.
+  let amount: bigint;
+  try {
+    amount = parseAtomic('amountAtomic', amountAtomic);
+    const balance = parseAtomic('balanceAtomic', balanceAtomic);
+    if (amount > balance) {
+      throw new Error(`Send amount ${amountAtomic} exceeds the USDC balance ${balanceAtomic}.`);
+    }
+  } catch (error) {
+    return failAt('build', error);
   }
 
   // Build, part 2: token accounts, instructions and a recent blockhash.
