@@ -17,6 +17,8 @@ export type {
   WalletPerpPosition,
   WalletPerpPositionDetail,
   PerpPositionsResponse,
+  WalletPhoenixOrder,
+  PhoenixOrdersResponse,
   WalletSpotToken,
   WalletSummary,
 } from './types.js'
