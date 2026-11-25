@@ -458,6 +458,7 @@ export function HomeWalletOverview({
               onOpenPhoenix={onOpenPhoenix}
               onOpenPacifica={onOpenPacifica}
               onOpenMeteora={onOpenMeteora}
+              onSelectApp={(app) => appViewDispatch({ type: 'select', app })}
               onOpenSpot={onOpenSpot}
             />
             <AccountBody
@@ -479,7 +480,8 @@ export function HomeWalletOverview({
           </Animated.View>
         </Animated.ScrollView>
         {/* App view shell (#771) covers the Portfolio until back is pressed.
-            Nothing selects an app yet (#856), so this never renders for now. */}
+            The Meteora row selects it (#856); the other rows and the Map
+            tiles follow later (#855, #857, #774, #871). */}
         {appView.selectedApp ? (
           <AppView
             app={appView.selectedApp}
