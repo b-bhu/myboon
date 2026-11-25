@@ -17,6 +17,7 @@ import type { MeteoraPositionsResponse, PerpPositionsResponse, PhoenixOrdersResp
 import { createPhoenixConfig, createPhoenixUpstream, type PhoenixUpstream } from '../phoenix/index.js'
 import type { WalletSummaryService } from './service.js'
 import { fetchMeteoraPositions } from './venues/meteora.js'
+import { fetchPacificaPositions } from './venues/pacifica.js'
 import { createPhoenixPositionsReader } from './venues/phoenix.js'
 import { createPhoenixOrdersReader } from './venues/phoenix-orders.js'
 
@@ -86,6 +87,8 @@ export function createWalletSummaryRoutes(options: {
   phoenixPositions?: (solana: string | null) => Promise<PerpPositionsResponse>
   /** Lists every active Phoenix take-profit and stop-loss order (#900); production passes the reader on the shared Phoenix upstream. */
   phoenixOrders?: (solana: string | null) => Promise<PhoenixOrdersResponse>
+  /** Reads every open Pacifica position (#868); production uses the venue's reader. */
+  pacificaPositions?: (solana: string | null) => Promise<PerpPositionsResponse>
   rateLimiter?: WalletRateLimiter
   trustForwardedHeaders?: boolean
 }): Hono {
@@ -98,6 +101,7 @@ export function createWalletSummaryRoutes(options: {
   const phoenixUpstream = () => (defaultPhoenixUpstream ??= createPhoenixUpstream(createPhoenixConfig()))
   const phoenixPositions = options.phoenixPositions ?? createPhoenixPositionsReader(phoenixUpstream())
   const phoenixOrders = options.phoenixOrders ?? createPhoenixOrdersReader(phoenixUpstream())
+  const pacificaPositions = options.pacificaPositions ?? fetchPacificaPositions
   const identityFor = (c: Context) => identityFromContext(c, options.trustForwardedHeaders === true)
 
   routes.get('/summary', async (c) => {
@@ -177,6 +181,24 @@ export function createWalletSummaryRoutes(options: {
       )
     }
     return c.json(await phoenixOrders(solana))
+  })
+
+  // GET /wallet/pacifica/positions?solana= (#868): read-only, same address
+  // check and per-IP limiter as the other wallet routes.
+  routes.get('/pacifica/positions', async (c) => {
+    const solana = c.req.query('solana') || null
+    if (solana && !SOLANA_ADDRESS_PATTERN.test(solana)) {
+      return c.json({ error: 'Invalid solana address', code: 'INVALID_ADDRESS' }, 400)
+    }
+    const quota = limiter.consume(identityFor(c), 1)
+    if (!quota.ok) {
+      return c.json(
+        { error: 'Wallet summary rate limit exceeded', code: 'RATE_LIMITED' },
+        429,
+        { 'Retry-After': String(quota.retryAfterSeconds) },
+      )
+    }
+    return c.json(await pacificaPositions(solana))
   })
 
   return routes

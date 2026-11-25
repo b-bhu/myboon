@@ -15,7 +15,7 @@
  * account at all: `not_connected`, the same no-account state Polymarket
  * serves for a missing `evm` address (#725).
  */
-import type { AppSummary, PacificaSummary, WalletPerpPosition } from '@myboon/shared/wallet-summary'
+import type { AppSummary, PacificaSummary, PerpPositionsResponse, WalletPerpPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary'
 import { pacificaUnrealizedPnl, safeNum } from '@myboon/shared/wallet-summary'
 import { PacificaApiError, pacificaGetJson } from '../../pacifica/client.js'
 import { notConnectedApp, type WalletFetchContext, type WalletVenue } from '../service.js'
@@ -26,14 +26,14 @@ interface RawAccountInfo {
   available_to_spend?: string
 }
 
-interface RawPosition {
+export interface RawPosition {
   symbol: string
   side: 'bid' | 'ask'
   amount: string
   entry_price: string
 }
 
-interface RawPriceInfo {
+export interface RawPriceInfo {
   symbol: string
   mark: string
 }
@@ -92,3 +92,66 @@ export const pacificaVenue = {
     }
   },
 } satisfies WalletVenue
+
+/**
+ * One row per open position in the same shape as Phoenix's position detail
+ * (#868). Entry, side, size and mark come from the same raw answers the
+ * summary reads, and `unrealizedPnlUsd` is computed exactly as the summary
+ * does (mark falls back to entry), so the two numbers always match. The
+ * Pacifica answers used here carry no leverage, liquidation, TP/SL or trader
+ * index: those are null. Sorted by |valueUsd| descending, null counting as 0.
+ */
+export function toPacificaPositionDetails(positions: RawPosition[], prices: RawPriceInfo[]): WalletPerpPositionDetail[] {
+  const markBySymbol = new Map(prices.map((price) => [price.symbol, safeNum(price.mark)]))
+  const rows = positions.map((position) => {
+    const entry = safeNum(position.entry_price)
+    const mark = markBySymbol.get(position.symbol) ?? null
+    const size = safeNum(position.amount)
+    const direction = position.side === 'bid' ? 1 : -1
+    const unrealizedPnlUsd = pacificaUnrealizedPnl(entry, mark ?? entry, size, direction)
+    const divisor = entry * size
+    const valueUsd = mark !== null ? mark * size : null
+    const detail: WalletPerpPositionDetail = {
+      symbol: position.symbol,
+      side: direction === 1 ? 'long' : 'short',
+      size,
+      leverage: null,
+      valueUsd,
+      entryPriceUsd: entry,
+      markPriceUsd: mark,
+      liquidationPriceUsd: null,
+      unrealizedPnlUsd,
+      pnlPct: divisor !== 0 ? (unrealizedPnlUsd / divisor) * 100 : null,
+      takeProfitPriceUsd: null,
+      stopLossPriceUsd: null,
+      traderPdaIndex: null,
+      traderSubaccountIndex: null,
+    }
+    return detail
+  })
+  return rows.sort((a, b) => Math.abs(b.valueUsd ?? 0) - Math.abs(a.valueUsd ?? 0))
+}
+
+/**
+ * The reader behind GET /wallet/pacifica/positions (#868): the summary's
+ * three upstream calls (account, positions, prices) through
+ * toPacificaPositionDetails. No address = not connected, with no upstream
+ * call; no Pacifica account (404) = ok and empty, as the summary answers.
+ * Never throws: any other upstream failure (429 included) answers
+ * `unavailable`.
+ */
+export async function fetchPacificaPositions(solana: string | null): Promise<PerpPositionsResponse> {
+  if (!solana) return { status: 'not_connected', positions: [] }
+  try {
+    await pacificaGetJson<RawAccountInfo>(`/account?account=${encodeURIComponent(solana)}`)
+    const [positions, prices] = await Promise.all([
+      pacificaGetJson<RawPosition[]>(`/positions?account=${encodeURIComponent(solana)}`),
+      pacificaGetJson<RawPriceInfo[]>('/info/prices'),
+    ])
+    return { status: 'ok', positions: toPacificaPositionDetails(positions, prices) }
+  } catch (error) {
+    if (error instanceof PacificaApiError && error.status === 404) return { status: 'ok', positions: [] }
+    console.error('[api] wallet-pacifica-positions failed:', error)
+    return { status: 'unavailable', positions: [], error: 'pacifica_positions_failed' }
+  }
+}

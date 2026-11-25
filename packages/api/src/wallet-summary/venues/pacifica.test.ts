@@ -5,7 +5,9 @@ import test from 'node:test'
 // so the tests swap it and restore in a finally — same setup as
 // venues/spot.test.ts. Each test uses its own address so nothing leaks
 // between tests.
-const { pacificaVenue } = await import('./pacifica.js')
+const { pacificaVenue, toPacificaPositionDetails } = await import('./pacifica.js')
+const { createWalletSummaryRoutes } = await import('../routes.js')
+const { createWalletSummaryService } = await import('../service.js')
 
 const WALLET = '7iNJ7CLNT8UBPANxkkrsURjzaktbomCVa93N1sKcVo9C'
 const WALLET_EMPTY = 'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1'
@@ -174,5 +176,99 @@ test('a 500 answers unavailable', async () => {
     assert.ok(slot.error)
   } finally {
     globalThis.fetch = originalFetch
+  }
+})
+
+// Position detail (#868). The same long and short as the summary tests, plus
+// a symbol with no mark price. Marks 110 / 2850 keep the percentages exact.
+test('toPacificaPositionDetails maps side, size, entry, mark, value and P&L like the summary', async () => {
+  const positions = [
+    ...POSITIONS,
+    // No mark price for this symbol: mark and value null, P&L 0 as in the summary.
+    { symbol: 'BTC-PERP', side: 'bid', amount: '1', entry_price: '20000' },
+  ] as Parameters<typeof toPacificaPositionDetails>[0]
+  const prices = [
+    { symbol: 'SOL-PERP', mark: '110' },
+    { symbol: 'ETH-PERP', mark: '2850' },
+  ]
+  const nulls = {
+    leverage: null,
+    liquidationPriceUsd: null,
+    takeProfitPriceUsd: null,
+    stopLossPriceUsd: null,
+    traderPdaIndex: null,
+    traderSubaccountIndex: null,
+  }
+
+  const rows = toPacificaPositionDetails(positions, prices)
+  assert.deepEqual(rows, [
+    // Sorted by |valueUsd| descending, null counting as 0.
+    { symbol: 'ETH-PERP', side: 'short', size: 2, valueUsd: 5700, entryPriceUsd: 3000, markPriceUsd: 2850, unrealizedPnlUsd: 300, pnlPct: 5, ...nulls },
+    { symbol: 'SOL-PERP', side: 'long', size: 10, valueUsd: 1100, entryPriceUsd: 100, markPriceUsd: 110, unrealizedPnlUsd: 100, pnlPct: 10, ...nulls },
+    { symbol: 'BTC-PERP', side: 'long', size: 1, valueUsd: null, entryPriceUsd: 20000, markPriceUsd: null, unrealizedPnlUsd: 0, pnlPct: 0, ...nulls },
+  ])
+
+  // Each P&L equals the summary's for the same position.
+  const { stub } = stubUpstream((path) => {
+    if (path.startsWith('/account')) return okJson(ACCOUNT)
+    if (path.startsWith('/positions')) return okJson(positions)
+    return okJson(prices)
+  })
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = stub as typeof fetch
+  try {
+    const slot = await pacificaVenue.fetch(context(WALLET))
+    for (const position of slot.summary?.positions ?? []) {
+      assert.equal(rows.find((row) => row.symbol === position.symbol)?.unrealizedPnlUsd, position.unrealizedPnlUsd)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('GET /wallet/pacifica/positions answers every state', async () => {
+  const routes = createWalletSummaryRoutes({ service: createWalletSummaryService({ venues: [] }) })
+  const get = async (query: string) => {
+    const response = await routes.request(`/pacifica/positions${query}`)
+    return { status: response.status, body: await response.json() as Record<string, unknown> }
+  }
+  const originalFetch = globalThis.fetch
+  const originalError = console.error
+  console.error = () => {}
+
+  try {
+    // No address: not connected, HTTP 200, no upstream call. Malformed: 400.
+    const idle = upstreamOk()
+    globalThis.fetch = idle.stub as typeof fetch
+    assert.deepEqual(await get(''), { status: 200, body: { status: 'not_connected', positions: [] } })
+    assert.deepEqual(await get('?solana=not-an-address'), {
+      status: 400,
+      body: { error: 'Invalid solana address', code: 'INVALID_ADDRESS' },
+    })
+    assert.equal(idle.calls.length, 0)
+
+    // A long and a short position: ok, rows from toPacificaPositionDetails.
+    const ok = upstreamOk()
+    globalThis.fetch = ok.stub as typeof fetch
+    const answer = await get(`?solana=${WALLET}`)
+    assert.equal(answer.status, 200)
+    assert.equal(answer.body.status, 'ok')
+    assert.deepEqual(answer.body.positions, toPacificaPositionDetails(POSITIONS as Parameters<typeof toPacificaPositionDetails>[0], PRICES))
+
+    // No Pacifica account (404): ok and empty.
+    globalThis.fetch = stubUpstream(() =>
+      Response.json({ success: false, data: null, error: 'Account not found', code: 404 }, { status: 404 }),
+    ).stub as typeof fetch
+    assert.deepEqual(await get(`?solana=${WALLET_EMPTY}`), { status: 200, body: { status: 'ok', positions: [] } })
+
+    // The upstream answers 500: unavailable, HTTP 200.
+    globalThis.fetch = stubUpstream(() => new Response('upstream boom', { status: 500 })).stub as typeof fetch
+    assert.deepEqual(await get(`?solana=${WALLET_DOWN}`), {
+      status: 200,
+      body: { status: 'unavailable', positions: [], error: 'pacifica_positions_failed' },
+    })
+  } finally {
+    globalThis.fetch = originalFetch
+    console.error = originalError
   }
 })
