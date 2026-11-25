@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPhoenixConfig, createPhoenixUpstream } from '../../phoenix/index.js'
 import { createWalletSummaryService } from '../service.js'
-import { createPhoenixVenue } from './phoenix.js'
+import { createPhoenixVenue, toPhoenixPositionDetails } from './phoenix.js'
 
 // getPhoenixTraderState (the shared trader-state reader, #727) takes its
 // upstream by option (#831); pin the base so the tests never depend on a
@@ -127,4 +127,111 @@ test('an upstream 429 makes this app unavailable, nothing else', async () => {
   } finally {
     restore()
   }
+})
+
+// One row per open position across traders (#916): the raw keys the phone's
+// normalizePositions reads, |valueUsd| descending, zero-size rows skipped,
+// a field the upstream does not give null. Numbers are chosen so every
+// pnlPct is float-exact: -1875/15000 = -0.125, 25/100 = 0.25.
+test('toPhoenixPositionDetails maps every open position with full detail', () => {
+  const traders = [
+    {
+      traderPdaIndex: 0,
+      traderSubaccountIndex: 0,
+      positions: [
+        {
+          symbol: 'SOL-PERP',
+          positionSize: '2',
+          entryPrice: '50',
+          markPrice: '62.5',
+          liquidationPrice: '40',
+          positionValue: '125',
+          unrealizedPnl: '25',
+          takeProfitPrice: '80',
+          stopLossPrice: '45',
+          leverage: '2',
+        },
+        // Zero-size rows are not open positions and are skipped.
+        { symbol: 'JUP-PERP', positionSize: '0', positionValue: '0' },
+      ],
+    },
+    // No traderPdaIndex / traderSubaccountIndex: falls back to the list
+    // index and 0.
+    {
+      positions: [
+        {
+          symbol: 'BTC-PERP',
+          positionSize: '-0.5',
+          entryPrice: '30000',
+          markPrice: null,
+          oraclePrice: '33750',
+          positionValue: '16875',
+          unrealizedPnl: '-1875',
+          // liquidationPrice, takeProfitPrice, stopLossPrice and leverage
+          // are missing: null, never 0.
+        },
+        {
+          symbol: 'DOGE-PERP',
+          positionSize: '100',
+          entryPrice: '0',
+          positionValue: '6',
+          unrealizedPnl: '1.5',
+          // markPrice and oraclePrice missing: null; entry 0 makes
+          // pnlPct null.
+        },
+      ],
+    },
+  ]
+
+  assert.deepEqual(toPhoenixPositionDetails(traders), [
+    // Sorted by absolute valueUsd, largest first.
+    {
+      symbol: 'BTC-PERP',
+      side: 'short',
+      size: 0.5,
+      leverage: null,
+      valueUsd: 16875,
+      entryPriceUsd: 30000,
+      markPriceUsd: 33750,
+      liquidationPriceUsd: null,
+      unrealizedPnlUsd: -1875,
+      pnlPct: -12.5,
+      takeProfitPriceUsd: null,
+      stopLossPriceUsd: null,
+      traderPdaIndex: 1,
+      traderSubaccountIndex: 0,
+    },
+    {
+      symbol: 'SOL-PERP',
+      side: 'long',
+      size: 2,
+      leverage: 2,
+      valueUsd: 125,
+      entryPriceUsd: 50,
+      markPriceUsd: 62.5,
+      liquidationPriceUsd: 40,
+      unrealizedPnlUsd: 25,
+      pnlPct: 25,
+      takeProfitPriceUsd: 80,
+      stopLossPriceUsd: 45,
+      traderPdaIndex: 0,
+      traderSubaccountIndex: 0,
+    },
+    {
+      symbol: 'DOGE-PERP',
+      side: 'long',
+      size: 100,
+      leverage: null,
+      valueUsd: 6,
+      entryPriceUsd: 0,
+      markPriceUsd: null,
+      liquidationPriceUsd: null,
+      unrealizedPnlUsd: 1.5,
+      pnlPct: null,
+      takeProfitPriceUsd: null,
+      stopLossPriceUsd: null,
+      traderPdaIndex: 1,
+      traderSubaccountIndex: 0,
+    },
+  ])
 })
