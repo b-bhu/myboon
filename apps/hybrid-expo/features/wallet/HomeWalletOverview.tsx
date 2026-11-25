@@ -31,8 +31,6 @@ import {
 } from '@/features/wallet/app-view.state';
 import { ReceivePanel } from '@/features/wallet/components/ReceivePanel';
 import { SendPanel } from '@/features/wallet/components/SendPanel';
-import { WalletAccountRow } from '@/features/wallet/WalletAccountRow';
-import { PerpsAccountRow } from '@/features/wallet/PerpsAccountRow';
 import { PortfolioSection } from '@/features/wallet/components/PortfolioSection';
 import { ChainRow } from '@/features/wallet/components/ChainRow';
 import { LegalLinks } from '@/features/wallet/components/LegalLinks';
@@ -42,13 +40,6 @@ import {
   type WalletTotals,
 } from '@/features/wallet/wallet.types';
 
-type AccountTab = 'spot' | 'perps' | 'meteora';
-const accountTabs: { id: AccountTab; label: string }[] = [
-  { id: 'spot', label: 'Spot' },
-  { id: 'perps', label: 'Perps' },
-  { id: 'meteora', label: 'Meteora' },
-];
-
 const MemoActionPanel = memo(WalletActionPanel);
 const MemoModeSwitch = memo(WalletModeSwitch);
 
@@ -56,46 +47,9 @@ function rememberHeight(current: number, next: number): number {
   return current === next ? current : next;
 }
 
-const AccountTabs = memo(function AccountTabs({
-  accountTab,
-  tradeBusy,
-  onSelect,
-}: {
-  accountTab: AccountTab;
-  tradeBusy: boolean;
-  onSelect: (id: AccountTab) => void;
-}) {
-  return (
-    <View style={styles.accountTabs}>
-      {accountTabs.map(({ id, label }) => (
-        <Pressable
-          key={id}
-          disabled={tradeBusy}
-          accessibilityRole="tab"
-          accessibilityLabel={`${label} accounts`}
-          accessibilityState={{ selected: accountTab === id, disabled: tradeBusy }}
-          onPress={() => onSelect(id)}
-          style={[styles.accountTab, accountTab === id && styles.accountTabSelected]}
-        >
-          <Text style={[styles.accountLabel, accountTab === id && styles.accountLabelSelected]}>
-            {label}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
-  );
-});
-
 const AccountBody = memo(function AccountBody({
   dormantNotices,
   showSolana,
-  accountTab,
-  walletSources,
-  onRetrySource,
-  onOpenSpot,
-  onOpenPhoenix,
-  onOpenPacifica,
-  onOpenMeteora,
   onConnect,
   chains,
   chainAddress,
@@ -104,13 +58,6 @@ const AccountBody = memo(function AccountBody({
 }: {
   dormantNotices?: ReactNode;
   showSolana: boolean;
-  accountTab: AccountTab;
-  walletSources: WalletSourcesState;
-  onRetrySource: (id: WalletProtocolId) => void;
-  onOpenSpot: () => void;
-  onOpenPhoenix: () => void;
-  onOpenPacifica: () => void;
-  onOpenMeteora: () => void;
   onConnect: () => void;
   chains: readonly Chain[];
   chainAddress: (chain: Chain) => string | null;
@@ -120,42 +67,7 @@ const AccountBody = memo(function AccountBody({
   return (
     <>
       {dormantNotices}
-      {showSolana ? (
-        <>
-          {accountTab === 'spot' ? (
-            <WalletAccountRow
-              protocol="spot"
-              source={walletSources.spot}
-              onRetry={onRetrySource}
-              onPress={onOpenSpot}
-            />
-          ) : null}
-          {accountTab === 'perps' ? (
-            <>
-              <PerpsAccountRow
-                protocol="phoenix"
-                source={walletSources.phoenix}
-                onRetry={onRetrySource}
-                onPress={onOpenPhoenix}
-              />
-              <PerpsAccountRow
-                protocol="pacifica"
-                source={walletSources.pacifica}
-                onRetry={onRetrySource}
-                onPress={onOpenPacifica}
-              />
-            </>
-          ) : null}
-          {accountTab === 'meteora' ? (
-            <WalletAccountRow
-              protocol="meteora"
-              source={walletSources.meteora}
-              onRetry={onRetrySource}
-              onPress={onOpenMeteora}
-            />
-          ) : null}
-        </>
-      ) : (
+      {showSolana ? null : (
         <View style={styles.disconnected}>
           <Text style={styles.accountTitle}>Connect a Solana wallet</Text>
           <Text style={styles.description}>
@@ -199,8 +111,6 @@ export function HomeWalletOverview({
   onDisconnectChain,
   walletRefreshing,
   onWalletRefresh,
-  walletSources,
-  onRetrySource,
   onOpenMeteora,
   onOpenPhoenix,
   onOpenPacifica,
@@ -230,12 +140,10 @@ export function HomeWalletOverview({
   onConnect: () => void;
   dormantNotices?: React.ReactNode;
 }) {
-  const [accountTab, setAccountTab] = useState<AccountTab>('spot');
   const [mode, setMode] = useState<WalletActionMode>('swap');
   // The app view state (#771): no app is open until something dispatches
   // `select`, so the shell below never shows on screen for now.
   const [appView, appViewDispatch] = useReducer(walletAppViewReducer, initialWalletAppView);
-  const [surfaceKey, setSurfaceKey] = useState(0);
   const [tradeBusy, setTradeBusy] = useState(false);
   const [upperHeight, setUpperHeight] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
@@ -286,10 +194,6 @@ export function HomeWalletOverview({
   }, [walletId]);
 
   const panelRest = Math.max(0, upperHeight - color.panelOverlap);
-  const selectAccountTab = useCallback((id: AccountTab) => {
-    setSurfaceKey((key) => key + 1);
-    setAccountTab(id);
-  }, []);
   // Drag used to animate `top`, which resized this scroller on every frame and
   // made the sheet jump. translateY stays on the UI thread and the height stays put.
   const panelStyle = useAnimatedStyle(() => {
@@ -408,7 +312,7 @@ export function HomeWalletOverview({
               <MemoActionPanel
                 active={actionActive}
                 controllerActive={active}
-                surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
+                surfaceKey={`${surfaceVersion}`}
                 onBusyChange={setTradeBusy}
               />
             )}
@@ -432,7 +336,6 @@ export function HomeWalletOverview({
           scrollEnabled={active && !tradeBusy}
           showsVerticalScrollIndicator={false}
           scrollEventThrottle={16}
-          stickyHeaderIndices={[0]}
           refreshControl={
             refreshAllowed ? (
               <RefreshControl
@@ -445,12 +348,8 @@ export function HomeWalletOverview({
           onScroll={onAccountScroll}
           contentContainerStyle={{ minHeight: viewportHeight + panelRest }}
         >
-          <View style={styles.tabsHeader}>
-            <AccountTabs accountTab={accountTab} tradeBusy={tradeBusy} onSelect={selectAccountTab} />
-          </View>
           <Animated.View style={[styles.accounts, { paddingBottom: 24 + panelRest }, panelLiftStyle]}>
-            {/* Portfolio table (#769): the new sheet content above the old
-                rows, which stay until #770 removes them. */}
+            {/* Portfolio table (#769): the only account list the Wallet shows. */}
             <PortfolioSection
               solana={chainAddress('solana')}
               evm={chainAddress('evm')}
@@ -464,13 +363,6 @@ export function HomeWalletOverview({
             <AccountBody
               dormantNotices={dormantNotices}
               showSolana={showSolana}
-              accountTab={accountTab}
-              walletSources={walletSources}
-              onRetrySource={onRetrySource}
-              onOpenSpot={onOpenSpot}
-              onOpenPhoenix={onOpenPhoenix}
-              onOpenPacifica={onOpenPacifica}
-              onOpenMeteora={onOpenMeteora}
               onConnect={onConnect}
               chains={chains}
               chainAddress={chainAddress}
@@ -511,35 +403,6 @@ const styles = StyleSheet.create({
     boxShadow: '0 -6px 22px rgba(3,31,44,0.22), 0 -2px 6px rgba(3,31,44,0.15)',
   },
   panelScroll: { flex: 1 },
-  tabsHeader: {
-    paddingTop: 18,
-    paddingBottom: 4,
-    backgroundColor: color.navy,
-    zIndex: 1,
-  },
-  accountTabs: {
-    width: '80%',
-    alignSelf: 'center',
-    flexDirection: 'row',
-    padding: 4,
-    gap: 4,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: color.border,
-    backgroundColor: color.card,
-  },
-  accountTab: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-    paddingVertical: 8,
-  },
-  accountTabSelected: { backgroundColor: color.gold },
-  accountLabel: { color: color.dim, fontSize: 12, fontWeight: '600' },
-  accountLabelSelected: { color: color.navy },
   accounts: { padding: 14, paddingBottom: 24, gap: 12 },
   disconnected: { paddingVertical: 14, gap: 12 },
   accountTitle: { color: color.text, fontSize: 17, fontWeight: '700' },
