@@ -54,6 +54,9 @@ export const MeteoraAppTop = memo(function MeteoraAppTop({
 
   const meteora = summary?.apps.meteora ?? null;
 
+  // Not connected: no account at the venue, render nothing.
+  if (meteora?.status === 'not_connected') return null;
+
   // Failed with no summary (the hook returned an error and nothing else),
   // or the Meteora slot itself failing with no value to show: the same
   // banner over NO_DATA cells as the Phoenix block (#865). The failure
