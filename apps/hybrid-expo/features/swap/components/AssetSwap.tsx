@@ -135,6 +135,7 @@ export function AssetSwap({
   inputLocked = false,
   outputLocked = false,
   canReverse = true,
+  payTag,
   children,
 }: {
   inputToken: SwapToken;
@@ -156,6 +157,8 @@ export function AssetSwap({
   inputLocked?: boolean;
   outputLocked?: boolean;
   canReverse?: boolean;
+  /** Small tag after the pay label, e.g. "From Spot" (wallet.html .pf2). */
+  payTag?: string;
   children?: ReactNode;
 }) {
   const [percentExpanded, setPercentExpanded] = useState(false);
@@ -173,7 +176,10 @@ export function AssetSwap({
     <View style={styles.assetBlock}>
       <View style={styles.assetRow}>
         <View style={styles.identity}>
-          <Text style={styles.label}>{side === 'input' ? 'You pay' : 'You receive'}</Text>
+          <Text style={styles.label}>
+            {side === 'input' ? 'You pay' : 'You receive'}
+            {side === 'input' && payTag ? <Text style={styles.payTag}>{`  ${payTag}  `}</Text> : null}
+          </Text>
           <Pressable
             onPress={() => onPicker(side)}
             disabled={busy || locked}
@@ -277,6 +283,14 @@ const styles = StyleSheet.create({
   assetBlock: { minWidth: 0 },
   assetRow: { minHeight: 60, flexDirection: 'row', alignItems: 'center', gap: 8 },
   identity: { flex: 1, minWidth: 110, maxWidth: '50%' },
+  payTag: {
+    color: color.gold,
+    fontSize: 10,
+    lineHeight: 14,
+    borderWidth: 1,
+    borderColor: '#FFD16666',
+    borderRadius: 4,
+  },
   label: { fontSize: 12, lineHeight: 16, color: color.dim, fontWeight: '600' },
   picker: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
   pickerLocked: { opacity: 0.82 },

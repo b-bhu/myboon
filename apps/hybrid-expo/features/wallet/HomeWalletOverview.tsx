@@ -23,7 +23,7 @@ import {
   WALLET_ACTION_BODY_HEIGHT,
   type WalletActionMode,
 } from '@/features/wallet/wallet-mode';
-import { WalletActionPanel } from '@/features/wallet/WalletActionPanel';
+import { WalletActionPanel, type SwapPrefill } from '@/features/wallet/WalletActionPanel';
 import { AppView } from '@/features/wallet/app-view/AppView';
 import {
   initialWalletAppView,
@@ -140,7 +140,19 @@ export function HomeWalletOverview({
   onConnect: () => void;
   dormantNotices?: React.ReactNode;
 }) {
-  const [mode, setMode] = useState<WalletActionMode>('swap');
+  const [mode, setModeState] = useState<WalletActionMode>('swap');
+  // #906: a Spot token the Swap mode opens with as its pay card. Any mode
+  // switch clears it, so a later Swap starts empty.
+  const [swapPrefill, setSwapPrefill] = useState<SwapPrefill | null>(null);
+  const setMode = useCallback((next: WalletActionMode) => {
+    setSwapPrefill(null);
+    setModeState(next);
+  }, []);
+  // Called by the Spot token row's Swap action (#844).
+  const setSwapFromSpot = useCallback((mint: string) => {
+    setSwapPrefill({ mint, source: 'spot' });
+    setModeState('swap');
+  }, []);
   // The app view state (#771): no app is open until something dispatches
   // `select`, so the shell below never shows on screen for now.
   const [appView, appViewDispatch] = useReducer(walletAppViewReducer, initialWalletAppView);
@@ -314,6 +326,7 @@ export function HomeWalletOverview({
                 controllerActive={active}
                 surfaceKey={`${surfaceVersion}`}
                 onBusyChange={setTradeBusy}
+                swapPrefill={swapPrefill}
               />
             )}
           </ScrollView>
