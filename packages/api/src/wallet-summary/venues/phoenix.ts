@@ -16,7 +16,7 @@
  * other app still returns (#725) — the same contract as the Meteora and
  * spot venues.
  */
-import type { AppSummary, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition } from '@myboon/shared/wallet-summary'
+import type { AppSummary, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary'
 import { accountSummary, sumPhoenixPortfolioValue, toNumber, toUsd } from '@myboon/shared/wallet-summary'
 import { getPhoenixTraderState, type PhoenixUpstream } from '../../phoenix/index.js'
 import { asRecord } from '@myboon/shared/guards'
@@ -54,6 +54,67 @@ function toPositions(traders: PhoenixTraderRecord[]): WalletPerpPosition[] {
 
   rows.sort((a, b) => b.notional - a.notional)
   return rows.map(({ notional: _notional, ...position }) => position)
+}
+
+/**
+ * One row per open position with full detail (#916) — the shape the wallet
+ * positions route (#899) will serve and the portfolio Positions tab (#849)
+ * will render. Reads positions exactly like toPositions (every trader's
+ * `positions` array, each item through `asRecord`; a row with no symbol or a
+ * zero/null `positionSize` is skipped) and keeps the same `|valueUsd|`
+ * descending sort, null counting as 0. Only the phone's raw keys
+ * (normalizePositions, phoenix.portfolio.tsx): mark falls back to
+ * `oraclePrice`, and the v1 TP/SL triggers are already merged upstream into
+ * `takeProfitPrice`/`stopLossPrice`. A field the upstream does not give is
+ * null, never 0.
+ */
+export function toPhoenixPositionDetails(traders: PhoenixTraderRecord[]): WalletPerpPositionDetail[] {
+  const rows: Array<WalletPerpPositionDetail & { sortValueUsd: number }> = []
+
+  for (const [traderIndex, trader] of traders.entries()) {
+    const positions = Array.isArray(trader.positions) ? trader.positions : []
+    for (const item of positions) {
+      const record = asRecord(item)
+      if (!record) continue
+      const symbol = asStringTrimmed(record.symbol)
+      const size = toNumber(record.positionSize)
+      if (!symbol || size === null || size === 0) continue
+
+      const absSize = Math.abs(size)
+      const valueUsd = toUsd(record.positionValue)
+      const entryPriceUsd = toUsd(record.entryPrice)
+      const unrealizedPnlUsd = toUsd(record.unrealizedPnl)
+      // P&L against the entry notional; null inputs or a zero divisor
+      // (entry price 0 or null) stay null.
+      const divisor = entryPriceUsd !== null ? entryPriceUsd * absSize : null
+      const pnlPct =
+        unrealizedPnlUsd !== null && divisor !== null && divisor !== 0
+          ? (unrealizedPnlUsd / divisor) * 100
+          : null
+      const leverage = toNumber(record.leverage)
+
+      rows.push({
+        symbol,
+        side: size >= 0 ? 'long' : 'short',
+        size: absSize,
+        leverage: leverage !== null && leverage > 0 ? leverage : null,
+        valueUsd,
+        entryPriceUsd,
+        markPriceUsd: toUsd(record.markPrice ?? record.oraclePrice),
+        liquidationPriceUsd: toUsd(record.liquidationPrice),
+        unrealizedPnlUsd,
+        pnlPct,
+        takeProfitPriceUsd: toUsd(record.takeProfitPrice),
+        stopLossPriceUsd: toUsd(record.stopLossPrice),
+        traderPdaIndex: toNumber(trader.traderPdaIndex) ?? traderIndex,
+        traderSubaccountIndex: toNumber(trader.traderSubaccountIndex) ?? 0,
+        sortValueUsd: Math.abs(valueUsd ?? 0),
+      })
+    }
+  }
+
+  rows.sort((a, b) => b.sortValueUsd - a.sortValueUsd)
+  return rows.map(({ sortValueUsd: _sortValueUsd, ...detail }) => detail)
 }
 
 export function createPhoenixVenue(upstream: PhoenixUpstream) {

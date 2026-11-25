@@ -15,6 +15,8 @@ export type {
   WalletMeteoraPool,
   WalletMeteoraPosition,
   WalletPerpPosition,
+  WalletPerpPositionDetail,
+  PerpPositionsResponse,
   WalletSpotToken,
   WalletSummary,
 } from './types.js'

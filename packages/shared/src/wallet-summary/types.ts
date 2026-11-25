@@ -129,6 +129,40 @@ export interface MeteoraPositionsResponse {
   error?: string
 }
 
+/**
+ * One open Phoenix perps position with full detail (#916): size is the base
+ * asset (absolute), prices and amounts are USD numbers, and `null` means the
+ * upstream does not give the field (never 0). `pnlPct` is the unrealized P&L
+ * against the entry notional (`entryPriceUsd * size`).
+ */
+export interface WalletPerpPositionDetail {
+  symbol: string
+  side: 'long' | 'short'
+  size: number
+  leverage: number | null
+  valueUsd: number | null
+  entryPriceUsd: number | null
+  markPriceUsd: number | null
+  liquidationPriceUsd: number | null
+  unrealizedPnlUsd: number | null
+  pnlPct: number | null
+  takeProfitPriceUsd: number | null
+  stopLossPriceUsd: number | null
+  traderPdaIndex: number | null
+  traderSubaccountIndex: number | null
+}
+
+/**
+ * Positions-detail response for GET /wallet/phoenix/positions (the route
+ * itself is #899). `status` follows the summary's Phoenix slot: `ok`,
+ * `not_connected` (no solana address) or `unavailable` (with `error`).
+ */
+export interface PerpPositionsResponse {
+  status: VenueStatus
+  positions: WalletPerpPositionDetail[]
+  error?: string
+}
+
 /** One spot token holding; icon URL when the upstream provides one. */
 export interface WalletSpotToken {
   mint: string
