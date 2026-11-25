@@ -30,8 +30,9 @@ export interface MeteoraTopFigures {
   totalPnl: string;
 }
 
-/** Design `usd`: '$' + en-US money, 2 decimals, grouped ("$1,918.00"). */
-function usd(value: number): string {
+/** Design `usd`: '$' + en-US money, 2 decimals, grouped ("$1,918.00"). Shared
+ * with the Positions tab's value and fees cells (issue #902). */
+export function usd(value: number): string {
   return (
     '$' +
     Math.abs(value).toLocaleString('en-US', {
@@ -41,8 +42,9 @@ function usd(value: number): string {
   );
 }
 
-/** Design `sg` (the P&L cell): sign then `usd`, zero reads positive ("+$0.00"). */
-function signedUsd(value: number): string {
+/** Design `sg` (the P&L cell): sign then `usd`, zero reads positive ("+$0.00").
+ * Shared with the Positions tab's P&L line (issue #902). */
+export function signedUsd(value: number): string {
   return (value < 0 ? '−' : '+') + usd(value);
 }
 
