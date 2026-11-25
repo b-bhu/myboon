@@ -555,7 +555,7 @@ export const PortfolioSection = memo(function PortfolioSection({
         {display !== null && list.length === 0 && !showSkeletons ? (
           <Text style={styles.failLine}>{seg === 'spot' ? 'No spot holdings yet.' : 'No app balances yet.'}</Text>
         ) : null}
-        {moreCount > 0 && view !== 'cards' ? (
+        {moreCount > 0 && view === 'table' ? (
           <Pressable
             onPress={() => setShowAll(true)}
             accessibilityRole="button"
