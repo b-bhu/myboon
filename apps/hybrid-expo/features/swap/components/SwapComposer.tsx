@@ -16,7 +16,7 @@ import { AssetSwap, SwapTokenAvatar } from '@/features/swap/components/AssetSwap
 import { SwapTokenPicker } from '@/features/swap/components/SwapTokenPicker';
 import { SwipeToConfirm } from '@/features/swap/components/SwipeToConfirm';
 import { formatAtomicAmount, parseUiAmountToAtomic } from '@/features/swap/swap.math';
-import { exchangeRate, exchangeRateValue, providerFee } from '@/features/swap/swap.display';
+import { exchangeRate, exchangeRateValue, providerFee, swapSliderCopy } from '@/features/swap/swap.display';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 import { useSwapValueAnimation } from '@/features/swap/swap.motion';
 import type { SwapSide } from '@/features/swap/swap.types';
@@ -31,6 +31,30 @@ import {
 } from '@/features/wallet/wallet-action-gesture';
 
 type Surface = 'actions' | 'slippage' | 'details' | null;
+
+/**
+ * Slider row for a state that does not swipe: a running swap (pending), a failed
+ * step (tap to retry), or a quote with no route for the amount (off).
+ */
+type SlideState = {
+  kind: 'pending' | 'failed' | 'no-route';
+  small: string;
+  big: string;
+  /** Tap action; only the failed step retries. */
+  action?: () => void;
+};
+
+/**
+ * Quote failures that mean no route for this pair or amount: a refused provider
+ * request (4xx) and a provider order-build refusal, both surfaced through
+ * `errorMessage` in the swap controller. Rate limits, paused trading and
+ * transport failures keep today's status, and unknown messages do too.
+ */
+const NO_ROUTE_QUOTE_MESSAGES = ['The quote changed while preparing your trade. Refresh and try again.'];
+function isNoRouteQuoteError(quoteError: string | null): boolean {
+  return quoteError !== null &&
+    (quoteError.startsWith('Jupiter request failed (4') || NO_ROUTE_QUOTE_MESSAGES.includes(quoteError));
+}
 
 const NO_OP = () => {};
 const actionIcons = {
@@ -257,16 +281,29 @@ export function SwapComposer({
   let status: string | null = null;
   let statusAction: (() => void) | undefined;
   let loading = false;
+  let slide: SlideState | null = null;
   if (c.phase === 'confirmed') status = 'Swap complete';
   else if (c.phase === 'unknown') { status = 'Check pending swap'; statusAction = () => void c.reconcilePending(); }
   else if (c.interactionBusy) {
-    status = c.phase === 'awaiting_signature' ? 'Confirm in your wallet' :
-      c.phase === 'executing' ? 'Sending swap…' : 'Preparing your swap…';
+    if (c.phase === 'awaiting_signature' || c.phase === 'executing') {
+      const pendingCopy = swapSliderCopy({
+        state: 'pending',
+        step: 1,
+        stepCount: 1,
+        stepLabel: c.phase === 'executing' ? 'Sending swap…' : 'Confirm in your wallet',
+      });
+      slide = { kind: 'pending', small: pendingCopy.small, big: pendingCopy.strong };
+    } else status = 'Preparing your swap…';
     loading = true;
   } else if (!c.wallet.connected) { status = 'Connect Solana wallet'; statusAction = () => walletSheet.open('solana'); }
   else if (c.pendingError) { status = 'Retry pending status check'; statusAction = () => void c.reconcilePending(); }
   else if (!c.pendingReady) { status = 'Checking previous swap…'; loading = true; }
-  else if (c.phase === 'failed' || c.quoteError || c.quoteExpired) { status = 'Refresh quote'; statusAction = c.retry; }
+  else if (c.phase === 'failed') {
+    const failedCopy = swapSliderCopy({ state: 'failed', step: 1, stepCount: 1 });
+    slide = { kind: 'failed', small: failedCopy.small, big: failedCopy.strong, action: c.retry };
+  } else if (isNoRouteQuoteError(c.quoteError)) {
+    slide = { kind: 'no-route', small: 'No route', big: 'Try a different amount' };
+  } else if (c.quoteError || c.quoteExpired) { status = 'Refresh quote'; statusAction = c.retry; }
   else if (c.balancesError) { status = 'Retry balance'; statusAction = () => void c.retryBalances().catch(() => {}); }
   else if (!c.amountAtomic) status = amountError ?? 'Enter an amount';
   else if (!c.balancesResolved) { status = 'Checking balance…'; loading = true; }
@@ -309,7 +346,12 @@ export function SwapComposer({
         onBalancePercent={(percent) => { cancelGesture(); attemptedQuote.current = null; c.balancePercent(percent); }}
       >
         {hasAmount ? <Animated.View style={quoteReveal}>
-        <View style={styles.quoteStrip}>
+        {slide?.kind === 'no-route' ? (
+          <View style={styles.noRouteStrip}>
+            <MaterialIcons name="block" size={18} color={color.error} />
+            <Text style={styles.noRouteText}>No route for {c.amount} {c.inputToken.symbol}. Try a smaller amount.</Text>
+          </View>
+        ) : <View style={styles.quoteStrip}>
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>{inWallet ? 'Rate' : 'Exchange rate'}</Text>
             <View accessible accessibilityLabel={exchangeRate(order, c.inputToken, c.outputToken)} style={styles.compactValue}>
@@ -328,7 +370,7 @@ export function SwapComposer({
               <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75} style={styles.metricValue}>{minimum}</Text><SwapTokenAvatar token={c.outputToken} size={14} />
             </View>
           </View>
-        </View>
+        </View>}
         {/* The Wallet mock has no fee row; the details dialog stays for the routed Buy and Sell screen. */}
         {!inWallet && <Pressable style={styles.feeToggle} onPress={() => openSurface('details')} disabled={c.interactionBusy}
           accessibilityRole="button" accessibilityLabel="Swap fees and route details"
@@ -344,6 +386,7 @@ export function SwapComposer({
         {c.phase === 'unknown' && c.resultMessage ? <Text selectable style={styles.inlineWarning}>{c.resultMessage}</Text> : null}
         {canConfirm ? <SwipeToConfirm key={c.reviewOrder?.requestId} receiveAmount={c.outputUi} outputToken={c.outputToken}
           onComplete={() => { cancelGesture(); Keyboard.dismiss(); void c.confirmTrade(); }} /> :
+          slide ? <SlideStatus slide={slide} /> :
           <Pressable disabled={!statusAction || loading} onPress={() => { Keyboard.dismiss(); statusAction?.(); }}
             accessibilityRole="button" accessibilityLabel={status ?? 'Preparing swap'}
             accessibilityState={{ disabled: !statusAction || loading, busy: loading }}
@@ -500,6 +543,56 @@ function FeeDetail({ label, value }: { label: string; value: string }) {
   return <View style={styles.feeRow}><Text style={styles.feeLabel}>{label}</Text><Text selectable style={styles.feeValue}>{value}</Text></View>;
 }
 
+/** Pending, failed and no-route slider rows. Pending and no-route are not pressable; failed taps retry. */
+function SlideStatus({ slide }: { slide: SlideState }) {
+  const thumb =
+    slide.kind === 'pending' ? (
+      <View style={[styles.statusThumb, styles.slideThumbBusy]}>
+        <ActivityIndicator size="small" color={color.gold} />
+      </View>
+    ) : slide.kind === 'failed' ? (
+      <View style={[styles.statusThumb, styles.slideThumbFailed]}>
+        <MaterialIcons name="refresh" size={20} color={color.error} />
+      </View>
+    ) : (
+      <View style={[styles.statusThumb, styles.slideThumbOff]}>
+        <MaterialIcons name="block" size={20} color={color.dim} />
+      </View>
+    );
+  const copy = (
+    <View style={styles.slideCopy}>
+      <Text style={styles.slideSmall}>{slide.small}</Text>
+      <Text style={[styles.slideBig, slide.kind === 'failed' && styles.slideBigError]}>{slide.big}</Text>
+    </View>
+  );
+  if (slide.kind === 'failed') {
+    return (
+      <Pressable
+        onPress={slide.action}
+        accessibilityRole="button"
+        accessibilityLabel={slide.big}
+        accessibilityHint="Runs the retry for the failed swap step"
+        style={[styles.slideRow, styles.slideFailed]}
+      >
+        {copy}
+        {thumb}
+      </Pressable>
+    );
+  }
+  return (
+    <View
+      accessible
+      accessibilityLabel={slide.big}
+      accessibilityState={slide.kind === 'pending' ? { busy: true } : { disabled: true }}
+      style={[styles.slideRow, slide.kind === 'no-route' && styles.slideOff]}
+    >
+      {slide.kind === 'no-route' ? thumb : null}
+      {copy}
+      {slide.kind === 'pending' ? thumb : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   heading: {
     minHeight: 46,
@@ -524,6 +617,18 @@ const styles = StyleSheet.create({
   feeValue: { color: color.text, fontSize: 13, lineHeight: 19, textAlign: 'right', flex: 1.3, fontVariant: ['tabular-nums'] },
   inlineWarning: { color: color.gold, fontSize: 12, lineHeight: 17, marginBottom: 8 },
   inlineAction: { minHeight: 54, borderWidth: 1, borderColor: color.border, borderRadius: 10, backgroundColor: color.card, flexDirection: 'row', alignItems: 'center', padding: 4, gap: 6 },
+  slideRow: { minHeight: 54, borderWidth: 1, borderColor: color.border, borderRadius: 10, backgroundColor: color.card, flexDirection: 'row', alignItems: 'center', padding: 4, gap: 8 },
+  slideFailed: { borderColor: color.error },
+  slideOff: { opacity: 0.55 },
+  slideCopy: { flex: 1, alignItems: 'flex-start', gap: 3, paddingHorizontal: 8 },
+  slideSmall: { color: color.dim, fontSize: 10, fontWeight: '500' },
+  slideBig: { fontSize: 14, fontWeight: '600', color: color.text },
+  slideBigError: { color: color.error },
+  slideThumbBusy: { backgroundColor: color.card, borderWidth: 1.5, borderColor: color.gold },
+  slideThumbFailed: { backgroundColor: color.card, borderWidth: 1.5, borderColor: color.error },
+  slideThumbOff: { backgroundColor: color.card, borderWidth: 1, borderColor: color.border },
+  noRouteStrip: { minHeight: 52, borderWidth: 1, borderColor: color.border, borderRadius: 8, backgroundColor: color.card, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12 },
+  noRouteText: { flex: 1, color: color.dim, fontSize: 12 },
   inlineSuccess: { borderColor: color.positive },
   statusThumb: { width: 42, height: 42, borderRadius: 7, backgroundColor: color.gold, alignItems: 'center', justifyContent: 'center' },
   successThumb: { backgroundColor: color.positive },
