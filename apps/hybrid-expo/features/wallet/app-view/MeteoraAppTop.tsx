@@ -8,19 +8,23 @@
  * caches the summary (#764), so the Portfolio's first call and this second
  * one are both accepted.
  *
- * States (issue): loading with no summary yet → a skeleton block, no
- * numbers. Failed with no summary → "Couldn't load Meteora" with a Retry
- * that calls the hook's retry. A refresh failing after a good summary keeps
- * the last figures on screen, dimmed (design ".held" 60%), with the same
- * Retry — they are never blanked.
+ * States (issue #865): loading with no summary yet → a skeleton block, no
+ * numbers. Failed with no summary, or the Meteora slot unavailable with no
+ * value → "Couldn't load Meteora" with the funds-are-safe line and a gold
+ * Retry that calls the hook's retry, cells showing NO_DATA. A retry from a
+ * failed state keeps the banner and the dashes — the skeleton is only the
+ * first load — and shows a small spinner on the button while it runs. A
+ * refresh failing after a good summary keeps the last figures on screen,
+ * dimmed (design ".held" 60%), with the same Retry — they are never blanked.
  */
 
 import { memo } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { semantic, tokens } from '@/theme';
+import { NO_DATA } from '@/lib/format';
 import { meteoraTopFigures } from './meteora-top';
 
 export const MeteoraAppTop = memo(function MeteoraAppTop({
@@ -34,32 +38,55 @@ export const MeteoraAppTop = memo(function MeteoraAppTop({
 }) {
   const { summary, loading, error, retry } = useWalletSummary(solana, evm);
 
+  // One retry at a time: tapping Retry while a retry runs does nothing.
+  const retryOnce = () => {
+    if (loading) return;
+    retry();
+  };
+
   // No addresses at all: the hook made no call, nothing to show.
   if (!summary && !loading && error === null) return null;
 
-  // Loading with no summary yet: skeleton cells, no numbers.
-  if (!summary && loading) return <Skeleton />;
+  // Loading with no summary yet and no error yet: the first load — skeleton
+  // cells, no numbers. A retry from a failed state keeps the banner and the
+  // dashes instead (#865).
+  if (!summary && loading && error === null) return <Skeleton />;
 
-  // Failed with no summary: only the failure banner — no numbers were shown.
-  if (!summary) return <FailureBanner onRetry={retry} />;
+  const meteora = summary?.apps.meteora ?? null;
+
+  // Not connected: no account at the venue, render nothing.
+  if (meteora?.status === 'not_connected') return null;
+
+  // Failed with no summary (the hook returned an error and nothing else),
+  // or the Meteora slot itself failing with no value to show: the same
+  // banner over NO_DATA cells as the Phoenix block (#865). The failure
+  // render needs no slot: when the summary call itself fails, the banner
+  // and dashes stand in for the whole block.
+  const failedNoFigures =
+    (!summary && error !== null) ||
+    (meteora?.status === 'unavailable' && meteora.valueUsd === null);
+
+  if (!failedNoFigures && !meteora) return null;
 
   const figures = meteoraTopFigures(summary);
-  if (!figures) return null;
   // A refresh failing after a good summary holds the figures (the hook never
-  // blanks them); they stay dimmed with the Retry, not blanked.
-  const stale = error !== null;
-  const pnl = summary.apps.meteora.summary?.totalPnlUsd ?? null;
+  // blanks them); they stay dimmed with the Retry, not blanked. The failed
+  // state shows the design's plain dashes instead — no held dimming there.
+  const stale = error !== null && figures !== null;
+  const pnl = summary?.apps.meteora.summary?.totalPnlUsd ?? null;
   const pnlTone = pnl === null ? null : pnl < 0 ? 'down' : 'up';
 
   const cells = [
-    { label: 'Pool value', value: figures.poolValue, tone: null },
-    { label: 'Unclaimed fees', value: figures.unclaimedFees, tone: null },
-    { label: 'Total P&L', value: figures.totalPnl, tone: pnlTone },
+    { label: 'Pool value', value: figures?.poolValue ?? NO_DATA, tone: null },
+    { label: 'Unclaimed fees', value: figures?.unclaimedFees ?? NO_DATA, tone: null },
+    { label: 'Total P&L', value: figures?.totalPnl ?? NO_DATA, tone: pnlTone },
   ];
 
   return (
     <View style={styles.root}>
-      {stale ? <FailureBanner onRetry={retry} /> : null}
+      {failedNoFigures || stale ? (
+        <FailureBanner retrying={loading} onRetry={retryOnce} />
+      ) : null}
       <View style={[styles.stats, stale && styles.held]}>
         {cells.map((cell) => (
           <View key={cell.label} style={styles.cell}>
@@ -94,12 +121,23 @@ function Skeleton() {
   );
 }
 
-/** Mock ".bn" failure banner: "Couldn't load Meteora" + gold Retry. */
-function FailureBanner({ onRetry }: { onRetry: () => void }) {
+/** Mock ".bn" failure banner: "Couldn't load Meteora" + funds line + gold Retry. */
+function FailureBanner({
+  retrying,
+  onRetry,
+}: {
+  retrying: boolean;
+  onRetry: () => void;
+}) {
   return (
     <View style={styles.banner}>
       <MaterialIcons name="error-outline" size={20} color={semantic.sentiment.negative} />
-      <Text style={styles.bannerTitle}>{"Couldn't load Meteora"}</Text>
+      <View style={styles.bannerCopy}>
+        <Text style={styles.bannerTitle}>{"Couldn't load Meteora"}</Text>
+        <Text style={styles.bannerLine}>
+          {'The numbers here may be out of date. Your funds are not affected.'}
+        </Text>
+      </View>
       <Pressable
         onPress={onRetry}
         accessibilityRole="button"
@@ -107,7 +145,11 @@ function FailureBanner({ onRetry }: { onRetry: () => void }) {
         hitSlop={8}
         style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
       >
-        <Text style={styles.retryLabel}>{'Retry →'}</Text>
+        {retrying ? (
+          <ActivityIndicator size="small" color={tokens.colors.primaryDim} />
+        ) : (
+          <Text style={styles.retryLabel}>{'Retry →'}</Text>
+        )}
       </Pressable>
     </View>
   );
@@ -164,7 +206,10 @@ const styles = StyleSheet.create({
     borderColor: tokens.colors.borderMuted,
     padding: 12,
   },
-  bannerTitle: { flex: 1, color: semantic.text.primary, fontSize: 14, fontWeight: '600' },
+  // Design ".bn p": title on its line, the funds note dim under it.
+  bannerCopy: { flex: 1, gap: 2 },
+  bannerTitle: { color: semantic.text.primary, fontSize: 14, fontWeight: '600' },
+  bannerLine: { color: semantic.text.dim, fontSize: 12 },
   pressed: { opacity: 0.82 },
   retry: { paddingVertical: 2 },
   // Design ".fix": gold, 12.
