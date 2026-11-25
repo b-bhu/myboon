@@ -41,10 +41,21 @@ export function PhoenixTpslSheet({
   /** Called after a sent update, so the caller refetches the positions. */
   onUpdated: () => void;
 }) {
+  // The sheet is busy while a send runs: backdrop and back button cannot
+  // dismiss it, so a failure after dismissal is never lost.
+  const [busy, setBusy] = useState(false);
   // Remount the body per position so the fields start from its prices.
   return (
-    <WalletSecondarySheet visible={position !== null} title="Edit TP/SL" onClose={onClose}>
-      {position ? <SheetBody key={`${position.symbol}:${position.side}`} position={position} onClose={onClose} onUpdated={onUpdated} /> : null}
+    <WalletSecondarySheet visible={position !== null} title="Edit TP/SL" onClose={onClose} busy={busy}>
+      {position ? (
+        <SheetBody
+          key={`${position.symbol}:${position.side}`}
+          position={position}
+          onClose={onClose}
+          onUpdated={onUpdated}
+          onBusyChange={setBusy}
+        />
+      ) : null}
     </WalletSecondarySheet>
   );
 }
@@ -53,10 +64,12 @@ function SheetBody({
   position,
   onClose,
   onUpdated,
+  onBusyChange,
 }: {
   position: WalletPerpPositionDetail;
   onClose: () => void;
   onUpdated: () => void;
+  onBusyChange: (busy: boolean) => void;
 }) {
   const wallet = usePhoenixSigner();
   const [tp, setTp] = useState(prefill(position.takeProfitPriceUsd));
@@ -92,6 +105,7 @@ function SheetBody({
 
     runningRef.current = true;
     setBusy(true);
+    onBusyChange(true);
     setMessage(null);
     try {
       const builtTransaction = await buildPhoenixPositionConditionalOrder({
@@ -117,8 +131,9 @@ function SheetBody({
     } finally {
       runningRef.current = false;
       setBusy(false);
+      onBusyChange(false);
     }
-  }, [onClose, onUpdated, position, sl, tp, wallet.address, wallet.connection, wallet.signAndSend]);
+  }, [onBusyChange, onClose, onUpdated, position, sl, tp, wallet.address, wallet.connection, wallet.signAndSend]);
 
   return (
     <View style={styles.root}>
