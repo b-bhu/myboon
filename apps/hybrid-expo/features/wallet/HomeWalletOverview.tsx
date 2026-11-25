@@ -406,6 +406,10 @@ export function HomeWalletOverview({
             solana={chainAddress('solana')}
             evm={chainAddress('evm')}
             onBack={() => appViewDispatch({ type: 'back' })}
+            onSwapFromSpot={(mint) => {
+              appViewDispatch({ type: 'back' });
+              setSwapFromSpot(mint);
+            }}
             style={styles.appViewOverlay}
           />
         ) : null}

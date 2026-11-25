@@ -149,7 +149,7 @@ export const PortfolioSection = memo(function PortfolioSection({
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
   onOpenMeteora: () => void;
-  onSelectApp?: (app: 'meteora' | 'phoenix' | 'pacifica') => void;
+  onSelectApp?: (app: 'meteora' | 'phoenix' | 'pacifica' | 'spot') => void;
   onOpenSpot: () => void;
 }) {
   const { summary, loading, error, errorStatus, retry } = useWalletSummary(solana, evm);
@@ -240,7 +240,9 @@ export const PortfolioSection = memo(function PortfolioSection({
     meteora: onSelectApp ? () => onSelectApp('meteora') : onOpenMeteora,
   };
   const openSpotRef = useRef(onOpenSpot);
-  openSpotRef.current = onOpenSpot;
+  // #844: with onSelectApp the Solana Spot row opens the Spot app view; without
+  // it the row keeps the old /spot route.
+  openSpotRef.current = onSelectApp ? () => onSelectApp('spot') : onOpenSpot;
   const openAppRow = useCallback((key: PortfolioAppKey) => openAppRef.current[key]?.(), []);
   const openSpotRow = useCallback(() => openSpotRef.current?.(), []);
 
@@ -347,7 +349,7 @@ export const PortfolioSection = memo(function PortfolioSection({
         chipNegative: false,
         age: ageLabel(state?.byApp.spot.asOf ?? null),
         accessibilityLabel: 'Open Spot',
-        onOpen: onOpenSpot,
+        onOpen: openSpotRow,
         onRetry: retry,
         spinner: rowSpinner(stale),
       };
