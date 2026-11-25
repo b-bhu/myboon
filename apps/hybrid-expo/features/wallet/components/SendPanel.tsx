@@ -15,7 +15,7 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { tokens } from '@/theme';
@@ -27,6 +27,7 @@ import {
   chipAmountText,
   sanitizeAmountText,
   rentLineText,
+  sendInputsLocked,
   sendAmountAtomic,
   sendAmountLabel,
   spotUsdcAtomic,
@@ -41,6 +42,7 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
   const balanceAtomic = spotUsdcAtomic(summary);
   const [amount, setAmount] = useState('');
   const [address, setAddress] = useState('');
+  const lockedRef = useRef(false);
   const [activeChip, setActiveChip] = useState<SendChipPercent | null>(null);
   // Issue #823: derived from the field, so typing and pasting recheck on every
   // change — empty shows nothing, a fix clears the line.
@@ -61,7 +63,8 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
     amountAtomic: ready ? amountAtomic : null,
     balanceAtomic,
   });
-  const locked = transfer.stage === 'pending';
+  const locked = sendInputsLocked(transfer.stage);
+  lockedRef.current = locked;
 
   const handleChip = useCallback((percent: SendChipPercent) => {
     if (balanceAtomic === null) return;
@@ -76,7 +79,8 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
 
   const handlePaste = useCallback(async () => {
     const text = await Clipboard.getStringAsync().catch(() => '');
-    if (text) setAddress(text.trim());
+    // A paste that finishes after the swipe must not change the address.
+    if (text && !lockedRef.current) setAddress(text.trim());
   }, []);
 
   const chipsDisabled = balanceAtomic === null || locked;
@@ -113,6 +117,7 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
           <Text style={styles.cap}>To</Text>
           <Pressable
             onPress={handlePaste}
+            disabled={locked}
             accessibilityRole="button"
             accessibilityLabel="Paste address from clipboard"
             style={({ pressed }) => [styles.mini, pressed && styles.pressed]}

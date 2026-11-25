@@ -306,6 +306,24 @@ test('confirm does not arrive: failed at confirm with the signature; the repeat 
   assert.deepEqual(statusSignatures, [['sig-1']]);
 });
 
+test('landed send: the repeat call resolves to confirmed even though the balance now sits below the amount', async () => {
+  const { connection, calls, handlers } = fakeWire({
+    confirm: () => {
+      throw new Error('Transaction was not confirmed in 30.00 seconds');
+    },
+  });
+  const { signTransaction } = signingHarness();
+  const input = baseInput('310000', connection);
+  const first = asFailed(await sendUsdcOnSolana({ ...input, signTransaction }));
+  assert.equal(first.step, 'confirm');
+
+  handlers.signatureStatuses = () => [{ err: null, confirmationStatus: 'confirmed' }];
+  // The send landed, so the wallet balance is now below the amount.
+  const repeat = await sendUsdcOnSolana({ ...input, balanceAtomic: '1000', signTransaction });
+  assert.deepEqual(repeat, { status: 'confirmed', signature: 'sig-1' });
+  assert.equal(calls.send, 1);
+});
+
 test('confirm timeout: the repeat call sends again when the chain does not know the signature', async () => {
   const { connection, calls, handlers } = fakeWire();
   const { signTransaction, unsigned } = signingHarness();

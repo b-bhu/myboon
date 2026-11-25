@@ -65,6 +65,11 @@ export function sanitizeAmountText(text: string): string {
 
 export type SendStage = 'idle' | 'pending' | 'done' | 'failed';
 
+/** The cards, chips and Paste are locked while a send is pending. */
+export function sendInputsLocked(stage: SendStage): boolean {
+  return stage === 'pending';
+}
+
 /** Typed amount text to atomic units, or null while it is empty, zero or malformed. */
 export function sendAmountAtomic(text: string): string | null {
   try {

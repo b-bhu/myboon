@@ -7,6 +7,7 @@ import {
   balanceText,
   rentLineText,
   sendAmountAtomic,
+  sendInputsLocked,
   sendAmountLabel,
   sendSliderCopy,
   chipAmountText,
@@ -92,4 +93,9 @@ test('send helpers: amount to atomic, rent line', () => {
   assert.equal(sendAmountAtomic('0'), null);
   assert.equal(sendAmountLabel('12500000'), '12.5');
   assert.equal(rentLineText(2039280), 'Includes ~0.002 SOL to create their USDC account');
+});
+
+test('send inputs lock only while a send is pending', () => {
+  assert.equal(sendInputsLocked('pending'), true);
+  for (const stage of ['idle', 'done', 'failed'] as const) assert.equal(sendInputsLocked(stage), false);
 });
