@@ -31,6 +31,7 @@ import { MeteoraPositionsTab } from './MeteoraPositionsTab';
 import { PhoenixAppTop } from './PhoenixAppTop';
 import { PhoenixOrdersTab } from './PhoenixOrdersTab';
 import { PhoenixPositionsTab } from './PhoenixPositionsTab';
+import { SpotTokenList } from './SpotTokenList';
 import { usePhoenixOrders } from './usePhoenixOrders';
 import { useMeteoraPositions } from './useMeteoraPositions';
 import { usePerpPositions } from './usePerpPositions';
@@ -113,6 +114,7 @@ export const AppView = memo(function AppView({
   solana,
   evm,
   onBack,
+  onSwapFromSpot,
   style,
 }: {
   /** The selected app id; titles resolve from it so callers stay generic. */
@@ -122,6 +124,8 @@ export const AppView = memo(function AppView({
   evm: string | null;
   /** Back to the Portfolio list (#771). */
   onBack: () => void;
+  /** Spot token row's Swap (#844): fills the Swap pay card and selects Swap (#906). */
+  onSwapFromSpot?: (mint: string) => void;
   /** Positioning from the mount point — the shell overlays the Portfolio. */
   style?: StyleProp<ViewStyle>;
 }) {
@@ -209,6 +213,9 @@ export const AppView = memo(function AppView({
             <PortfolioTabBody tabKey={activeTab} tab={phoenixTabRecord[activeTab]} />
           )}
         </ScrollView>
+      ) : app === 'spot' && onSwapFromSpot ? (
+        <SpotTokenList solana={solana} evm={evm} onSwap={onSwapFromSpot} />
+
       ) : null}
     </View>
   );
