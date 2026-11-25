@@ -128,7 +128,12 @@ export const MeteoraPositionsTab = memo(function MeteoraPositionsTab({
         />
       ))}
       {managed === null ? null : (
-        <MeteoraManageSheet position={managed} onClose={() => setManaged(null)} onChanged={retry} />
+        <MeteoraManageSheet
+          position={managed}
+          valueUsd={poolValueUsd(pools, managed.poolName)}
+          onClose={() => setManaged(null)}
+          onChanged={retry}
+        />
       )}
     </View>
   );
