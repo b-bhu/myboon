@@ -86,6 +86,18 @@ export function swapSliderCopy(input: SwapSliderCopyInput): SwapSliderCopy {
   }
 }
 
+/** One-line receipt shown in place of the facts row after a Swap completes. */
+export function swapReceiptLine(input: { sent: string; got: string; time: string }): string {
+  return `Receipt: sent ${input.sent} · got ${input.got} · ${input.time}`;
+}
+
+/** "4s" under a minute, "1m 5s" above; "—" when the start was not seen. */
+export function formatTook(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return '—';
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 export function exchangeRate(
   order: SwapOrderResponse | null,
   input: SwapToken,
