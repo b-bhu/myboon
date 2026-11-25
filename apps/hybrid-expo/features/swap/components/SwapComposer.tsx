@@ -75,6 +75,8 @@ export type SwapComposerProps = {
   walletActions?: boolean;
   /** Wallet body: no heading row, no action menu (mode switch already covers it). */
   inWallet?: boolean;
+  /** Pay token came from a Spot row (#906): tag it "From Spot" and lock the pay pill. */
+  payFromSpot?: boolean;
 };
 
 export function SwapComposer({
@@ -85,6 +87,7 @@ export function SwapComposer({
   walletSheet: walletSheetOverride,
   walletActions = true,
   inWallet = false,
+  payFromSpot = false,
 }: SwapComposerProps) {
   const runtimeWalletSheet = useWalletSheet();
   const walletSheet = walletSheetOverride ?? runtimeWalletSheet;
@@ -339,7 +342,8 @@ export function SwapComposer({
         outputAmount={c.outputUi} inputUsd={c.inputUsd} outputUsd={c.outputUsd}
         inputBalance={c.inputBalanceAtomic} outputBalance={c.outputBalanceAtomic}
         busy={c.interactionBusy} payInputRef={payInputRef}
-        inputLocked={c.mode === 'sell'} outputLocked={c.mode === 'buy'} canReverse={c.mode === 'swap'}
+        inputLocked={c.mode === 'sell' || payFromSpot} outputLocked={c.mode === 'buy'}
+        canReverse={c.mode === 'swap' && !payFromSpot} payTag={payFromSpot ? 'From Spot' : undefined}
         onAmount={(value) => { cancelGesture(); attemptedQuote.current = null; c.setManualAmount(value); }}
         onAmountFocus={() => setAmountFocused(true)} onAmountBlur={() => setAmountFocused(false)}
         onPicker={openPicker} onReverse={() => gesture.current?.handleTap()}
