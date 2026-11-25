@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { exchangeRateValue, formatBalance, swapSliderCopy } from './swap.display';
+import { exchangeRateValue, formatBalance, formatTook, swapReceiptLine, swapSliderCopy } from './swap.display';
 import type { SwapOrderResponse, SwapToken } from './swap.types';
 
 const input: SwapToken = {
@@ -120,4 +120,15 @@ test('swapSliderCopy no-route shows the reason and the suggested chain', () => {
     strong: 'Tap to switch to a supported chain',
     feeSplit: null,
   });
+});
+
+test('swapReceiptLine and formatTook build the done-state copy', () => {
+  assert.equal(
+    swapReceiptLine({ sent: '1 SOL', got: '142.3 USDC', time: '5:31 PM IST' }),
+    'Receipt: sent 1 SOL · got 142.3 USDC · 5:31 PM IST',
+  );
+  assert.equal(formatTook(4200), '4s');
+  assert.equal(formatTook(65000), '1m 5s');
+  assert.equal(formatTook(null), '—');
+  assert.equal(swapSliderCopy({ state: 'done', fees: '~0.00005 SOL', time: formatTook(4000), received: '142.3 USDC' }).small, 'Done · ~0.00005 SOL fees · took 4s');
 });

@@ -16,7 +16,7 @@ import { AssetSwap, SwapTokenAvatar } from '@/features/swap/components/AssetSwap
 import { SwapTokenPicker } from '@/features/swap/components/SwapTokenPicker';
 import { SwipeToConfirm } from '@/features/swap/components/SwipeToConfirm';
 import { formatAtomicAmount, parseUiAmountToAtomic } from '@/features/swap/swap.math';
-import { exchangeRate, exchangeRateValue, providerFee, swapSliderCopy } from '@/features/swap/swap.display';
+import { exchangeRate, exchangeRateValue, formatTook, providerFee, swapReceiptLine, swapSliderCopy } from '@/features/swap/swap.display';
 import { swapTheme as color } from '@/features/swap/swap.theme';
 import { useSwapValueAnimation } from '@/features/swap/swap.motion';
 import type { SwapSide } from '@/features/swap/swap.types';
@@ -37,7 +37,7 @@ type Surface = 'actions' | 'slippage' | 'details' | null;
  * step (tap to retry), or a quote with no route for the amount (off).
  */
 type SlideState = {
-  kind: 'pending' | 'failed' | 'no-route';
+  kind: 'pending' | 'failed' | 'no-route' | 'done';
   small: string;
   big: string;
   /** Tap action; only the failed step retries. */
@@ -105,6 +105,12 @@ export function SwapComposer({
   const latest = useRef({ c, active, surface, walletSheetOpen: walletSheet.isOpen });
   latest.current = { c, active, surface, walletSheetOpen: walletSheet.isOpen };
   const hasAmount = c.amount.trim().length > 0;
+  // #810: what the done state shows. Taken from the controller's own values at
+  // the moment the swap confirms; cleared as soon as the phase leaves it.
+  const swipedAt = useRef<number | null>(null);
+  const [receipt, setReceipt] = useState<{
+    sent: string; got: string; time: string; took: number | null; fees: string;
+  } | null>(null);
   const quoteReveal = useSwapValueAnimation(hasAmount ? 'visible' : '');
 
   useEffect(() => {
@@ -266,6 +272,18 @@ export function SwapComposer({
   const feeSummary = feeOrder
     ? `Network ${networkFees}${quotedProviderFee === 'Unavailable' ? '' : ` · Provider ${quotedProviderFee}`}`
     : 'Fees update with quote';
+  useEffect(() => {
+    if (phase === 'awaiting_signature' || phase === 'executing') swipedAt.current ??= Date.now();
+    else if (phase !== 'confirmed') swipedAt.current = null;
+    if (phase !== 'confirmed') { setReceipt(null); return; }
+    setReceipt((current) => current ?? {
+      sent: `${c.amount} ${c.inputToken.symbol}`,
+      got: `${c.outputUi} ${c.outputToken.symbol}`,
+      time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }),
+      took: swipedAt.current === null ? null : Date.now() - swipedAt.current,
+      fees: networkFees === 'Unavailable' ? '—' : `~${networkFees}`,
+    });
+  }, [phase, c.amount, c.outputUi, c.inputToken.symbol, c.outputToken.symbol, networkFees]);
   const minimum = order ? formatAtomicAmount(order.minimumOutAmountAtomic, c.outputToken.decimals, 8) : '—';
   const numericRate = exchangeRateValue(order, c.inputToken, c.outputToken);
   const rate = numericRate === null ? '—' : numericRate.toLocaleString('en-US', { maximumSignificantDigits: 6 });
@@ -285,7 +303,10 @@ export function SwapComposer({
   let statusAction: (() => void) | undefined;
   let loading = false;
   let slide: SlideState | null = null;
-  if (c.phase === 'confirmed') status = 'Swap complete';
+  if (c.phase === 'confirmed' && receipt) {
+    const doneCopy = swapSliderCopy({ state: 'done', fees: receipt.fees, time: formatTook(receipt.took), received: receipt.got });
+    slide = { kind: 'done', small: doneCopy.small, big: doneCopy.strong };
+  } else if (c.phase === 'confirmed') status = 'Swap complete';
   else if (c.phase === 'unknown') { status = 'Check pending swap'; statusAction = () => void c.reconcilePending(); }
   else if (c.interactionBusy) {
     if (c.phase === 'awaiting_signature' || c.phase === 'executing') {
@@ -355,6 +376,11 @@ export function SwapComposer({
             <MaterialIcons name="block" size={18} color={color.error} />
             <Text style={styles.noRouteText}>No route for {c.amount} {c.inputToken.symbol}. Try a smaller amount.</Text>
           </View>
+        ) : c.phase === 'confirmed' && receipt ? (
+          <Text accessibilityLabel={swapReceiptLine(receipt)} numberOfLines={1} style={styles.receiptLine}>
+            Receipt: sent <Text style={styles.receiptValue}>{receipt.sent}</Text> · got{' '}
+            <Text style={styles.receiptValue}>{receipt.got}</Text> · {receipt.time}
+          </Text>
         ) : <View style={styles.quoteStrip}>
           <View style={styles.metric}>
             <Text style={styles.metricLabel}>{inWallet ? 'Rate' : 'Exchange rate'}</Text>
@@ -558,6 +584,10 @@ function SlideStatus({ slide }: { slide: SlideState }) {
       <View style={[styles.statusThumb, styles.slideThumbFailed]}>
         <MaterialIcons name="refresh" size={20} color={color.error} />
       </View>
+    ) : slide.kind === 'done' ? (
+      <View style={[styles.statusThumb, styles.successThumb]}>
+        <MaterialIcons name="check" size={21} color={color.navy} />
+      </View>
     ) : (
       <View style={[styles.statusThumb, styles.slideThumbOff]}>
         <MaterialIcons name="block" size={20} color={color.dim} />
@@ -588,9 +618,9 @@ function SlideStatus({ slide }: { slide: SlideState }) {
       accessible
       accessibilityLabel={slide.big}
       accessibilityState={slide.kind === 'pending' ? { busy: true } : { disabled: true }}
-      style={[styles.slideRow, slide.kind === 'no-route' && styles.slideOff]}
+      style={[styles.slideRow, slide.kind === 'no-route' && styles.slideOff, slide.kind === 'done' && styles.inlineSuccess]}
     >
-      {slide.kind === 'no-route' ? thumb : null}
+      {slide.kind === 'no-route' || slide.kind === 'done' ? thumb : null}
       {copy}
       {slide.kind === 'pending' ? thumb : null}
     </View>
@@ -608,6 +638,8 @@ const styles = StyleSheet.create({
   actionHeading: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 6 },
   actionName: { color: color.navy, fontSize: 20, fontWeight: '700' },
   quoteStrip: { flexDirection: 'row', gap: 6, borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 },
+  receiptLine: { minHeight: 44, color: color.dim, fontSize: 11, textAlign: 'center', textAlignVertical: 'center', borderTopWidth: 1, borderTopColor: color.border, paddingTop: 6 },
+  receiptValue: { color: color.text, fontWeight: '500' },
   metric: { flex: 1, minHeight: 44, justifyContent: 'center', gap: 4 },
   metricLabel: { color: color.dim, fontSize: 9 },
   metricValue: { color: color.text, fontSize: 10, fontVariant: ['tabular-nums'], flexShrink: 1 },
