@@ -4,8 +4,9 @@
  *
  * One QR card for the address the Solana | EVM toggle picks; the card holds
  * only the toggle, the QR and the address. Below it, where the slider sits
- * in the other modes, a two-line strip (mock `.dstrip`) and the 54px Copy
- * button (mock `.copybtn`); the card is flex and absorbs the strip's height.
+ * in the other modes, the mock's "Works on" chain row (`ChainMarks`, #939),
+ * a two-line strip (mock `.dstrip`) and the 54px Copy button (mock
+ * `.copybtn`); the card is flex and absorbs their heights.
  * Nothing is signed in Receive, so there is no swipe and the panel body
  * geometry does not change.
  *
@@ -30,6 +31,7 @@ import * as Haptics from 'expo-haptics';
 import type { Chain } from '@/features/chain/chain.contract';
 import { tokens } from '@/theme';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
+import { ChainMark, type ChainMarkName } from '@/features/wallet/components/ChainMarks';
 import {
   receivePanelCopy,
   receivePanelState,
@@ -40,6 +42,12 @@ import {
 const NETWORK_LABEL: Record<ReceiveChain, string> = {
   solana: 'Solana',
   evm: 'EVM',
+};
+
+// Mock `recvMid`: the marks the shown address accepts, EVM order first.
+const WORKS_ON: Record<ReceiveChain, readonly ChainMarkName[]> = {
+  solana: ['solana'],
+  evm: ['base', 'ethereum', 'arbitrum', 'polygon', 'optimism', 'bnb'],
 };
 
 function NetworkToggle({ chain, onSelect }: { chain: ReceiveChain; onSelect: (chain: ReceiveChain) => void }) {
@@ -134,6 +142,12 @@ export function ReceivePanel({ solanaAddress, evmAddress, chains }: {
       </View>
       {state === 'connected' ? (
         <>
+          <View style={styles.chainRow}>
+            <Text style={styles.chainRowLabel}>Works on</Text>
+            {WORKS_ON[chain].map((mark) => (
+              <ChainMark key={mark} chain={mark} size={24} />
+            ))}
+          </View>
           <View style={styles.dstrip}>
             <Text style={styles.dstripLine}>{copy.strip[0]}</Text>
             <Text style={styles.dstripLine}>{copy.strip[1]}</Text>
@@ -214,6 +228,22 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: 11,
     color: tokens.colors.bone,
+  },
+  // Design `.chainrow2`: 32 tall, "Works on" label + marks centered with an
+  // 8 gap; the body's 8 gap pads the row on each side.
+  chainRow: {
+    height: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  chainRowLabel: {
+    fontSize: 11,
+    fontFamily: 'monospace',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    color: tokens.colors.textDim,
   },
   // Design `.dstrip`: 52 tall, both lines dim mono 11, gap 4, padding 0 4.
   dstrip: { height: 52, justifyContent: 'center', gap: 4, paddingHorizontal: 4 },
