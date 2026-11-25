@@ -1,12 +1,13 @@
 /**
- * Tests for the remembered Portfolio view choice (issue #840).
+ * Tests for the remembered Portfolio view choice (issue #840, extended by
+ * #871).
  *
  * The switch's contract is that a stored choice survives a reopen only when
- * that view can render: Table is enabled first (#841, #842 follow), so
- * 'map' or 'cards' on disk must reopen as Table, and a storage failure must
+ * that view can render: Cards is enabled since #842 and Map since #871, so
+ * an unknown value on disk must reopen as Table, and a storage failure must
  * land on Table without ever throwing into the UI.
  *
- * Covers the issue's Verification: parse of unknown, disabled and enabled
+ * Covers the issues' Verifications: parse of unknown, disabled and enabled
  * values, and read and write when storage throws.
  *
  * Run: pnpm --filter hybrid-expo test:wallet
@@ -73,9 +74,10 @@ beforeEach(() => {
 });
 
 describe('parsePortfolioView', () => {
-  it('accepts the enabled views', () => {
+  it('accepts the enabled views (map joined in #871)', () => {
     const portfolioView = loadPortfolioView();
     assert.equal(portfolioView.parsePortfolioView('table'), 'table');
+    assert.equal(portfolioView.parsePortfolioView('map'), 'map');
     assert.equal(portfolioView.parsePortfolioView('cards'), 'cards');
   });
 
@@ -85,13 +87,6 @@ describe('parsePortfolioView', () => {
     assert.equal(portfolioView.parsePortfolioView('MAP'), 'table');
     assert.equal(portfolioView.parsePortfolioView(''), 'table');
     assert.equal(portfolioView.parsePortfolioView(null), 'table');
-  });
-
-  it('falls back to table for a view that exists but is disabled yet (#841)', () => {
-    const portfolioView = loadPortfolioView();
-    // 'map' is a real view name, so this is not a spelling check: the value
-    // is only honoured once its view is enabled.
-    assert.equal(portfolioView.parsePortfolioView('map'), 'table');
   });
 });
 
@@ -110,11 +105,22 @@ describe('readPortfolioView / writePortfolioView', () => {
     assert.equal(await reopened.readPortfolioView(), 'table');
   });
 
-  it('a stored disabled view reopens as table (acceptance: stored value is "map")', async () => {
+  it('a stored view name that is not enabled reopens as table', async () => {
     const portfolioView = loadPortfolioView();
-    disk.set('wallet.portfolio.view', 'map');
+    // No view is disabled today (Map joined in #871), so the unknown-but
+    // plausible value stands in for the case a disabled one used to pin.
+    disk.set('wallet.portfolio.view', 'grid');
 
     assert.equal(await portfolioView.readPortfolioView(), 'table');
+  });
+
+  it('a stored map choice reopens as map (acceptance: map choice survives a restart)', async () => {
+    const portfolioView = loadPortfolioView();
+    // #871: 'map' was the disabled stand-in before; now the view renders and
+    // the stored choice comes through untouched.
+    disk.set('wallet.portfolio.view', 'map');
+
+    assert.equal(await portfolioView.readPortfolioView(), 'map');
   });
 
   it('a read failure is table, not an error (acceptance: storage throws on read)', async () => {

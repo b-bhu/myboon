@@ -27,11 +27,11 @@
  * left, two short bars right, nothing spinning — and the app/spot counts
  * show short skeleton bars instead of a zero; nothing has loaded yet.
  *
- * The body is the table or, with Cards chosen (#842), `PortfolioCards` over
- * the same entries (#841 adds Map): the header's Table | Map | Cards switch
- * (#840, the design's ".vs" in frame "Portfolio · Map") carries and
- * remembers the choice, and its disabled segments reopen as Table via
- * `portfolio-view`'s parse. The Spot segment lists one row per chain —
+ * The body is the table, the Map treemap (#871's `PortfolioMap`) or, with
+ * Cards chosen (#842), `PortfolioCards` over the same entries: the header's
+ * Table | Map | Cards switch (#840, the design's ".vs" in frame "Portfolio
+ * · Map") carries and remembers the choice, and its disabled segments reopen
+ * as Table via `portfolio-view`'s parse. The Spot segment lists one row per chain —
  * v1: Solana only, no EVM row (issue #770) — labelled "Spot", opening
  * `/spot`, the venue's current profile route (#844 moves that tap to the
  * token list); app rows open theirs via callbacks, like the old rows below
@@ -73,6 +73,7 @@ import {
   POLYMARKET_MARK_SVG,
 } from '@/features/home/marketBrandAssets';
 import { PortfolioCards, type PortfolioCardItem } from '@/features/wallet/components/PortfolioCards';
+import { PortfolioMap, type PortfolioMapItem } from '@/features/wallet/components/PortfolioMap';
 import { pnlChipText, portfolioCardPnl } from '@/features/wallet/portfolio-cards';
 import {
   DEFAULT_PORTFOLIO_VIEW,
@@ -156,7 +157,7 @@ export const PortfolioSection = memo(function PortfolioSection({
   const [seg, setSeg] = useState<'apps' | 'spot'>('apps');
   const [showAll, setShowAll] = useState(false);
   // The remembered view (#840): Table first open, the stored choice once the
-  // read settles. Map is a dimmed inert segment until #841 adds its view.
+  // read settles. Map renders since #871, so all three segments are live.
   const [view, setView] = useState<PortfolioView>(DEFAULT_PORTFOLIO_VIEW);
   useEffect(() => {
     let cancelled = false;
@@ -351,7 +352,7 @@ export const PortfolioSection = memo(function PortfolioSection({
         accessibilityLabel: 'Open Spot',
         onOpen: openSpotRow,
         onRetry: retry,
-        spinner: rowSpinner(stale),
+        spinner: loading && stale ? <RetrySpinner /> : null,
       };
     }
     const name = APP_NAME[entry.appKey];
@@ -369,11 +370,55 @@ export const PortfolioSection = memo(function PortfolioSection({
       chipNegative: pnl !== null && pnl < 0,
       age: ageLabel(state?.byApp[entry.appKey].asOf ?? null),
       accessibilityLabel: `Open ${name} portfolio`,
-      onOpen: openApp[entry.appKey],
+      onOpen: () => openAppRow(entry.appKey),
       onRetry: retry,
-      spinner: rowSpinner(failed || stale),
+      spinner: loading && (failed || stale) ? <RetrySpinner /> : null,
     };
   });
+
+  // Map view (#871): the same top entries as the Table drawn as treemap
+  // tiles — a failed app has no tile, the "+N more" sum is the frame's dim
+  // "Other N" tile with no tap. A stale app keeps its last-value tile unmarked,
+  // and the layout drops a 0 value, so a Spot value unknown yet draws
+  // nothing. Names follow the rows: APP_NAME, "Spot · Solana" (v1 lists
+  // Solana only, #770), "Other N".
+  const mapItems: PortfolioMapItem[] = [];
+  for (const entry of top) {
+    if (entry.kind === 'appError') continue;
+    if (entry.kind === 'spot') {
+      mapItems.push({
+        key: `spot:${entry.row.chain}`,
+        name: 'Spot · Solana',
+        valueUsd: entry.valueUsd,
+        valueText: formatUsd(entry.valueUsd),
+        other: false,
+        accessibilityLabel: 'Open Spot',
+        onPress: openSpotRow,
+      });
+      continue;
+    }
+    const name = APP_NAME[entry.appKey];
+    mapItems.push({
+      key: `app:${entry.appKey}`,
+      name,
+      valueUsd: entry.valueUsd,
+      valueText: formatUsd(entry.valueUsd),
+      other: false,
+      accessibilityLabel: `Open ${name} portfolio`,
+      onPress: () => openAppRow(entry.appKey),
+    });
+  }
+  if (moreCount > 0) {
+    mapItems.push({
+      key: 'other',
+      name: `Other ${moreCount}`,
+      valueUsd: hiddenSum,
+      valueText: formatUsd(hiddenSum),
+      other: true,
+      accessibilityLabel: `Other ${moreCount} holdings`,
+      onPress: null,
+    });
+  }
 
   return (
     <View style={styles.section}>
@@ -452,7 +497,15 @@ export const PortfolioSection = memo(function PortfolioSection({
       </View>
 
       <View style={styles.table}>
-        {view === 'cards' ? (
+        {view === 'map' ? (
+          showSkeletons ? (
+            // #871 first load: one skeleton block in place of the box (the
+            // frame's .sk.skmap), 260 high, radius 8, nothing spinning.
+            <View style={[styles.mapSkeleton, styles.skeleton]} />
+          ) : list.length > 0 ? (
+            <PortfolioMap items={mapItems} totalUsd={total} />
+          ) : null
+        ) : view === 'cards' ? (
           <PortfolioCards
             items={cardItems}
             skeleton={showSkeletons}
@@ -759,10 +812,10 @@ function RetrySpinner() {
 /**
  * The Table | Map | Cards switch from the design's ".vs" (wallet.html at
  * 02b98eba, frame "Portfolio · Map"; PROTO_NOTES: "34×28 buttons, on
- * #0E3A4C + gold icon", space-between against the ".ph" title). Map and
- * Cards are dimmed and inert until #841 and #842 enable them (#840): the
- * choice can only be an enabled view, and it is remembered through
- * `portfolio-view`.
+ * #0E3A4C + gold icon", space-between against the ".ph" title). Cards
+ * joined in #842 and Map in #871, so all three are live; a view not in
+ * `ENABLED_PORTFOLIO_VIEWS` is dimmed and inert (the choice can only be an
+ * enabled view, and it is remembered through `portfolio-view`).
  */
 function ViewSwitch({ view, onSelect }: { view: PortfolioView; onSelect: (next: PortfolioView) => void }) {
   const views: readonly PortfolioView[] = ['table', 'map', 'cards'];
@@ -914,6 +967,8 @@ const styles = StyleSheet.create({
   glyphRule: { position: 'absolute', left: 2, width: 12, height: 1.2, borderRadius: 1 },
   glyphTile: { position: 'absolute', borderWidth: 1.2 },
   table: { gap: 0 },
+  // #871: the frame's .sk.skmap first-load block in place of the Map box.
+  mapSkeleton: { height: 260, borderRadius: 8 },
   row: {
     minHeight: 64,
     flexDirection: 'row',
