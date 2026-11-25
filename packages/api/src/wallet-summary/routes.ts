@@ -13,9 +13,11 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { getConnInfo } from '@hono/node-server/conninfo'
-import type { MeteoraPositionsResponse } from '@myboon/shared/wallet-summary'
+import type { MeteoraPositionsResponse, PerpPositionsResponse } from '@myboon/shared/wallet-summary'
+import { createPhoenixConfig, createPhoenixUpstream } from '../phoenix/index.js'
 import type { WalletSummaryService } from './service.js'
 import { fetchMeteoraPositions } from './venues/meteora.js'
+import { createPhoenixPositionsReader } from './venues/phoenix.js'
 
 // Same base58 pattern as /spot/:wallet/balances (src/spot/routes.ts).
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
@@ -79,6 +81,8 @@ export function createWalletSummaryRoutes(options: {
   service: WalletSummaryService
   /** Reads every Meteora position (#867); production uses the venue's reader. */
   meteoraPositions?: (solana: string | null) => Promise<MeteoraPositionsResponse>
+  /** Reads every open Phoenix position (#899); production passes the reader on the shared Phoenix upstream. */
+  phoenixPositions?: (solana: string | null) => Promise<PerpPositionsResponse>
   rateLimiter?: WalletRateLimiter
   trustForwardedHeaders?: boolean
 }): Hono {
@@ -86,6 +90,9 @@ export function createWalletSummaryRoutes(options: {
   const { service } = options
   const limiter = options.rateLimiter ?? createWalletRateLimiter()
   const meteoraPositions = options.meteoraPositions ?? fetchMeteoraPositions
+  // No reader passed: a default upstream, as venues/index.ts builds for the summary.
+  const phoenixPositions = options.phoenixPositions
+    ?? createPhoenixPositionsReader(createPhoenixUpstream(createPhoenixConfig()))
   const identityFor = (c: Context) => identityFromContext(c, options.trustForwardedHeaders === true)
 
   routes.get('/summary', async (c) => {
@@ -128,6 +135,25 @@ export function createWalletSummaryRoutes(options: {
       )
     }
     return c.json(await meteoraPositions(solana))
+  })
+
+  // GET /wallet/phoenix/positions?solana= (#899): read-only, same address
+  // check and per-IP limiter as the Meteora route. No address = no Phoenix
+  // account: `not_connected`.
+  routes.get('/phoenix/positions', async (c) => {
+    const solana = c.req.query('solana') || null
+    if (solana && !SOLANA_ADDRESS_PATTERN.test(solana)) {
+      return c.json({ error: 'Invalid solana address', code: 'INVALID_ADDRESS' }, 400)
+    }
+    const quota = limiter.consume(identityFor(c), 1)
+    if (!quota.ok) {
+      return c.json(
+        { error: 'Wallet summary rate limit exceeded', code: 'RATE_LIMITED' },
+        429,
+        { 'Retry-After': String(quota.retryAfterSeconds) },
+      )
+    }
+    return c.json(await phoenixPositions(solana))
   })
 
   return routes

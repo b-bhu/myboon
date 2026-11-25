@@ -16,7 +16,7 @@
  * other app still returns (#725) — the same contract as the Meteora and
  * spot venues.
  */
-import type { AppSummary, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary'
+import type { AppSummary, PerpPositionsResponse, PhoenixSummary, PhoenixTraderRecord, WalletPerpPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary'
 import { accountSummary, sumPhoenixPortfolioValue, toNumber, toUsd } from '@myboon/shared/wallet-summary'
 import { getPhoenixTraderState, type PhoenixUpstream } from '../../phoenix/index.js'
 import { asRecord } from '@myboon/shared/guards'
@@ -115,6 +115,32 @@ export function toPhoenixPositionDetails(traders: PhoenixTraderRecord[]): Wallet
 
   rows.sort((a, b) => b.sortValueUsd - a.sortValueUsd)
   return rows.map(({ sortValueUsd: _sortValueUsd, ...detail }) => detail)
+}
+
+/**
+ * The reader behind GET /wallet/phoenix/positions (#899): the primary
+ * account's trader state (pdaIndex 0, as the summary reads it) through
+ * toPhoenixPositionDetails. No address = not connected, with no upstream
+ * call. Never throws: a failed trader-state call (429 included) answers
+ * `unavailable`, as the summary slot does.
+ */
+export function createPhoenixPositionsReader(upstream: PhoenixUpstream) {
+  return async function readPhoenixPositions(solana: string | null): Promise<PerpPositionsResponse> {
+    if (!solana) return { status: 'not_connected', positions: [] }
+    try {
+      const result = await getPhoenixTraderState(upstream, solana, '0')
+      if (result.status !== 200) {
+        throw new Error(`Phoenix trader state unavailable (${result.status}): ${result.body.error}`)
+      }
+      const traders = result.body.traders
+        .map(asRecord)
+        .filter((record): record is PhoenixTraderRecord => record !== null)
+      return { status: 'ok', positions: toPhoenixPositionDetails(traders) }
+    } catch (error) {
+      console.error('[api] wallet-phoenix-positions failed:', error)
+      return { status: 'unavailable', positions: [], error: 'phoenix_positions_failed' }
+    }
+  }
 }
 
 export function createPhoenixVenue(upstream: PhoenixUpstream) {

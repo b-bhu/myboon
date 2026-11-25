@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createPhoenixConfig, createPhoenixUpstream } from '../../phoenix/index.js'
+import { createWalletSummaryRoutes } from '../routes.js'
 import { createWalletSummaryService } from '../service.js'
-import { createPhoenixVenue, toPhoenixPositionDetails } from './phoenix.js'
+import { createPhoenixPositionsReader, createPhoenixVenue, toPhoenixPositionDetails } from './phoenix.js'
 
 // getPhoenixTraderState (the shared trader-state reader, #727) takes its
 // upstream by option (#831); pin the base so the tests never depend on a
@@ -234,4 +235,73 @@ test('toPhoenixPositionDetails maps every open position with full detail', () =>
       traderSubaccountIndex: 0,
     },
   ])
+})
+
+// GET /wallet/phoenix/positions (#899): the reader on a stubbed upstream,
+// behind the real route (address check, limiter).
+test('GET /wallet/phoenix/positions answers every state', async () => {
+  const upstream = createPhoenixUpstream(createPhoenixConfig({ apiBase: 'https://phoenix.test' }))
+  const routes = createWalletSummaryRoutes({
+    service: createWalletSummaryService({ venues: [] }),
+    phoenixPositions: createPhoenixPositionsReader(upstream),
+  })
+  const get = async (query: string) => {
+    const response = await routes.request(`/phoenix/positions${query}`)
+    return { status: response.status, body: await response.json() as Record<string, unknown> }
+  }
+
+  // No address: not connected, HTTP 200, no upstream call.
+  const idle = stubFetch(() => new Response('not found', { status: 404 }))
+  try {
+    assert.deepEqual(await get(''), { status: 200, body: { status: 'not_connected', positions: [] } })
+    assert.equal(idle.calls.length, 0)
+    // Malformed address: 400 before any upstream call.
+    assert.deepEqual(await get('?solana=not-an-address'), {
+      status: 400,
+      body: { error: 'Invalid solana address', code: 'INVALID_ADDRESS' },
+    })
+    assert.equal(idle.calls.length, 0)
+  } finally {
+    idle.restore()
+  }
+
+  // A long and a short position: ok, rows from toPhoenixPositionDetails.
+  const ok = stubFetch((url) => url.pathname === legacyPath(WALLET)
+    ? Response.json({ slot: 100, slotIndex: 1, traders: [TRADER_A, TRADER_B] })
+    : new Response('not found', { status: 404 }))
+  try {
+    const { status, body } = await get(`?solana=${WALLET}`)
+    assert.equal(status, 200)
+    assert.equal(body.status, 'ok')
+    assert.deepEqual((body.positions as Array<{ symbol: string; side: string }>).map((p) => [p.symbol, p.side]), [
+      ['BTC-PERP', 'short'],
+      ['SOL-PERP', 'long'],
+    ])
+  } finally {
+    ok.restore()
+  }
+
+  // A trader list with no open positions: ok and empty.
+  const empty = stubFetch((url) => url.pathname === legacyPath(WALLET_EMPTY)
+    ? Response.json({ slot: 101, slotIndex: 2, traders: [] })
+    : new Response('not found', { status: 404 }))
+  try {
+    assert.deepEqual(await get(`?solana=${WALLET_EMPTY}`), { status: 200, body: { status: 'ok', positions: [] } })
+  } finally {
+    empty.restore()
+  }
+
+  // The trader state call answers 429: unavailable, HTTP 200, logged.
+  const down = stubFetch(() => new Response('{"error":"rate limited"}', { status: 429 }))
+  const originalError = console.error
+  console.error = () => {}
+  try {
+    assert.deepEqual(await get(`?solana=${WALLET_DOWN}`), {
+      status: 200,
+      body: { status: 'unavailable', positions: [], error: 'phoenix_positions_failed' },
+    })
+  } finally {
+    console.error = originalError
+    down.restore()
+  }
 })
