@@ -131,8 +131,6 @@ function loadOverview() {
     },
     '@/features/wallet/WalletActionPanel': { WalletActionPanel },
     '@/features/wallet/components/ReceivePanel': { ReceivePanel: () => null },
-    '@/features/wallet/WalletAccountRow': { WalletAccountRow: () => null },
-    '@/features/wallet/PerpsAccountRow': { PerpsAccountRow: () => null },
     '@/features/wallet/components/WalletModeSwitch': { WalletModeSwitch: ModeSwitchHost },
     '@/features/wallet/wallet-mode': { WALLET_ACTION_BODY_HEIGHT: 430 },
     '@/features/wallet/components/ChainRow': { ChainRow: () => null },
