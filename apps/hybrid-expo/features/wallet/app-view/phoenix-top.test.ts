@@ -122,3 +122,34 @@ describe('usd', () => {
     assert.equal(usd(-5), '$5.00');
   });
 });
+
+describe('phoenixTopFigures for Pacifica (#857)', () => {
+  it('reads equity and availableToSpendUsd from the Pacifica slot', () => {
+    const emptyApp = { status: 'not_connected' as VenueStatus, valueUsd: null, summary: null };
+    const summary: WalletSummary = {
+      solana: 'SolanaAddr',
+      evm: 'EvmAddr',
+      fetchedAt: '2026-11-24T00:00:00Z',
+      apps: {
+        polymarket: emptyApp,
+        phoenix: emptyApp,
+        pacifica: {
+          status: 'ok',
+          valueUsd: 640,
+          summary: {
+            equityUsd: 640,
+            availableToSpendUsd: null,
+            unrealizedPnlUsd: null,
+            positionCount: 0,
+            positions: [],
+          },
+        },
+        meteora: emptyApp,
+        spot: emptyApp,
+      },
+    };
+    assert.deepEqual(phoenixTopFigures(summary, 'pacifica'), { balance: '$640.00', cashAvailable: NO_DATA });
+    // The default venue still reads the Phoenix slot (unchanged behavior).
+    assert.deepEqual(phoenixTopFigures(summary), { balance: NO_DATA, cashAvailable: NO_DATA });
+  });
+});

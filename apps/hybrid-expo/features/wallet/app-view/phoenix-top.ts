@@ -20,6 +20,7 @@
 
 import { NO_DATA } from '@/lib/format';
 import type { WalletSummary } from '@myboon/shared/wallet-summary';
+import type { PerpVenue } from './perp-positions';
 
 export interface PhoenixTopFigures {
   /** "Balance" cell. */
@@ -44,12 +45,20 @@ export function usd(value: number): string {
  * summary at all (the caller shows a skeleton or the failure banner then);
  * a Phoenix slot without figures carries NO_DATA cells instead.
  */
-export function phoenixTopFigures(summary: WalletSummary | null): PhoenixTopFigures | null {
-  const phoenix = summary?.apps.phoenix;
-  if (!phoenix) return null;
-  const collateralUsd = phoenix.summary?.collateralUsd ?? null;
+export function phoenixTopFigures(
+  summary: WalletSummary | null,
+  venue: PerpVenue = 'phoenix',
+): PhoenixTopFigures | null {
+  // Pacifica reuses the view (#857): same two cells, "Cash available" is
+  // the slot's availableToSpendUsd instead of collateralUsd.
+  const slot = venue === 'pacifica' ? summary?.apps.pacifica : summary?.apps.phoenix;
+  if (!slot) return null;
+  const cash =
+    venue === 'pacifica'
+      ? summary?.apps.pacifica.summary?.availableToSpendUsd ?? null
+      : summary?.apps.phoenix.summary?.collateralUsd ?? null;
   return {
-    balance: phoenix.valueUsd === null ? NO_DATA : usd(phoenix.valueUsd),
-    cashAvailable: collateralUsd === null ? NO_DATA : usd(collateralUsd),
+    balance: slot.valueUsd === null ? NO_DATA : usd(slot.valueUsd),
+    cashAvailable: cash === null ? NO_DATA : usd(cash),
   };
 }

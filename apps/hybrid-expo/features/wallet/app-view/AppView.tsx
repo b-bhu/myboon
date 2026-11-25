@@ -29,8 +29,12 @@ import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { MeteoraAppTop } from './MeteoraAppTop';
 import { MeteoraPositionsTab } from './MeteoraPositionsTab';
 import { PhoenixAppTop } from './PhoenixAppTop';
+import { PhoenixOrdersTab } from './PhoenixOrdersTab';
+import { PhoenixPositionsTab } from './PhoenixPositionsTab';
+import { usePhoenixOrders } from './usePhoenixOrders';
 import { useMeteoraPositions } from './useMeteoraPositions';
-import type { WalletMeteoraPosition } from '@myboon/shared/wallet-summary';
+import { usePerpPositions } from './usePerpPositions';
+import type { WalletMeteoraPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary';
 
 /** Display titles for the known Wallet apps; unknown ids fall back to the id. */
 const APP_TITLES: Readonly<Record<string, string>> = {
@@ -75,6 +79,35 @@ function meteoraTabs(positions: WalletMeteoraPosition[] | null): Record<Portfoli
   };
 }
 
+/**
+ * The Phoenix tab record (#849). Same shape as meteoraTabs: the Positions
+ * rows are stubs for the badge count only; the Orders body is
+ * PhoenixOrdersTab (#850) and History (#869) shows its note.
+ */
+function phoenixTabs(positions: WalletPerpPositionDetail[] | null): Record<PortfolioTabKey, VenuePortfolioScreenTab> {
+  const stubRows = (positions ?? []).map((position, index) => ({
+    key: `phoenix-position-${index}`,
+    title: position.symbol,
+    value: '',
+  }));
+  return {
+    positions: {
+      status: positions === null ? 'loading' : 'ready',
+      sections: [{ key: 'phoenix-positions', rows: stubRows }],
+    },
+    orders: {
+      status: 'ready',
+      sections: [],
+      empty: { title: 'No orders here', message: 'Not shown for this app yet.' },
+    },
+    history: {
+      status: 'ready',
+      sections: [],
+      empty: { title: 'No history', message: 'Not shown for this app yet.' },
+    },
+  };
+}
+
 export const AppView = memo(function AppView({
   app,
   solana,
@@ -104,6 +137,16 @@ export const AppView = memo(function AppView({
   const { positions, loading, error, retry } = useMeteoraPositions(isMeteora ? solana : null);
   const pools = useMemo(() => summary?.apps.meteora.summary?.pools ?? [], [summary]);
   const tabs = useMemo(() => meteoraTabs(positions), [positions]);
+
+  // The Phoenix tabs' data (#849): gated to the phoenix view like Meteora's.
+  // Pacifica reuses the Phoenix view (#857): same components with a venue
+  // prop; it has no orders route, so only Phoenix loads orders.
+  const isPhoenix = app === 'phoenix';
+  const isPerps = isPhoenix || app === 'pacifica';
+  const perpVenue = app === 'pacifica' ? 'pacifica' : 'phoenix';
+  const perp = usePerpPositions(perpVenue, isPerps ? solana : null);
+  const phoenixOrders = usePhoenixOrders(isPhoenix ? solana : null);
+  const phoenixTabRecord = useMemo(() => phoenixTabs(perp.positions), [perp.positions]);
 
   return (
     <View style={[styles.shell, style]}>
@@ -139,8 +182,33 @@ export const AppView = memo(function AppView({
             <PortfolioTabBody tabKey={activeTab} tab={tabs[activeTab]} />
           )}
         </ScrollView>
-      ) : app === 'phoenix' ? (
-        <PhoenixAppTop solana={solana} evm={evm} />
+      ) : isPerps ? (
+        <ScrollView
+          style={styles.meteoraScroll}
+          contentContainerStyle={styles.meteoraContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <PhoenixAppTop solana={solana} evm={evm} venue={perpVenue} />
+          <PortfolioTabBar tabs={phoenixTabRecord} activeTab={activeTab} onChange={setActiveTab} />
+          {activeTab === 'positions' ? (
+            <PhoenixPositionsTab
+              positions={perp.positions}
+              loading={perp.loading}
+              error={perp.error}
+              retry={perp.retry}
+              venue={perpVenue}
+            />
+          ) : activeTab === 'orders' && isPhoenix ? (
+            <PhoenixOrdersTab
+              orders={phoenixOrders.orders}
+              loading={phoenixOrders.loading}
+              error={phoenixOrders.error}
+              retry={phoenixOrders.retry}
+            />
+          ) : (
+            <PortfolioTabBody tabKey={activeTab} tab={phoenixTabRecord[activeTab]} />
+          )}
+        </ScrollView>
       ) : null}
     </View>
   );

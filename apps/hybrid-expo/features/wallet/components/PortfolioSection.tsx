@@ -149,7 +149,7 @@ export const PortfolioSection = memo(function PortfolioSection({
   onOpenPhoenix: () => void;
   onOpenPacifica: () => void;
   onOpenMeteora: () => void;
-  onSelectApp?: (app: 'meteora') => void;
+  onSelectApp?: (app: 'meteora' | 'phoenix' | 'pacifica') => void;
   onOpenSpot: () => void;
 }) {
   const { summary, loading, error, errorStatus, retry } = useWalletSummary(solana, evm);
@@ -229,8 +229,11 @@ export const PortfolioSection = memo(function PortfolioSection({
   const openAppRef = useRef<Partial<Record<PortfolioAppKey, () => void>>>({});
   openAppRef.current = {
     polymarket: onOpenPolymarket,
-    phoenix: onOpenPhoenix,
-    pacifica: onOpenPacifica,
+    // #855: like Meteora, the Phoenix row opens the Wallet's app view when
+    // the screen passes onSelectApp; without it the old profile route.
+    phoenix: onSelectApp ? () => onSelectApp('phoenix') : onOpenPhoenix,
+    // #857: the Pacifica row opens the app view the same way.
+    pacifica: onSelectApp ? () => onSelectApp('pacifica') : onOpenPacifica,
     // #856: when the screen passes onSelectApp, the Meteora row opens the
     // Wallet's app view (dispatches `select`); without it the row keeps the
     // old profile route.

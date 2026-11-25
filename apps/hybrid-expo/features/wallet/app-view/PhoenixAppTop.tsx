@@ -26,16 +26,21 @@ import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { semantic, tokens } from '@/theme';
 import { NO_DATA } from '@/lib/format';
 import { phoenixTopFigures } from './phoenix-top';
+import type { PerpVenue } from './perp-positions';
 
 export const PhoenixAppTop = memo(function PhoenixAppTop({
   solana,
   evm,
+  venue = 'phoenix',
 }: {
   /** Solana address the summary route expects (#744). */
   solana: string | null;
   /** EVM address the summary route expects; unused by Phoenix itself. */
   evm: string | null;
+  /** Which perps app the block shows; Pacifica reuses this view (#857). */
+  venue?: PerpVenue;
 }) {
+  const name = venue === 'pacifica' ? 'Pacifica' : 'Phoenix';
   const { summary, loading, error, retry } = useWalletSummary(solana, evm);
 
   // No addresses at all: the hook made no call, nothing to show.
@@ -44,12 +49,12 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
   // Loading with no summary yet: skeleton cells, no numbers (design "load").
   if (!summary && loading) return <Skeleton />;
 
-  const phoenix = summary?.apps.phoenix ?? null;
+  const phoenix = (venue === 'pacifica' ? summary?.apps.pacifica : summary?.apps.phoenix) ?? null;
 
   // Not connected: no account at the venue, render nothing.
   if (phoenix?.status === 'not_connected') return null;
 
-  const figures = phoenixTopFigures(summary);
+  const figures = phoenixTopFigures(summary, venue);
 
   // Failed with no summary (the hook returned an error and nothing else),
   // or the Phoenix slot itself failing with no figures to show: the banner
@@ -72,7 +77,7 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
 
   return (
     <View style={styles.root}>
-      {failedNoFigures || stale ? <FailureBanner onRetry={retry} /> : null}
+      {failedNoFigures || stale ? <FailureBanner name={name} onRetry={retry} /> : null}
       <View style={[styles.stats, stale && styles.held]}>
         {cells.map((cell) => (
           <View key={cell.label} style={styles.cell}>
@@ -100,12 +105,12 @@ function Skeleton() {
 }
 
 /** Mock ".bn" failure banner: "Couldn't load Phoenix" + funds line + gold Retry. */
-function FailureBanner({ onRetry }: { onRetry: () => void }) {
+function FailureBanner({ name, onRetry }: { name: string; onRetry: () => void }) {
   return (
     <View style={styles.banner}>
       <MaterialIcons name="error-outline" size={20} color={semantic.sentiment.negative} />
       <View style={styles.bannerCopy}>
-        <Text style={styles.bannerTitle}>{"Couldn't load Phoenix"}</Text>
+        <Text style={styles.bannerTitle}>{`Couldn't load ${name}`}</Text>
         <Text style={styles.bannerLine}>
           {'The numbers here may be out of date. Your funds are not affected.'}
         </Text>
@@ -113,7 +118,7 @@ function FailureBanner({ onRetry }: { onRetry: () => void }) {
       <Pressable
         onPress={onRetry}
         accessibilityRole="button"
-        accessibilityLabel="Retry Phoenix"
+        accessibilityLabel={`Retry ${name}`}
         hitSlop={8}
         style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
       >
