@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -107,6 +107,11 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const focused = useIsFocused();
   const [destination, setDestination] = useState<HomeDestination>('feed');
+  // #807: the Spot row's Swap button comes back here with the token to prefill.
+  const { prefillMint } = useLocalSearchParams<{ prefillMint?: string }>();
+  useEffect(() => {
+    if (prefillMint) setDestination('wallet');
+  }, [prefillMint]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [surfaceVersion, setSurfaceVersion] = useState(0);
   const scrollY = useRef(new Animated.Value(0)).current;
@@ -353,6 +358,8 @@ export default function HomeScreen() {
           onOpenPacifica={() => router.push('/markets/pacifica/profile')}
           onOpenPolymarket={() => router.push('/markets/polymarket/profile')}
           onOpenSpot={() => router.push('/spot' as never)}
+          prefillMint={prefillMint}
+          onPrefillHandled={() => router.setParams({ prefillMint: undefined })}
           onConnect={() => {
             Keyboard.dismiss();
             setSurfaceVersion((key) => key + 1);
