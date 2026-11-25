@@ -119,6 +119,8 @@ export function HomeWalletOverview({
   onOpenSpot,
   onConnect,
   dormantNotices,
+  prefillMint,
+  onPrefillHandled,
 }: {
   active: boolean;
   surfaceVersion: number;
@@ -140,6 +142,9 @@ export function HomeWalletOverview({
   onOpenSpot: () => void;
   onConnect: () => void;
   dormantNotices?: React.ReactNode;
+  /** #807: `prefillMint` route param from the Spot row's Swap button; opens Swap with it. */
+  prefillMint?: string;
+  onPrefillHandled?: () => void;
 }) {
   const [mode, setModeState] = useState<WalletActionMode>('swap');
   // #906: a Spot token the Swap mode opens with as its pay card. Any mode
@@ -154,6 +159,11 @@ export function HomeWalletOverview({
     setSwapPrefill({ mint, source: 'spot' });
     setModeState('swap');
   }, []);
+  useEffect(() => {
+    if (!prefillMint) return;
+    setSwapFromSpot(prefillMint);
+    onPrefillHandled?.();
+  }, [prefillMint, setSwapFromSpot, onPrefillHandled]);
   // The app view state (#771): no app is open until something dispatches
   // `select`, so the shell below never shows on screen for now.
   const [appView, appViewDispatch] = useReducer(walletAppViewReducer, initialWalletAppView);
