@@ -8,7 +8,7 @@
  * position" is a leave row: it opens the market screen for the symbol and
  * closes nothing in the Wallet. "Edit TP/SL" opens PhoenixTpslSheet (#851).
  *
- * States: loading with no list yet → nothing (the skeleton is #859);
+ * States: loading with no list yet → three skeleton cards (#859);
  * loaded and empty → the plain empty note, no button (the shared empty
  * block with the Deposit button is #860); failed with no list → the note
  * with a Retry that calls the hook's retry. A failed refresh after a good
@@ -22,6 +22,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { semantic, tokens } from '@/theme';
+import { AppSkeletonCards } from './AppSkeletonCards';
 import { perpCardFigures } from './phoenix-positions';
 import { PhoenixTpslSheet } from './PhoenixTpslSheet';
 import type { PerpVenue } from './perp-positions';
@@ -49,9 +50,10 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   // The position whose Edit TP/SL sheet is open (#851).
   const [editing, setEditing] = useState<WalletPerpPositionDetail | null>(null);
 
-  // Loading (skeleton is #859), or nothing to fetch at all (no Solana
-  // address — the hook made no call): no card.
-  if (positions === null && (loading || error === null)) return null;
+  // Loading with none held: three skeleton cards (#859). Nothing to fetch
+  // at all (no Solana address — the hook made no call): no card.
+  if (positions === null && loading) return <AppSkeletonCards />;
+  if (positions === null && error === null) return null;
 
   if (positions === null) {
     return (

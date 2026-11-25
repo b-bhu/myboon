@@ -11,7 +11,7 @@
  * failure leaves the row, shows the error under the list and the button
  * works again.
  *
- * States: loading with no list yet → nothing (skeleton is #859); loaded and
+ * States: loading with no list yet → three skeleton cards (#859); loaded and
  * empty → the plain note, no button (shared empty block is #860); failed
  * with no list → the note with Retry.
  */
@@ -23,6 +23,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { buildPhoenixCancelConditionalOrder } from '@/features/perps/phoenix.api';
 import { sendPhoenixBuiltTransaction } from '@/features/perps/phoenix.execution';
 import { semantic, tokens } from '@/theme';
+import { AppSkeletonCards } from './AppSkeletonCards';
 import { phoenixOrderFigures } from './phoenix-orders';
 import { usePhoenixSigner } from './usePhoenixSigner';
 import type { WalletPhoenixOrder } from '@myboon/shared/wallet-summary';
@@ -92,7 +93,10 @@ export const PhoenixOrdersTab = memo(function PhoenixOrdersTab({
     [retry, signAndSend, wallet.address, wallet.connection],
   );
 
-  if (orders === null && (loading || error === null)) return null;
+  // Loading with none held: three skeleton cards (#859). Nothing to fetch
+  // at all (no Solana address — the hook made no call): no card.
+  if (orders === null && loading) return <AppSkeletonCards />;
+  if (orders === null && error === null) return null;
 
   if (orders === null) {
     return (
