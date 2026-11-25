@@ -24,6 +24,7 @@ import { createSpotRoutes } from '../spot/routes.js'
 import { createWalletSummaryRoutes } from '../wallet-summary/routes.js'
 import { createWalletSummaryService } from '../wallet-summary/service.js'
 import { walletVenues } from '../wallet-summary/venues/index.js'
+import { createPhoenixPositionsReader } from '../wallet-summary/venues/phoenix.js'
 import { createWalletMoveRoutes } from '../wallet-move/routes.js'
 import { createHyperliquidPrices } from '../hyperliquid/prices.js'
 import { createHyperliquidRoutes } from '../hyperliquid/routes.js'
@@ -166,6 +167,7 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/spot', createSpotRoutes({ heliusRpcUrl: config.heliusRpcUrl, balances: spotBalances }))
   app.route('/wallet', createWalletSummaryRoutes({
     service: createWalletSummaryService({ venues: walletVenues({ phoenix: phoenixUpstream }) }),
+    phoenixPositions: createPhoenixPositionsReader(phoenixUpstream),
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
     trustForwardedHeaders: config.trustProxyHeaders,
   }))
