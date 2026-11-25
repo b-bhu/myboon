@@ -44,7 +44,7 @@ export function MeteoraManageSheet({
   onChanged: () => void;
 }) {
   const wallet = useWallet();
-  const { pool, freshness, loading, error: poolError, retry: retryPool } = useMeteoraPool(position.poolAddress);
+  const { pool, freshness, error: poolError, retry: retryPool } = useMeteoraPool(position.poolAddress);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
@@ -81,7 +81,7 @@ export function MeteoraManageSheet({
             <Text style={styles.retryLabel}>{'Retry →'}</Text>
           </Pressable>
         </View>
-      ) : pool === null || loading && freshness === null ? (
+      ) : pool === null || freshness === null ? (
         <ActivityIndicator color={tokens.colors.accent} />
       ) : (
         <>
