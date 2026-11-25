@@ -51,6 +51,8 @@ export function MeteoraManageSheet({
 
   const fees = position.poolUnclaimedFeesUsd === null ? NO_DATA : usd(position.poolUnclaimedFeesUsd);
 
+  // "Retry →" only clears the error (above) so the slider is armed again; the
+  // claim itself always needs a fresh swipe.
   const claim = useCallback(async () => {
     if (!pool || !freshness || running) return;
     setRunning(true);
@@ -99,7 +101,7 @@ export function MeteoraManageSheet({
           {claimError === null ? null : (
             <View style={styles.note}>
               <Text style={styles.errorText}>{claimError}</Text>
-              <Pressable onPress={() => void claim()} accessibilityRole="button" accessibilityLabel="Retry claim" hitSlop={8}>
+              <Pressable onPress={() => setClaimError(null)} accessibilityRole="button" accessibilityLabel="Retry claim" hitSlop={8}>
                 <Text style={styles.retryLabel}>{'Retry →'}</Text>
               </Pressable>
             </View>
