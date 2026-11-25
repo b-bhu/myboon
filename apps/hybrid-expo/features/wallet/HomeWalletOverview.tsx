@@ -239,7 +239,6 @@ export function HomeWalletOverview({
   const [tradeBusy, setTradeBusy] = useState(false);
   const [upperHeight, setUpperHeight] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  const [composerContentHeight, setComposerContentHeight] = useState(0);
   const [panelCovered, setPanelCovered] = useState(false);
   const coveredRef = useRef(false);
   // #843: pull-to-refresh stays mounted only while the panel is expanded and
@@ -254,10 +253,9 @@ export function HomeWalletOverview({
   const previousSurfaceVersion = useRef(surfaceVersion);
   const { width } = useWindowDimensions();
   // The action body is one fixed frame in every mode and state (430px at
-  // 390x844, issue #715); the composer scrolls inside it when its content
-  // runs taller than the frame. The old viewport-shrink logic the composer
-  // used before the fixed frame is gone with it.
-  const composerOverflows = composerContentHeight > WALLET_ACTION_BODY_HEIGHT;
+  // 390x844, issue #715); every mode's body is built to fit it (issue #803),
+  // so the frame never scrolls its content — the ScrollView here stays only
+  // as the amount field's keyboard container.
 
   const handlePanelCoveredChange = useCallback((covered: boolean) => {
     // The UI-thread reaction calls back only when the composer boundary changes.
@@ -390,40 +388,30 @@ export function HomeWalletOverview({
             accessibilityElementsHidden={panelCovered}
             importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
             style={[styles.actionBodyScroll, panelCovered && { display: 'none' }]}
-            scrollEnabled={composerOverflows}
+            scrollEnabled={false}
             nestedScrollEnabled
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-            showsVerticalScrollIndicator={composerOverflows}
-            onContentSizeChange={(_, height) => {
-              if (panelCovered) return;
-              setComposerContentHeight((current) => rememberHeight(current, height));
-            }}
+            showsVerticalScrollIndicator={false}
           >
-            <View onLayout={(event) => {
-              if (panelCovered) return;
-              const height = event.nativeEvent.layout.height;
-              setComposerContentHeight((current) => rememberHeight(current, height));
-            }}>
-              {/* Receive (#719) renders its QR card in the same fixed frame;
-                  anything signed stays on the swap composer. */}
-              {mode === 'send' ? (
-                <SendPanel solanaAddress={chainAddress('solana')} />
-              ) : mode === 'receive' ? (
-                <ReceivePanel
-                  solanaAddress={chainAddress('solana')}
-                  evmAddress={chainAddress('evm')}
-                  chains={chains}
-                />
-              ) : (
-                <MemoActionPanel
-                  active={actionActive}
-                  controllerActive={active}
-                  surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
-                  onBusyChange={setTradeBusy}
-                />
-              )}
-            </View>
+            {/* Receive (#719) renders its QR card in the same fixed frame;
+                anything signed stays on the swap composer. */}
+            {mode === 'send' ? (
+              <SendPanel solanaAddress={chainAddress('solana')} />
+            ) : mode === 'receive' ? (
+              <ReceivePanel
+                solanaAddress={chainAddress('solana')}
+                evmAddress={chainAddress('evm')}
+                chains={chains}
+              />
+            ) : (
+              <MemoActionPanel
+                active={actionActive}
+                controllerActive={active}
+                surfaceKey={`${surfaceVersion}:${surfaceKey}:${accountTab}`}
+                onBusyChange={setTradeBusy}
+              />
+            )}
           </ScrollView>
         </View>
       </View>

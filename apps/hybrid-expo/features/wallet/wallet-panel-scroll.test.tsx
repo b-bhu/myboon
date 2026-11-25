@@ -137,6 +137,15 @@ function loadOverview() {
     '@/features/wallet/wallet-mode': { WALLET_ACTION_BODY_HEIGHT: 430 },
     '@/features/wallet/components/ChainRow': { ChainRow: () => null },
     '@/features/wallet/components/LegalLinks': { LegalLinks: () => null },
+    '@/features/wallet/components/SendPanel': { SendPanel: () => null },
+    '@/features/wallet/components/PortfolioSection': { PortfolioSection: () => null },
+    '@/features/wallet/app-view/AppView': { AppView: () => null },
+    // #771: the app-view shell never renders in this harness (nothing selects
+    // an app); the reducer stays a pass-through so `wallet-change` syncs bail.
+    '@/features/wallet/app-view.state': {
+      initialWalletAppView: { walletId: null, selectedApp: null },
+      walletAppViewReducer: (state: unknown) => state,
+    },
     '@/features/chain/chain.contract': {},
     '@/features/wallet/wallet.types': {},
   };
