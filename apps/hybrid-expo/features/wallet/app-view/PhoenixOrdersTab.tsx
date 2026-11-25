@@ -17,17 +17,14 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useWallet } from '@/hooks/useWallet';
 import { buildPhoenixCancelConditionalOrder } from '@/features/perps/phoenix.api';
-import {
-  sendPhoenixBuiltTransaction,
-  type PhoenixSignAndSendTransactionFn,
-} from '@/features/perps/phoenix.execution';
+import { sendPhoenixBuiltTransaction } from '@/features/perps/phoenix.execution';
 import { semantic, tokens } from '@/theme';
 import { phoenixOrderFigures } from './phoenix-orders';
+import { usePhoenixSigner } from './usePhoenixSigner';
 import type { WalletPhoenixOrder } from '@myboon/shared/wallet-summary';
 
 export const PhoenixOrdersTab = memo(function PhoenixOrdersTab({
@@ -43,25 +40,12 @@ export const PhoenixOrdersTab = memo(function PhoenixOrdersTab({
   /** One new request for the same address. */
   retry: () => void;
 }) {
-  const wallet = useWallet();
+  const wallet = usePhoenixSigner();
+  const signAndSend = wallet.signAndSend;
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelError, setCancelError] = useState<string | null>(null);
   // A second tap in the same frame must not send twice, before state lands.
   const runningRef = useRef(false);
-
-  // Same signer wrapper as the old profile screen.
-  const signAndSend = useMemo<PhoenixSignAndSendTransactionFn | null>(() => {
-    if (typeof wallet.signAndSendTransaction !== 'function') return null;
-    return async (transaction) => {
-      const result = await (wallet.signAndSendTransaction as (tx: unknown) => Promise<unknown>)(transaction);
-      if (typeof result === 'string') return result;
-      if (result !== null && typeof result === 'object') {
-        const signature = (result as { signature?: unknown }).signature;
-        if (typeof signature === 'string') return signature;
-      }
-      throw new Error('Phoenix wallet did not return a transaction signature');
-    };
-  }, [wallet.signAndSendTransaction]);
 
   const cancel = useCallback(
     async (order: WalletPhoenixOrder) => {

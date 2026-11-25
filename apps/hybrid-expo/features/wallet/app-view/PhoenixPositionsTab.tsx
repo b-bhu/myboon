@@ -6,8 +6,7 @@
  * One card per open position in the order `usePerpPositions` returned them,
  * with the legend above. Card strings come from ./phoenix-positions. "Close
  * position" is a leave row: it opens the market screen for the symbol and
- * closes nothing in the Wallet. "Edit TP/SL" renders and does nothing until
- * #851.
+ * closes nothing in the Wallet. "Edit TP/SL" opens PhoenixTpslSheet (#851).
  *
  * States: loading with no list yet → nothing (the skeleton is #859);
  * loaded and empty → the plain empty note, no button (the shared empty
@@ -18,12 +17,13 @@
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { semantic, tokens } from '@/theme';
 import { perpCardFigures } from './phoenix-positions';
+import { PhoenixTpslSheet } from './PhoenixTpslSheet';
 import type { WalletPerpPositionDetail } from '@myboon/shared/wallet-summary';
 
 export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
@@ -41,6 +41,9 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   /** One new request for the same address. */
   retry: () => void;
 }) {
+  // The position whose Edit TP/SL sheet is open (#851).
+  const [editing, setEditing] = useState<WalletPerpPositionDetail | null>(null);
+
   // Loading (skeleton is #859), or nothing to fetch at all (no Solana
   // address — the hook made no call): no card.
   if (positions === null && (loading || error === null)) return null;
@@ -87,15 +90,21 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
       </View>
 
       {positions.map((position, index) => (
-        <PerpPositionCard key={`${index}:${position.symbol}:${position.side}`} position={position} />
+        <PerpPositionCard
+          key={`${index}:${position.symbol}:${position.side}`}
+          position={position}
+          onEdit={() => setEditing(position)}
+        />
       ))}
+
+      <PhoenixTpslSheet position={editing} onClose={() => setEditing(null)} onUpdated={retry} />
     </View>
   );
 });
 
 /** Mock ".pc[data-t=perp]": title and tag, value and P&L, Entry | Mark | Liq.,
  * the TP/SL line, the Edit TP/SL button and the Close position leave row. */
-function PerpPositionCard({ position }: { position: WalletPerpPositionDetail }) {
+function PerpPositionCard({ position, onEdit }: { position: WalletPerpPositionDetail; onEdit: () => void }) {
   const router = useRouter();
   const card = perpCardFigures(position);
 
@@ -135,9 +144,10 @@ function PerpPositionCard({ position }: { position: WalletPerpPositionDetail }) 
         <Text style={styles.tpslText}>{card.tpsl}</Text>
       </View>
 
-      {/* Mock ".pc-f": Edit TP/SL (inert until #851) and the leave row. */}
+      {/* Mock ".pc-f": Edit TP/SL (opens the sheet, #851) and the leave row. */}
       <View style={styles.footer}>
         <Pressable
+          onPress={onEdit}
           accessibilityRole="button"
           accessibilityLabel="Edit TP/SL"
           style={({ pressed }) => [styles.action, pressed && styles.pressed]}
