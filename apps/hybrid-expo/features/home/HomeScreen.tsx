@@ -37,7 +37,7 @@ import {
 } from '@/features/wallet/dormantBalance';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import { useEvmBalance } from '@/features/wallet/useEvmBalance';
-import { useProtocolAccounts } from '@/features/wallet/useProtocolAccounts';
+import { useWalletSourcesFromSummary } from '@/features/wallet/useWalletSourcesFromSummary';
 import { usePolymarketWallet } from '@/hooks/usePolymarketWallet';
 import { activeChains, useChainActivation } from '@/features/chain/activation';
 import type { Chain } from '@/features/chain/chain.contract';
@@ -124,13 +124,14 @@ export default function HomeScreen() {
   const { activation, activate } = useChainActivation();
   const connectSheet = useWalletSheet();
   const walletAddress = wallet.connected ? wallet.address : null;
+  // Home's total comes from the wallet summary — one `GET /wallet/summary` for
+  // every app, with the same addresses `chainAddress` returns (#912) — not
+  // from the phone-side fetchers (CombinedPortfolioScreen still uses those).
   const {
     totals: walletTotals,
     sources: walletSources,
-    notifyVisibility,
-    refreshAll: refreshWallet,
-    retrySource: retryWalletSource,
-  } = useProtocolAccounts(walletAddress);
+    retry: retryWalletSummary,
+  } = useWalletSourcesFromSummary(walletAddress, evm.address);
   const walletSectionVisible = focused && destination === 'wallet';
   const [walletRefreshing, setWalletRefreshing] = useState(false);
 
@@ -142,18 +143,15 @@ export default function HomeScreen() {
     extrapolate: 'clamp',
   });
 
-  useEffect(() => {
-    notifyVisibility(walletSectionVisible);
-  }, [walletSectionVisible, notifyVisibility]);
-
   const handleWalletRefresh = useCallback(() => {
     setWalletRefreshing(true);
-    refreshWallet();
-    // Purely visual — sources resolve independently and asynchronously; this
-    // just gives the tap a brief acknowledgement rather than tracking every
-    // source's settle.
+    // The summary is one server call for every app: pull-to-refresh and a
+    // per-app retry are the same refetch (#912).
+    retryWalletSummary();
+    // Purely visual — this just gives the pull a brief acknowledgement rather
+    // than tracking the summary fetch's settle.
     setTimeout(() => setWalletRefreshing(false), 700);
-  }, [refreshWallet]);
+  }, [retryWalletSummary]);
 
   const handleMarketAppPress = useCallback(
     (app: MarketHomeApp) => {
@@ -352,7 +350,7 @@ export default function HomeScreen() {
           walletSources={walletSources}
           walletRefreshing={walletRefreshing}
           onWalletRefresh={handleWalletRefresh}
-          onRetrySource={retryWalletSource}
+          onRetrySource={retryWalletSummary}
           onOpenMeteora={() => router.push('/markets/meteora/profile')}
           onOpenPhoenix={() => router.push('/markets/phoenix/profile')}
           onOpenPacifica={() => router.push('/markets/pacifica/profile')}
