@@ -29,7 +29,9 @@ import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { MeteoraAppTop } from './MeteoraAppTop';
 import { MeteoraPositionsTab } from './MeteoraPositionsTab';
 import { PhoenixAppTop } from './PhoenixAppTop';
+import { PhoenixOrdersTab } from './PhoenixOrdersTab';
 import { PhoenixPositionsTab } from './PhoenixPositionsTab';
+import { usePhoenixOrders } from './usePhoenixOrders';
 import { useMeteoraPositions } from './useMeteoraPositions';
 import { usePerpPositions } from './usePerpPositions';
 import type { WalletMeteoraPosition, WalletPerpPositionDetail } from '@myboon/shared/wallet-summary';
@@ -79,8 +81,8 @@ function meteoraTabs(positions: WalletMeteoraPosition[] | null): Record<Portfoli
 
 /**
  * The Phoenix tab record (#849). Same shape as meteoraTabs: the Positions
- * rows are stubs for the badge count only; Orders (#850) and History (#869)
- * show their notes until those units land.
+ * rows are stubs for the badge count only; the Orders body is
+ * PhoenixOrdersTab (#850) and History (#869) shows its note.
  */
 function phoenixTabs(positions: WalletPerpPositionDetail[] | null): Record<PortfolioTabKey, VenuePortfolioScreenTab> {
   const stubRows = (positions ?? []).map((position, index) => ({
@@ -139,6 +141,7 @@ export const AppView = memo(function AppView({
   // The Phoenix tabs' data (#849): gated to the phoenix view like Meteora's.
   const isPhoenix = app === 'phoenix';
   const perp = usePerpPositions('phoenix', isPhoenix ? solana : null);
+  const phoenixOrders = usePhoenixOrders(isPhoenix ? solana : null);
   const phoenixTabRecord = useMemo(() => phoenixTabs(perp.positions), [perp.positions]);
 
   return (
@@ -189,6 +192,13 @@ export const AppView = memo(function AppView({
               loading={perp.loading}
               error={perp.error}
               retry={perp.retry}
+            />
+          ) : activeTab === 'orders' ? (
+            <PhoenixOrdersTab
+              orders={phoenixOrders.orders}
+              loading={phoenixOrders.loading}
+              error={phoenixOrders.error}
+              retry={phoenixOrders.retry}
             />
           ) : (
             <PortfolioTabBody tabKey={activeTab} tab={phoenixTabRecord[activeTab]} />
