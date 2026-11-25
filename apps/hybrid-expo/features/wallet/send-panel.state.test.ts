@@ -5,6 +5,10 @@ import type { WalletSummary } from '@myboon/shared/wallet-summary';
 import {
   SEND_USDC_MINT,
   balanceText,
+  rentLineText,
+  sendAmountAtomic,
+  sendAmountLabel,
+  sendSliderCopy,
   chipAmountText,
   sanitizeAmountText,
   spotUsdcAtomic,
@@ -58,4 +62,34 @@ test('send amount text: digits and one point, six decimals at most', () => {
   assert.equal(sanitizeAmountText('1,5'), '1.5');
   assert.equal(sanitizeAmountText('0.1234567'), '0.123456');
   assert.equal(sanitizeAmountText(''), '');
+});
+
+// Issue #825: slider copy for every state, wording from the frames.
+test('send slider copy: off, ready, pending, done, failed', () => {
+  const base = { ready: true, amount: '12.5', address: '7xKXtgAbcdefghijkmnopqrstuvwxyz123TZRuJosgAsU' };
+  assert.deepEqual(sendSliderCopy({ ...base, ready: false, stage: 'idle' }), {
+    small: 'Swipe to send',
+    strong: 'Enter an address and amount',
+  });
+  assert.deepEqual(sendSliderCopy({ ...base, stage: 'idle' }), {
+    small: 'Swipe to send',
+    strong: '12.5 USDC to 7xKX…gAsU',
+  });
+  assert.deepEqual(sendSliderCopy({ ...base, stage: 'pending' }), { small: 'Step 1 of 1', strong: 'Sending...' });
+  assert.deepEqual(sendSliderCopy({ ...base, stage: 'done', tookSeconds: 2 }), {
+    small: 'Done · ~$0.001 fees · took 2s',
+    strong: 'Sent · 12.5 USDC',
+  });
+  assert.deepEqual(sendSliderCopy({ ...base, stage: 'failed' }), {
+    small: 'Send failed · money is safe',
+    strong: 'Slide to retry',
+  });
+});
+
+test('send helpers: amount to atomic, rent line', () => {
+  assert.equal(sendAmountAtomic('12.5'), '12500000');
+  assert.equal(sendAmountAtomic(''), null);
+  assert.equal(sendAmountAtomic('0'), null);
+  assert.equal(sendAmountLabel('12500000'), '12.5');
+  assert.equal(rentLineText(2039280), 'Includes ~0.002 SOL to create their USDC account');
 });

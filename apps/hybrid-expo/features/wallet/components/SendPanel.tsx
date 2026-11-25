@@ -6,8 +6,8 @@
  * under the pair of cards; card B is the address with a Paste button. Launch
  * scope is Solana USDC only. The address is format-checked as it is typed or
  * pasted (#823, pure rules in ../send-address) and shows a plain error line
- * under the input while it is wrong; the slider (still #825) and signing #824.
- * The slot where the slider will sit only says what is missing.
+ * under the input while it is wrong. The slider (#825, ./SendSlider) runs the
+ * #824 transfer on a swipe and shows pending, done and failed.
  *
  * The chips read the Spot USDC balance from the wallet summary
  * (`useWalletSummary`); with no balance they are disabled but the amount can
@@ -26,10 +26,15 @@ import {
   balanceText,
   chipAmountText,
   sanitizeAmountText,
+  rentLineText,
+  sendAmountAtomic,
+  sendAmountLabel,
   spotUsdcAtomic,
   type SendChipPercent,
 } from '@/features/wallet/send-panel.state';
 import { sendAddressError } from '@/features/wallet/send-address';
+import { useSendTransfer } from '@/features/wallet/useSendTransfer';
+import { SendSlider } from '@/features/wallet/components/SendSlider';
 
 export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
   const { summary } = useWalletSummary(solanaAddress, null);
@@ -40,6 +45,23 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
   // Issue #823: derived from the field, so typing and pasting recheck on every
   // change — empty shows nothing, a fix clears the line.
   const addressError = sendAddressError(address);
+
+  // Issue #825: the slider is on for a valid address and an amount the wallet
+  // holds. Cards keep their values and lock while a send is pending.
+  const amountAtomic = sendAmountAtomic(amount);
+  const toAddress = address !== '' && !addressError ? address : null;
+  const ready =
+    toAddress !== null &&
+    amountAtomic !== null &&
+    balanceAtomic !== null &&
+    BigInt(amountAtomic) <= BigInt(balanceAtomic);
+  const transfer = useSendTransfer({
+    fromAddress: solanaAddress,
+    toAddress: ready ? toAddress : null,
+    amountAtomic: ready ? amountAtomic : null,
+    balanceAtomic,
+  });
+  const locked = transfer.stage === 'pending';
 
   const handleChip = useCallback((percent: SendChipPercent) => {
     if (balanceAtomic === null) return;
@@ -57,7 +79,7 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
     if (text) setAddress(text.trim());
   }, []);
 
-  const chipsDisabled = balanceAtomic === null;
+  const chipsDisabled = balanceAtomic === null || locked;
 
   return (
     <View style={styles.body}>
@@ -75,6 +97,7 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
           <TextInput
             value={amount}
             onChangeText={handleAmount}
+            editable={!locked}
             placeholder="0"
             placeholderTextColor={tokens.colors.textFaint}
             keyboardType="decimal-pad"
@@ -100,6 +123,7 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
         <TextInput
           value={address}
           onChangeText={setAddress}
+          editable={!locked}
           placeholder="Paste a Solana address"
           placeholderTextColor={tokens.colors.textFaint}
           autoCapitalize="none"
@@ -132,11 +156,19 @@ export function SendPanel({ solanaAddress }: { solanaAddress: string | null }) {
         ))}
       </View>
 
-      {/* The slider's slot (#825 owns the slider): empty-state line only. */}
-      <View style={styles.slot} accessibilityLabel="Send is not ready">
-        <Text style={styles.slotSmall}>Swipe to send</Text>
-        <Text style={styles.slotBig}>Enter an address and amount</Text>
-      </View>
+      {transfer.rentLamports !== null && (transfer.stage === 'idle' || transfer.stage === 'done') ? (
+        <Text style={styles.rent}>{rentLineText(transfer.rentLamports)}</Text>
+      ) : null}
+      <SendSlider
+        input={{
+          stage: transfer.canSign || transfer.stage !== 'idle' ? transfer.stage : 'idle',
+          ready: ready && transfer.canSign,
+          amount: amountAtomic ? sendAmountLabel(amountAtomic) : '',
+          address,
+          tookSeconds: transfer.tookSeconds,
+        }}
+        onSwipe={transfer.send}
+      />
     </View>
   );
 }
@@ -232,23 +264,6 @@ const styles = StyleSheet.create({
   chipOn: { borderColor: tokens.colors.accent },
   chipLabel: { fontSize: 12, fontWeight: '600', color: tokens.colors.textDim },
   chipLabelOn: { color: tokens.colors.accent },
-  // Design `.swipe`, resting state: 54 tall, radius 12. #825 puts the slider here.
-  slot: {
-    height: 54,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: tokens.colors.borderMuted,
-    backgroundColor: tokens.colors.ground,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  slotSmall: {
-    fontSize: 10.5,
-    fontFamily: 'monospace',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: tokens.colors.textDim,
-  },
-  slotBig: { fontSize: 14, fontWeight: '600', color: tokens.colors.bone },
+  rent: { fontSize: 10.5, fontFamily: 'monospace', letterSpacing: 0.6, color: tokens.colors.textDim },
   pressed: { opacity: 0.7 },
 });
