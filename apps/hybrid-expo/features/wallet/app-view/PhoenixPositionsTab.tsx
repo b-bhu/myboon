@@ -24,6 +24,7 @@ import { useRouter } from 'expo-router';
 import { semantic, tokens } from '@/theme';
 import { perpCardFigures } from './phoenix-positions';
 import { PhoenixTpslSheet } from './PhoenixTpslSheet';
+import type { PerpVenue } from './perp-positions';
 import type { WalletPerpPositionDetail } from '@myboon/shared/wallet-summary';
 
 export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
@@ -31,6 +32,7 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   loading,
   error,
   retry,
+  venue = 'phoenix',
 }: {
   /** Open positions from the last good load; null before it. */
   positions: WalletPerpPositionDetail[] | null;
@@ -40,7 +42,10 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   error: string | null;
   /** One new request for the same address. */
   retry: () => void;
+  /** Pacifica reuses this tab (#857): no TP/SL line, no Edit TP/SL, its own copy and market route. */
+  venue?: PerpVenue;
 }) {
+  const name = venue === 'pacifica' ? 'Pacifica' : 'Phoenix';
   // The position whose Edit TP/SL sheet is open (#851).
   const [editing, setEditing] = useState<WalletPerpPositionDetail | null>(null);
 
@@ -51,11 +56,11 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   if (positions === null) {
     return (
       <View style={styles.errorWrap}>
-        <Text style={styles.errorText}>{'Nothing to show until Phoenix loads.'}</Text>
+        <Text style={styles.errorText}>{`Nothing to show until ${name} loads.`}</Text>
         <Pressable
           onPress={retry}
           accessibilityRole="button"
-          accessibilityLabel="Retry Phoenix positions"
+          accessibilityLabel={`Retry ${name} positions`}
           hitSlop={8}
           style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
         >
@@ -93,20 +98,31 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
         <PerpPositionCard
           key={`${index}:${position.symbol}:${position.side}`}
           position={position}
+          venue={venue}
           onEdit={() => setEditing(position)}
         />
       ))}
 
-      <PhoenixTpslSheet position={editing} onClose={() => setEditing(null)} onUpdated={retry} />
+      {venue === 'phoenix' ? (
+        <PhoenixTpslSheet position={editing} onClose={() => setEditing(null)} onUpdated={retry} />
+      ) : null}
     </View>
   );
 });
 
 /** Mock ".pc[data-t=perp]": title and tag, value and P&L, Entry | Mark | Liq.,
  * the TP/SL line, the Edit TP/SL button and the Close position leave row. */
-function PerpPositionCard({ position, onEdit }: { position: WalletPerpPositionDetail; onEdit: () => void }) {
+function PerpPositionCard({
+  position,
+  venue,
+  onEdit,
+}: {
+  position: WalletPerpPositionDetail;
+  venue: PerpVenue;
+  onEdit: () => void;
+}) {
   const router = useRouter();
-  const card = perpCardFigures(position);
+  const card = perpCardFigures(position, venue);
 
   return (
     <View style={styles.card}>
@@ -140,20 +156,24 @@ function PerpPositionCard({ position, onEdit }: { position: WalletPerpPositionDe
         <KvCell label="Liq." value={card.liq} />
       </View>
 
-      <View style={styles.tpslLine}>
-        <Text style={styles.tpslText}>{card.tpsl}</Text>
-      </View>
+      {card.tpsl === null ? null : (
+        <View style={styles.tpslLine}>
+          <Text style={styles.tpslText}>{card.tpsl}</Text>
+        </View>
+      )}
 
       {/* Mock ".pc-f": Edit TP/SL (opens the sheet, #851) and the leave row. */}
       <View style={styles.footer}>
-        <Pressable
-          onPress={onEdit}
-          accessibilityRole="button"
-          accessibilityLabel="Edit TP/SL"
-          style={({ pressed }) => [styles.action, pressed && styles.pressed]}
-        >
-          <Text style={styles.actionText}>{'Edit TP/SL'}</Text>
-        </Pressable>
+        {venue === 'phoenix' ? (
+          <Pressable
+            onPress={onEdit}
+            accessibilityRole="button"
+            accessibilityLabel="Edit TP/SL"
+            style={({ pressed }) => [styles.action, pressed && styles.pressed]}
+          >
+            <Text style={styles.actionText}>{'Edit TP/SL'}</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={() => router.push(card.marketHref as never)}
           accessibilityRole="button"

@@ -88,6 +88,36 @@ describe('perpCardFigures', () => {
   });
 });
 
+describe('perpCardFigures for Pacifica (#857)', () => {
+  it('has no TP/SL line, a leverage-less tag, a no-data Liq. and the Pacifica market route', () => {
+    const c = perpCardFigures(
+      position({
+        symbol: 'BTC-PERP',
+        leverage: null,
+        liquidationPriceUsd: null,
+        takeProfitPriceUsd: null,
+        stopLossPriceUsd: null,
+      }),
+      'pacifica',
+    );
+    assert.equal(c.tpsl, null);
+    assert.equal(c.tag, 'Long');
+    assert.equal(c.liq, NO_DATA);
+    assert.equal(c.marketHref, '/markets/pacifica/BTC-PERP');
+  });
+
+  it('uses the Pacifica URL and copy for the pacifica venue', () => {
+    assert.equal(
+      perpPositionsUrl('https://api.x', 'pacifica', 'ABC'),
+      'https://api.x/wallet/pacifica/positions?solana=ABC',
+    );
+    assert.deepEqual(applyPerpPositionsResponse({ positions: null, error: null }, 'pacifica', null), {
+      positions: null,
+      error: 'Pacifica positions request failed.',
+    });
+  });
+});
+
 describe('perp positions state', () => {
   const held = { positions: [position()], error: null };
 

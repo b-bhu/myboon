@@ -139,8 +139,12 @@ export const AppView = memo(function AppView({
   const tabs = useMemo(() => meteoraTabs(positions), [positions]);
 
   // The Phoenix tabs' data (#849): gated to the phoenix view like Meteora's.
+  // Pacifica reuses the Phoenix view (#857): same components with a venue
+  // prop; it has no orders route, so only Phoenix loads orders.
   const isPhoenix = app === 'phoenix';
-  const perp = usePerpPositions('phoenix', isPhoenix ? solana : null);
+  const isPerps = isPhoenix || app === 'pacifica';
+  const perpVenue = app === 'pacifica' ? 'pacifica' : 'phoenix';
+  const perp = usePerpPositions(perpVenue, isPerps ? solana : null);
   const phoenixOrders = usePhoenixOrders(isPhoenix ? solana : null);
   const phoenixTabRecord = useMemo(() => phoenixTabs(perp.positions), [perp.positions]);
 
@@ -178,13 +182,13 @@ export const AppView = memo(function AppView({
             <PortfolioTabBody tabKey={activeTab} tab={tabs[activeTab]} />
           )}
         </ScrollView>
-      ) : app === 'phoenix' ? (
+      ) : isPerps ? (
         <ScrollView
           style={styles.meteoraScroll}
           contentContainerStyle={styles.meteoraContent}
           showsVerticalScrollIndicator={false}
         >
-          <PhoenixAppTop solana={solana} evm={evm} />
+          <PhoenixAppTop solana={solana} evm={evm} venue={perpVenue} />
           <PortfolioTabBar tabs={phoenixTabRecord} activeTab={activeTab} onChange={setActiveTab} />
           {activeTab === 'positions' ? (
             <PhoenixPositionsTab
@@ -192,8 +196,9 @@ export const AppView = memo(function AppView({
               loading={perp.loading}
               error={perp.error}
               retry={perp.retry}
+              venue={perpVenue}
             />
-          ) : activeTab === 'orders' ? (
+          ) : activeTab === 'orders' && isPhoenix ? (
             <PhoenixOrdersTab
               orders={phoenixOrders.orders}
               loading={phoenixOrders.loading}

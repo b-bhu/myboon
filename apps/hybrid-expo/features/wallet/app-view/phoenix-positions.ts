@@ -9,6 +9,7 @@
 
 import { NO_DATA } from '@/lib/format';
 import type { WalletPerpPositionDetail } from '@myboon/shared/wallet-summary';
+import type { PerpVenue } from './perp-positions';
 import { usd } from './phoenix-top';
 
 export interface PerpCardFigures {
@@ -27,8 +28,8 @@ export interface PerpCardFigures {
   entry: string;
   mark: string;
   liq: string;
-  /** "TP 175.00 · SL 140.00"; "not set" for a null price. */
-  tpsl: string;
+  /** "TP 175.00 · SL 140.00"; "not set" for a null price. Null for Pacifica (no TP/SL data, #857). */
+  tpsl: string | null;
   /** Where "Close position" goes. */
   marketHref: string;
 }
@@ -52,7 +53,10 @@ export function perpTag(side: 'long' | 'short', leverage: number | null): string
   return leverage === null ? label : `${label} ${leverage}×`;
 }
 
-export function perpCardFigures(position: WalletPerpPositionDetail): PerpCardFigures {
+export function perpCardFigures(
+  position: WalletPerpPositionDetail,
+  venue: PerpVenue = 'phoenix',
+): PerpCardFigures {
   const base = position.symbol.replace(/-PERP$/, '');
   const size = position.size.toLocaleString('en-US', { maximumFractionDigits: 6 });
   const pnlUsd = position.unrealizedPnlUsd;
@@ -69,7 +73,7 @@ export function perpCardFigures(position: WalletPerpPositionDetail): PerpCardFig
     entry: perpPrice(position.entryPriceUsd),
     mark: perpPrice(position.markPriceUsd),
     liq: perpPrice(position.liquidationPriceUsd),
-    tpsl: `TP ${tp} · SL ${sl}`,
-    marketHref: `/markets/phoenix/${position.symbol}`,
+    tpsl: venue === 'pacifica' ? null : `TP ${tp} · SL ${sl}`,
+    marketHref: `/markets/${venue}/${position.symbol}`,
   };
 }
