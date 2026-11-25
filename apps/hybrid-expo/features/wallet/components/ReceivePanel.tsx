@@ -1,20 +1,24 @@
 /**
  * ReceivePanel — the Wallet's Receive mode (issue #719, design wallet.html
- * `.qrcard`).
+ * `.qrcard`; #821 matches the mock's strip and Copy label).
  *
- * One QR card for the address the Solana | EVM toggle picks. Nothing is
- * signed in Receive, so there is no swipe: the 54px Copy button sits where
- * the slider does, and the panel body geometry does not change.
+ * One QR card for the address the Solana | EVM toggle picks; the card holds
+ * only the toggle, the QR and the address. Below it, where the slider sits
+ * in the other modes, a two-line strip (mock `.dstrip`) and the 54px Copy
+ * button (mock `.copybtn`); the card is flex and absorbs the strip's height.
+ * Nothing is signed in Receive, so there is no swipe and the panel body
+ * geometry does not change.
  *
  * The QR encodes the raw address string, not a payment URI, so a scan with
- * another wallet app resolves to the same address the card shows. The network
- * name under the address (Solana or Polygon) tells people what chain the
- * address is for.
+ * another wallet app resolves to the same address the card shows. One 0x
+ * address serves every EVM chain, so the EVM label is just "EVM" — never a
+ * single chain's name.
  *
  * State comes from `receivePanelState` (pure, tested): a connected chain shows
  * the QR card, an active EVM chain without an embedded wallet says "not set
  * up yet", and everything else gets a connect prompt that opens the Wallet
- * connection sheet for that chain.
+ * connection sheet for that chain. The strip text and the Copy label come
+ * from `receivePanelCopy` (pure, tested).
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -27,6 +31,7 @@ import type { Chain } from '@/features/chain/chain.contract';
 import { tokens } from '@/theme';
 import { useWalletSheet } from '@/features/wallet/WalletSheetProvider';
 import {
+  receivePanelCopy,
   receivePanelState,
   type ReceiveChain,
   type ReceivePanelStateName,
@@ -34,7 +39,7 @@ import {
 
 const NETWORK_LABEL: Record<ReceiveChain, string> = {
   solana: 'Solana',
-  evm: 'Polygon',
+  evm: 'EVM',
 };
 
 function NetworkToggle({ chain, onSelect }: { chain: ReceiveChain; onSelect: (chain: ReceiveChain) => void }) {
@@ -75,10 +80,10 @@ function ConnectPrompt({ chain }: { chain: ReceiveChain }) {
   );
 }
 
-function DormantNote() {
+function DormantNote({ network }: { network: string }) {
   return (
     <View style={styles.note}>
-      <Text style={styles.noteTitle}>Polygon is not set up yet</Text>
+      <Text style={styles.noteTitle}>{network} is not set up yet</Text>
       <Text style={styles.noteBody}>
         The EVM wallet has not been created on this device, so there is no
         address to receive on yet.
@@ -102,6 +107,7 @@ export function ReceivePanel({ solanaAddress, evmAddress, chains }: {
     activeChains: chains,
   });
   const network = NETWORK_LABEL[chain];
+  const copy = receivePanelCopy(chain);
 
   const handleCopy = useCallback(async () => {
     if (!address) return;
@@ -121,36 +127,41 @@ export function ReceivePanel({ solanaAddress, evmAddress, chains }: {
               <QRCode value={address} size={126} color={tokens.colors.walletCore} backgroundColor="transparent" />
             </View>
             <Text selectable style={styles.addr}>{address}</Text>
-            <Text style={styles.network}>{network}</Text>
           </View>
         ) : null}
-        {state === 'dormant-evm' ? <DormantNote /> : null}
+        {state === 'dormant-evm' ? <DormantNote network={network} /> : null}
         {state === 'not-connected' ? <ConnectPrompt chain={chain} /> : null}
-        {state === 'connected' ? (
+      </View>
+      {state === 'connected' ? (
+        <>
+          <View style={styles.dstrip}>
+            <Text style={styles.dstripLine}>{copy.strip[0]}</Text>
+            <Text style={styles.dstripLine}>{copy.strip[1]}</Text>
+          </View>
           <Pressable
             onPress={handleCopy}
             accessibilityRole="button"
-            accessibilityLabel={`Copy ${network} address`}
+            accessibilityLabel={copy.copyLabel}
             style={({ pressed }) => [styles.copy, pressed && styles.pressed]}
           >
-            <Text style={[styles.copyLabel, copied && { color: tokens.colors.viridian }]}>
-              {copied ? 'Address copied' : 'Copy'}
-            </Text>
             <MaterialIcons
               name={copied ? 'check' : 'content-copy'}
               size={16}
               color={copied ? tokens.colors.viridian : tokens.colors.accent}
             />
+            <Text style={[styles.copyLabel, copied && { color: tokens.colors.viridian }]}>
+              {copied ? 'Address copied' : copy.copyLabel}
+            </Text>
           </Pressable>
-        ) : null}
-      </View>
+        </>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   // Fills the fixed 430px action body; the card is the panel's single surface.
-  body: { flex: 1, paddingVertical: 8 },
+  body: { flex: 1, paddingVertical: 8, gap: 8 },
   card: {
     flex: 1,
     borderRadius: 8,
@@ -204,11 +215,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: tokens.colors.bone,
   },
-  network: {
+  // Design `.dstrip`: 52 tall, both lines dim mono 11, gap 4, padding 0 4.
+  dstrip: { height: 52, justifyContent: 'center', gap: 4, paddingHorizontal: 4 },
+  dstripLine: {
     fontSize: 11,
     fontFamily: 'monospace',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
     color: tokens.colors.textDim,
   },
   note: {

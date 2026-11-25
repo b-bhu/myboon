@@ -47,3 +47,24 @@ export function receivePanelState({
   if (chain === 'evm' && active) return 'dormant-evm';
   return 'not-connected';
 }
+
+/**
+ * The two-line strip under the QR card and the Copy button label, one per
+ * chain (issue #821; mock wallet.html `recvMid`, `.dstrip`/`.copybtn`).
+ * One 0x address serves every EVM chain, so the EVM copy never names a chain.
+ */
+export function receivePanelCopy(chain: ReceiveChain): {
+  strip: [string, string];
+  copyLabel: string;
+} {
+  if (chain === 'solana') {
+    return {
+      strip: ['Solana address · SOL and SPL tokens', 'Send only Solana tokens to this address'],
+      copyLabel: 'Copy Solana address',
+    };
+  }
+  return {
+    strip: ['One address for all EVM chains', 'Send only EVM tokens to this address'],
+    copyLabel: 'Copy EVM address',
+  };
+}
