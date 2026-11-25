@@ -17,16 +17,17 @@
  * block with the Deposit button is #860); failed → the note with a Retry
  * that calls the hook's retry (#865 adds the shared failure banner).
  * Orders and History are rendered by AppView through PortfolioTabBody;
- * Manage opens nothing here (#903 wires the sheet).
+ * Manage opens the Manage sheet for its card (#903).
  */
 
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { NO_DATA, formatPrice } from '@/lib/format';
 import { semantic, tokens } from '@/theme';
+import { MeteoraManageSheet } from './MeteoraManageSheet';
 import { signedUsd, usd } from './meteora-top';
 import type { WalletMeteoraPool, WalletMeteoraPosition } from '@myboon/shared/wallet-summary';
 
@@ -52,6 +53,7 @@ export const MeteoraPositionsTab = memo(function MeteoraPositionsTab({
   pools: WalletMeteoraPool[];
 }) {
   const router = useRouter();
+  const [managed, setManaged] = useState<WalletMeteoraPosition | null>(null);
 
   // Loading (skeleton is #859), or nothing to fetch at all (no Solana
   // address — the hook made no call): no card and no Add liquidity row.
@@ -118,8 +120,16 @@ export const MeteoraPositionsTab = memo(function MeteoraPositionsTab({
       </Pressable>
 
       {positions.map((position, index) => (
-        <MeteoraPositionCard key={`${index}:${position.poolAddress}`} position={position} pools={pools} />
+        <MeteoraPositionCard
+          key={`${index}:${position.poolAddress}`}
+          position={position}
+          pools={pools}
+          onManage={() => setManaged(position)}
+        />
       ))}
+      {managed === null ? null : (
+        <MeteoraManageSheet position={managed} onClose={() => setManaged(null)} onChanged={retry} />
+      )}
     </View>
   );
 });
@@ -140,9 +150,11 @@ function signedPct(value: number): string {
 function MeteoraPositionCard({
   position,
   pools,
+  onManage,
 }: {
   position: WalletMeteoraPosition;
   pools: WalletMeteoraPool[];
+  onManage: () => void;
 }) {
   const value = poolValueUsd(pools, position.poolName);
   const usdPart = position.pnlUsd === null ? NO_DATA : signedUsd(position.pnlUsd);
@@ -192,11 +204,12 @@ function MeteoraPositionCard({
         </Text>
       </View>
 
-      {/* Mock ".pc-f": Manage opens the sheet in #903; it renders inert here. */}
+      {/* Mock ".pc-f": Manage opens the Manage sheet (#903). */}
       <View style={styles.footer}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Manage position"
+          onPress={onManage}
           style={({ pressed }) => [styles.manage, pressed && styles.pressed]}
         >
           <Text style={styles.manageText}>{'Manage'}</Text>
