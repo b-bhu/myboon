@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { receivePanelState } from './receive-panel-state';
+import { receivePanelCopy, receivePanelState } from './receive-panel-state';
 
 // Issue #719: one pure test for the panel-state helper — both connected,
 // only Solana, only EVM, neither, dormant EVM.
@@ -50,4 +50,17 @@ test('receive panel state: connected, dormant-evm and not-connected per toggle',
     receivePanelState({ chain: 'evm', solanaAddress: 'Sol1', evmAddress: null, activeChains: ['solana', 'evm'] }),
     'dormant-evm',
   );
+});
+
+// Issue #821: the strip under the QR card and the Copy label, one case per
+// chain, pinned to the mock's `recvMid` strings.
+test('receivePanelCopy: strip lines and copy label per chain', () => {
+  assert.deepEqual(receivePanelCopy('solana'), {
+    strip: ['Solana address · SOL and SPL tokens', 'Send only Solana tokens to this address'],
+    copyLabel: 'Copy Solana address',
+  });
+  assert.deepEqual(receivePanelCopy('evm'), {
+    strip: ['One address for all EVM chains', 'Send only EVM tokens to this address'],
+    copyLabel: 'Copy EVM address',
+  });
 });
