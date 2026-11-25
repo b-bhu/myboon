@@ -77,7 +77,8 @@ body.proto{padding:16px 0!important;height:100vh;overflow:hidden}body.proto #pp{
 .mv-amt{margin-top:4px;padding:8px 0 6px}.mv-amt .big.dn{color:var(--pink)}
 .bn{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--edge);border-radius:8px;padding:12px;margin:8px 0;background:var(--card)}.bn>svg{color:var(--pink);flex:0 0 auto;margin-top:1px}.bn p{flex:1;font-size:12px;line-height:1.4;color:var(--dim)}.bn p b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}.fix{color:var(--gold);font-weight:600;font-size:12px;white-space:nowrap}
 .swipe.off{opacity:.55}.swipe.off .thumb{background:var(--card);color:var(--dim);box-shadow:inset 0 0 0 1px var(--edge);left:4px}
-.swipe.failed{box-shadow:inset 0 0 0 1px var(--pink)}.swipe.failed .thumb{left:calc(100% - 50px);background:var(--card);color:var(--pink);box-shadow:inset 0 0 0 1.5px var(--pink)}.swipe.failed .lbl{inset:0 62px 0 14px}.swipe.failed strong{color:var(--pink)}
+.swipe.failed{box-shadow:inset 0 0 0 1px var(--pink)}.swipe.failed .thumb{left:calc(100% - 50px);background:var(--card);color:var(--pink);box-shadow:inset 0 0 0 1.5px var(--pink)}.swipe.failed .lbl{inset:0 62px 0 14px}.swipe.failed strong{color:var(--pink)}.swipe.failed.slide .thumb{left:4px}.swipe.failed.slide .lbl{inset:0 12px 0 62px}
+.emp.nc .cbtn{display:inline-flex;align-items:center;justify-content:center;width:auto;height:44px;padding:0 28px;border-radius:8px;background:var(--gold);color:#021B26;font-weight:600;font-size:15px}.emp.nc{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 16px}.emp.nc p{max-width:260px}.dstrip .d2.rent{font-size:10.5px}
 .toast{z-index:20}
 .spin svg{animation:spin 1.2s linear infinite;vertical-align:-2px}
 .qr{width:160px;height:160px;margin:4px auto 8px}.addr{margin-bottom:8px!important}
@@ -326,6 +327,7 @@ function swipe(S,label,R){
  const st=S.stage,n=R&&R.steps?R.steps.length:1,steps=R&&R.steps?R.steps:[];
  if(label.off){const tg=label.fix?'button':'div';return `<${tg} class="swipe off"${label.fix?` data-fix="${label.fix}"`:''}><div class="thumb">${ic('slash')}</div><div class="lbl"><small>${label.small}</small><strong>${label.big}</strong></div></${tg}>`;}
  if(st==='pending')return `<div class="swipe pending" data-swipe><div class="fill" style="width:${Math.round(S.step/n*80)+10}%"></div><div class="thumb">${ic('spin')}</div><div class="lbl"><small>${label.pendSmall||`Step ${S.step} of ${n}`}</small><strong>${label.pendBig||steps[S.step-1]||'Working'}</strong></div></div>`;
+ if(st==='failed'&&label.slideRetry)return `<div class="swipe failed slide" data-retry><div class="fill" style="width:0"></div><div class="thumb">${ic('retry')}</div><div class="lbl"><small>${label.failSmall}</small><strong>Slide to retry</strong></div></div>`;
  if(st==='failed')return `<div class="swipe failed" data-retry><div class="fill" style="width:${Math.round(S.step/n*80)}%"></div><div class="thumb">${ic('retry')}</div><div class="lbl"><small>${label.failSmall||`Step ${S.step} of ${n} failed`}</small><strong>Tap to retry step ${S.step}</strong></div></div>`;
  if(st==='done')return `<div class="swipe done" data-swipe><div class="fill" style="width:100%"></div><div class="thumb">${ic('check')}</div><div class="lbl"><small>${label.doneSmall||'Done · tap to start again'}</small><strong>${label.done}</strong></div></div>`;
  return `<div class="swipe" data-swipe><div class="fill" style="width:${S.drag?S.drag*100:0}%"></div><div class="thumb" data-thumb style="left:${S.drag?`calc(4px + (100% - 54px) * ${S.drag})`:'4px'}">${ic('arrow')}</div><div class="lbl${label.qi?' qa':''}"${label.qi?' data-qinfo':''}><small>${label.small}</small><strong>${label.big}</strong></div>${label.qi?'<i class="qi">i</i>':''}</div>`;
@@ -333,17 +335,19 @@ function swipe(S,label,R){
 const usd2=v=>'≈ '+usd(v);
 const amtStr=(S,t)=>S.kb&&S.typed!=null?(S.typed===''?'0':S.typed):t;
 function sendMid(S){
- const T=TOKX.usdc,amt=amtOf(S),F=S.sendF,st=S.stage,R={steps:['Sending on Solana']};
+ const T=TOKX.usdc,amt=amtOf(S),F=S.sendF,st=S.stage,R={steps:['Sending...']},SH='7xKX…gAsU';
  const addr=F?`<span class="addrf">7xKXtg…TZRuJosgAsU</span>`:`<span class="addrf ph">Paste a Solana address</span>`;
  const to=`<div class="pcard${F?' pre':''}" data-t="to"><div class="pc-top"><span>To</span><span class="mini2"><button class="mini" data-paste>Paste</button><button class="mini">Scan</button></span></div>
   <div class="pc-mid">${addr}</div><div class="pc-bot"><span>${F?`<span class="okc">${ic('check',12)} Valid Solana address</span>`:'Solana address'}</span><span>${F?'New recipient':''}</span></div></div>`;
- const strip=st==='done'?ds('Sent <b>250.00 USDC</b> to 7xKX…gAsU','Fee ~$0.001 · arrived in 1s')
-  :st==='pending'?ds('Sending on Solana…','Confirming')
+ const strip=st==='done'?(S.rent?`<div class="dstrip"><span class="d1">Receipt: sent <b>${fmt(T,amt)} ${T[1]}</b> to <b>${SH}</b></span><span class="d2 rent">Includes ~0.002 SOL to create their USDC account</span></div>`:`<div class="dstrip"><span class="d1">Receipt: sent <b>${fmt(T,amt)} ${T[1]}</b> to <b>${SH}</b></span></div>`)
+  :st==='pending'?ds(`Sending <b>${fmt(T,amt)} ${T[1]}</b> to <b>${SH}</b>`,'Confirming on Solana · about 1 sec')
+  :st==='failed'?`<div class="dstrip err">${ic('slash',18)}<span>Send failed. Solana did not confirm it. Your ${fmt(T,amt)} ${T[1]} is still in your wallet.</span></div>`
   :ds('Network fee ~$0.001 · arrives in ~1 sec','Solana only · tokens you hold · no address book');
  return pcard({label:'You send',right:`Bal ${fmt(T,T[2])} · <button class="lnk2" data-chip="Max">Max</button>`,pick:tokPill(T[0],T[1]),amt:amtStr(S,fmt(T,amt)),neg:amt>T[2],left:'Solana',sub:usd2(amt*T[3]),kbd:1,foc:S.kb,t:'from'})
   +`<span class="flipb st">${ic('down',16)}</span>`+to+chipsH(S)+strip
-  +swipe(S,F?{small:'Swipe to send',big:`${fmt(T,amt)} ${T[1]} to 7xKX…gAsU`,done:`Sent · ${fmt(T,amt)} ${T[1]}`}:{small:'Swipe to send',big:'Enter an address and amount',done:'Sent'},R);
+  +swipe(S,F?{small:'Swipe to send',big:`${fmt(T,amt)} ${T[1]} to 7xKX…gAsU`,done:`Sent · ${fmt(T,amt)} ${T[1]}`,doneSmall:'Done · ~$0.001 fees · took 1s',failSmall:'Send failed · money is safe',slideRetry:1}:{small:'Swipe to send',big:'Enter an address and amount',done:'Sent'},R);
 }
+function ncMid(){return `<div class="emp nc" data-t="emp">${ic('lock',32)}<h3>Connect to MyBoon</h3><p>Connect a wallet to swap, move, send and receive.</p><button class="cbtn" data-connect>Connect</button></div>`}
 function qr(seed){let h='',x=seed||7;for(let i=0;i<21*21;i++){x=(x*1103515245+12345)&0x7fffffff;const r=Math.floor(i/21),c=i%21;const fin=(r<7&&c<7)||(r<7&&c>13)||(r>13&&c<7);let on;if(fin){const a=Math.max(Math.abs((r>13?r-14:r)-3),Math.abs((c>13?c-14:c)-3));on=a!==2&&a<4}else on=(x>>8)&1;h+=`<i class="${on?'on':''}"></i>`}return `<div class="qr">${h}</div>`}
 function recvMid(S){
  const evm=S.net==='evm';
@@ -437,6 +441,10 @@ function trow(S,x,seg,tot){
  return `<button class="tr${stale?' stale':''}" data-open="${seg}:${k}">${mk(k,28)}<span class="nm"><b>${pre}${n}</b><small class="ln mono">${ln}</small></span><span class="rt"><b class="mono">${f(v)}</b>${stale?`<small class="mono stl"><span class="spin">${ic('spin',11)}</span>2m ago</small>`:`<small class="mono">${(v/tot*100).toFixed(1)}%</small>`}</span><span class="chev">›</span></button>`;
 }
 function portfolio(S){
+ if(S.nc)return `<div class="port"><div class="ph"><h2>Portfolio</h2><div class="vs">${['table','map','cards'].map(v=>`<button data-view="${v}" class="${S.view===v?'on':''}" aria-label="${v} view">${ic(v,16)}</button>`).join('')}</div></div>
+   <div class="lab">Total balance · 0 apps · 0 chains</div><div class="total mono">$0.00</div>
+   <div class="seg"><button data-seg="apps" class="${S.seg==='apps'?'on':''}">Apps · 0</button><button data-seg="spot" class="${S.seg==='spot'?'on':''}">Spot · 0 chains</button></div>
+   <p class="note">No rows yet. Connect a wallet to see your apps and tokens here.</p></div>`;
  if(S.app)return appView(S);
  const apps=APPS.filter(a=>!S.hide.includes(a[0])),errs=apps.filter(a=>!S.load&&S.st[a[0]]==='error');
  const appsTot=apps.filter(a=>!errs.includes(a)).reduce((s,x)=>s+x[2],0),spotTot=SPOT.reduce((s,x)=>s+x[2],0),tot=appsTot+spotTot;
@@ -590,7 +598,7 @@ function phoneHTML(S){
  const tabs=`<nav class="tabs"><span>▣<small>Feed</small></span><span${S.market?' class="on"':''}>▦<small>Apps</small></span><span${S.market?'':' class="on"'}>▭<small>Wallet</small></span></nav>`;
  if(S.market)return `<div class="wscroll" style="pointer-events:auto;z-index:1">${marketHTML()}</div>${tabs}`;
  const cols=S.mode==='move';
- const mid=S.mode==='swap'?swapMid(S):cols?colsMid(S):{send:sendMid,receive:recvMid}[S.mode](S);
+ const mid=S.nc?ncMid():S.mode==='swap'?swapMid(S):cols?colsMid(S):{send:sendMid,receive:recvMid}[S.mode](S);
  return `<div class="wtop"><div class="gold"><div class="top"><img src="${window.WORDMARK}" alt="myBoon" class="wm"><div class="topr"><span class="bell">${ic('bell',20)}</span><span class="av">b</span></div></div>
    <div class="modes">${['swap','move','send','receive'].map(m=>`<button data-mode="${m}" class="${S.mode===m?'on':''}">${ic(m,15)}${m[0].toUpperCase()+m.slice(1)}</button>`).join('')}</div>
    <div class="composer${cols?' cols':''}${S.mode==='swap'?' vs':''}">${mid}</div></div></div>
@@ -631,7 +639,7 @@ window.proto=(el)=>{
   if(kind==='cashout'){const x=PM.open.find(v=>v.id===a);S.done.push(a);toast(`Cashed out · +${usd(x.v-0.36)} to Polymarket cash`)}
   else if(kind==='manage'){const x=LP.find(v=>v.id===a);if(S.msel==='close'){S.done.push(a);toast('Claimed and closed '+x.pair)}else toast(S.msel==='claim'?`Claimed ${usd(x.fees)} in fees`:`Removed ${S.mpre}% of ${x.pair}`)}
   S.sheet=null;r()};
- const start=()=>{S.drag=0;if(S.sheet){finishSheet();return}S.kb=0;S.typed=null;if(S.mode==='move'||S.mode==='swap')run(1);else{S.stage='pending';S.step=1;r();setTimeout(()=>{S.stage='done';r()},900)}};
+ const start=()=>{S.drag=0;if(S.sheet){finishSheet();return}S.kb=0;S.typed=null;if(S.mode==='move'||S.mode==='swap')run(1);else{S.rent=S.mode==='send'&&S.sendF?1:0;S.stage='pending';S.step=1;r();setTimeout(()=>{S.stage='done';r()},900)}};
  const act=a=>{const [kind,a1,a2]=a.split(':');
   if(kind==='dep'){S.mode='move';S.to=a1;S.from=a1==='polymarket'?'base':'solana';S.pre='to';S.stage='ready';S.chip=null;S.amount=100;S.hint=null;S.kb=0;S.want='collapse';r();toast(`Deposit opens Move with To = ${NAME(a1)}`)}
   else if(kind==='wd'){S.mode='move';S.from=a1;S.to='solana';S.pre='from';S.stage='ready';S.chip=null;S.amount=Math.min(100,BAL(a1));S.hint=null;S.kb=0;S.want='collapse';r();toast(`Withdraw opens Move with From = ${NAME(a1)}`)}
@@ -721,11 +729,12 @@ const OPENQ={
  strip:'Does a market screen keep a \u201cyour position here\u201d strip? PRD recommends yes. Drawn here as one frame.'
 };
 const G=[
- {h:'1. Action panel: four modes, one height',cls:' cmp',d:'Swap | Move | Send | Receive, with Swap first and the default. Swap is the vertical layout: You pay card, You receive card, then rate, slippage and minimum received, and the slider. Move is two columns: From on the left, To on the right, each with a chain dial and that chain\u2019s wallet and apps below it; its amount and the 25/50/75/Max chips sit just above the slider. Send and Receive use cards. The panel body is a fixed 430px (gold area 552px = 65% of 844); the dashed line marks its bottom edge and sits at the same place in all four frames.',fr:[
+ {h:'1. Action panel: four modes, one height',cls:' cmp',d:'Swap | Move | Send | Receive, with Swap first and the default. Swap is the vertical layout: You pay card, You receive card, then rate, slippage and minimum received, and the slider. Move is two columns: From on the left, To on the right, each with a chain dial and that chain\u2019s wallet and apps below it; its amount and the 25/50/75/Max chips sit just above the slider. Send and Receive use cards. The panel body is a fixed 430px (gold area 552px = 65% of 844); the dashed line marks its bottom edge and sits at the same place in every frame.',fr:[
   {t:'Swap (default)',c:'You pay, flip, You receive. Rate, slippage and minimum received sit under the cards. Same chain only (Jupiter); moving across chains is Move.',s:{mode:'swap'},rl:1},
   {t:'Move',c:'From | To. The dial picks the chain (Polygon to Solana here); the list shows that chain\u2019s wallet and its apps. Slider: route, fees and time.',s:{mode:'move'},rl:1},
   {t:'Send',c:'Card A is the token and amount, card B is the address. Shown filled in.',s:{mode:'send',sendF:1},rl:1,o:'send'},
-  {t:'Receive',c:'QR card, chain icons, strip, Copy address in the slider slot. The toggle picks Solana or EVM.',s:{mode:'receive'},rl:1,o:'recv'}]},
+  {t:'Receive',c:'QR card, chain icons, strip, Copy address in the slider slot. The toggle picks Solana or EVM.',s:{mode:'receive'},rl:1,o:'recv'},
+  {t:'Wallet \u00b7 not connected',c:'No wallet yet. A Connect button takes the place of the panel body, at the same 430px, and the Portfolio below has no rows.',s:{mode:'swap',nc:1},rl:1}]},
  {h:'2. Swap: in progress, receipt, failed, no route',d:'Swap is a same-chain swap through Jupiter. The cards lock while it runs, the slider carries the status, and the facts row becomes a one-line receipt when it is done. Moving money across chains is Move, not Swap.',fr:[
   {t:'In progress',c:'Step 1 of 1. The cards lock; the slider shows the step.',s:{mode:'swap',stage:'pending',step:1},rl:1},
   {t:'Receipt',c:'Done. The facts row becomes a one-line receipt; the slider shows fees and time.',s:{mode:'swap',stage:'done'},rl:1},
@@ -745,9 +754,12 @@ const G=[
  {h:'5. Amount keyboard open',d:'Tapping the amount opens a numeric keyboard (drawn at 288px). The slider\u2019s bottom edge is at y=528 of 844 and the keyboard starts at y=556, so the panel keeps its height and the slider stays visible. This holds for keyboards up to about 316px tall. Real keyboard heights are not tested on a device.',fr:[
   {t:'Swap \u00b7 typing',c:'The amount gets a caret. The Portfolio is behind the keyboard.',s:{mode:'swap',kb:1,typed:'2.5',payAmt:2.5},rl:1},
   {t:'Move \u00b7 typing',c:'Same. The slider updates as you type.',s:{mode:'move',kb:1,typed:'60',amount:60},rl:1}]},
- {h:'6. Send and Receive variants',d:'Same panel height. Send waiting for an address, and Receive on the EVM address.',fr:[
+ {h:'6. Send and Receive variants',d:'Same panel height. Send waiting for an address, Receive on the EVM address, and Send in progress, done and failed.',fr:[
   {t:'Send \u00b7 empty',c:'No address yet. The slider waits for an address and an amount.',s:{mode:'send'},rl:1},
-  {t:'Receive \u00b7 EVM',c:'One 0x address for all EVM chains.',s:{mode:'receive',net:'evm'},rl:1}]},
+  {t:'Receive \u00b7 EVM',c:'One 0x address for all EVM chains.',s:{mode:'receive',net:'evm'},rl:1},
+  {t:'Send \u00b7 in progress',c:'Step 1 of 1. The cards lock; the slider says Sending... and the strip names the amount and address.',s:{mode:'send',sendF:1,stage:'pending',step:1},rl:1},
+  {t:'Send \u00b7 done',c:'Done. The strip becomes a one-line receipt (amount, short address); a small line adds the rent when their USDC account had to be created. The slider shows fees and time.',s:{mode:'send',sendF:1,stage:'done',rent:1},rl:1},
+  {t:'Send \u00b7 failed',c:'Strip says what failed and that the money is still in the wallet. The slider says the money is safe and offers Slide to retry, with the same transfer filled in.',s:{mode:'send',sendF:1,stage:'failed',step:1},rl:1}]},
  {h:'7. Slide-up and Portfolio',d:'The Portfolio sheet is the existing rising panel. Drag the grabber, or scroll. Table is first; Map and Cards switch from the icons. Apps | Spot toggle, top 5 + more, dust under $1 hidden.',fr:[
   {t:'Slide-up expanded',c:'Header stays, Portfolio takes most of the screen. Apps rows carry a second summary line: Cash/Bets/P&L, Equity/open/P&L, Pools/unclaimed.',s:{pull:1}},
   {t:'Portfolio · Map',c:'Same list as a treemap. Tiles open the app.',s:{pull:1,view:'map'}},
