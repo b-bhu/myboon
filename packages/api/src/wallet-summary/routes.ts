@@ -13,11 +13,12 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { getConnInfo } from '@hono/node-server/conninfo'
-import type { MeteoraPositionsResponse, PerpPositionsResponse } from '@myboon/shared/wallet-summary'
-import { createPhoenixConfig, createPhoenixUpstream } from '../phoenix/index.js'
+import type { MeteoraPositionsResponse, PerpPositionsResponse, PhoenixOrdersResponse } from '@myboon/shared/wallet-summary'
+import { createPhoenixConfig, createPhoenixUpstream, type PhoenixUpstream } from '../phoenix/index.js'
 import type { WalletSummaryService } from './service.js'
 import { fetchMeteoraPositions } from './venues/meteora.js'
 import { createPhoenixPositionsReader } from './venues/phoenix.js'
+import { createPhoenixOrdersReader } from './venues/phoenix-orders.js'
 
 // Same base58 pattern as /spot/:wallet/balances (src/spot/routes.ts).
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
@@ -83,6 +84,8 @@ export function createWalletSummaryRoutes(options: {
   meteoraPositions?: (solana: string | null) => Promise<MeteoraPositionsResponse>
   /** Reads every open Phoenix position (#899); production passes the reader on the shared Phoenix upstream. */
   phoenixPositions?: (solana: string | null) => Promise<PerpPositionsResponse>
+  /** Lists every active Phoenix take-profit and stop-loss order (#900); production passes the reader on the shared Phoenix upstream. */
+  phoenixOrders?: (solana: string | null) => Promise<PhoenixOrdersResponse>
   rateLimiter?: WalletRateLimiter
   trustForwardedHeaders?: boolean
 }): Hono {
@@ -90,9 +93,11 @@ export function createWalletSummaryRoutes(options: {
   const { service } = options
   const limiter = options.rateLimiter ?? createWalletRateLimiter()
   const meteoraPositions = options.meteoraPositions ?? fetchMeteoraPositions
-  // No reader passed: a default upstream, as venues/index.ts builds for the summary.
-  const phoenixPositions = options.phoenixPositions
-    ?? createPhoenixPositionsReader(createPhoenixUpstream(createPhoenixConfig()))
+  // No reader passed: one default upstream, as venues/index.ts builds for the summary.
+  let defaultPhoenixUpstream: PhoenixUpstream | null = null
+  const phoenixUpstream = () => (defaultPhoenixUpstream ??= createPhoenixUpstream(createPhoenixConfig()))
+  const phoenixPositions = options.phoenixPositions ?? createPhoenixPositionsReader(phoenixUpstream())
+  const phoenixOrders = options.phoenixOrders ?? createPhoenixOrdersReader(phoenixUpstream())
   const identityFor = (c: Context) => identityFromContext(c, options.trustForwardedHeaders === true)
 
   routes.get('/summary', async (c) => {
@@ -154,6 +159,24 @@ export function createWalletSummaryRoutes(options: {
       )
     }
     return c.json(await phoenixPositions(solana))
+  })
+
+  // GET /wallet/phoenix/orders?solana= (#900): read-only, same address check
+  // and per-IP limiter as the positions route.
+  routes.get('/phoenix/orders', async (c) => {
+    const solana = c.req.query('solana') || null
+    if (solana && !SOLANA_ADDRESS_PATTERN.test(solana)) {
+      return c.json({ error: 'Invalid solana address', code: 'INVALID_ADDRESS' }, 400)
+    }
+    const quota = limiter.consume(identityFor(c), 1)
+    if (!quota.ok) {
+      return c.json(
+        { error: 'Wallet summary rate limit exceeded', code: 'RATE_LIMITED' },
+        429,
+        { 'Retry-After': String(quota.retryAfterSeconds) },
+      )
+    }
+    return c.json(await phoenixOrders(solana))
   })
 
   return routes

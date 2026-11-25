@@ -163,6 +163,36 @@ export interface PerpPositionsResponse {
   error?: string
 }
 
+/**
+ * One active Phoenix take-profit or stop-loss order (#900). The position
+ * fields (`positionSide`, `size`, `entryPriceUsd`) and `pnlAtTriggerUsd`
+ * are null when the order's symbol has no open position on the same trader.
+ * `canCancel` is true when both cancel keys (`conditionalOrderIndex`,
+ * `executionDirection`) are present.
+ */
+export interface WalletPhoenixOrder {
+  id: string
+  symbol: string
+  kind: 'take_profit' | 'stop_loss'
+  triggerPriceUsd: number | null
+  positionSide: 'long' | 'short' | null
+  size: number | null
+  entryPriceUsd: number | null
+  pnlAtTriggerUsd: number | null
+  conditionalOrderIndex: number | null
+  executionDirection: string | null
+  canCancel: boolean
+  traderPdaIndex: number | null
+  traderSubaccountIndex: number | null
+}
+
+/** Orders response for GET /wallet/phoenix/orders (#900); `status` as in PerpPositionsResponse. */
+export interface PhoenixOrdersResponse {
+  status: VenueStatus
+  orders: WalletPhoenixOrder[]
+  error?: string
+}
+
 /** One spot token holding; icon URL when the upstream provides one. */
 export interface WalletSpotToken {
   mint: string
