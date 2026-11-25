@@ -38,7 +38,7 @@ export const PORTFOLIO_APP_KEYS: readonly PortfolioAppKey[] = [
 /** Dust rule: values under this many dollars stay off the Portfolio list. */
 export const DUST_USD = 1;
 
-/** One row in the Apps group (id = app key) or the Spot group (id = mint). */
+/** One row in the Apps group (id = app key) or the Spot group (id = chain). */
 export interface AppPortfolioRow {
   group: 'apps';
   id: PortfolioAppKey;
@@ -47,12 +47,16 @@ export interface AppPortfolioRow {
   summaryLine: string;
 }
 
-/** One row in the Spot group: a single spot token holding. */
+/**
+ * One row in the Spot group: one per chain with a Spot value at or above
+ * the dust line. v1 lists Solana only — the summary's spot slot holds the
+ * Solana address, and the owner decided no EVM row (issue #770).
+ */
 export interface SpotPortfolioRow {
   group: 'spot';
-  mint: string;
-  symbol: string | null;
-  valueUsd: number;
+  chain: 'solana';
+  /** The chain's Spot value; null keeps the row so its value slot can show the no-data glyph. */
+  valueUsd: number | null;
 }
 
 export type WalletPortfolioRow = AppPortfolioRow | SpotPortfolioRow;
@@ -138,8 +142,10 @@ export function appSummaryLines(summary: WalletSummary): Partial<Record<Portfoli
   return lines;
 }
 
-function descByValue<R extends { valueUsd: number }>(rows: R[]): R[] {
-  return [...rows].sort((a, b) => b.valueUsd - a.valueUsd);
+/** Sorts by the value with nulls (unknown) last, without mutating the input. */
+function descByValue<R>(rows: readonly R[], value: (row: R) => number | null): R[] {
+  const key = (row: R): number => value(row) ?? -Infinity;
+  return [...rows].sort((a, b) => key(b) - key(a));
 }
 
 function isListed(valueUsd: number | null): valueUsd is number {
@@ -149,7 +155,8 @@ function isListed(valueUsd: number | null): valueUsd is number {
 /**
  * The Apps and Spot groups, dust-hidden and sorted by value (desc). An app
  * with status `not_connected` (or `unavailable`, or a null value) produces
- * no row; Spot rows come from the spot summary's listed token holdings.
+ * no row; the Spot group holds one row per chain, listed from the spot
+ * app's value (Solana only in v1, #770).
  */
 export function portfolioRows(summary: WalletSummary): {
   apps: AppPortfolioRow[];
@@ -164,19 +171,17 @@ export function portfolioRows(summary: WalletSummary): {
     if (summaryLine === undefined) continue;
     apps.push({ group: 'apps', id: key, valueUsd: app.valueUsd, summaryLine });
   }
+  // One row per chain above the dust line; v1 lists Solana only (#770).
+  // A null (failed) value keeps the row — its value slot shows the
+  // no-data glyph; a real value under $1 is dust-hidden like the apps'.
   const spot: SpotPortfolioRow[] = [];
-  if (summary.apps.spot.status === 'ok' && summary.apps.spot.summary) {
-    for (const token of summary.apps.spot.summary.tokens) {
-      if (!isListed(token.valueUsd)) continue;
-      spot.push({
-        group: 'spot',
-        mint: token.mint,
-        symbol: token.symbol,
-        valueUsd: token.valueUsd,
-      });
+  if (summary.apps.spot.status === 'ok') {
+    const valueUsd = summary.apps.spot.valueUsd;
+    if (valueUsd === null || valueUsd >= DUST_USD) {
+      spot.push({ group: 'spot', chain: 'solana', valueUsd });
     }
   }
-  return { apps: descByValue(apps), spot: descByValue(spot) };
+  return { apps: descByValue(apps, (row) => row.valueUsd), spot: descByValue(spot, (row) => row.valueUsd) };
 }
 
 /**

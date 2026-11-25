@@ -96,41 +96,30 @@ describe('portfolioRows', () => {
     );
   });
 
-  it('spot rows carry the token holdings, sorted by value desc', () => {
+  it('spot group: one chain row, Solana, from the spot app value (#770)', () => {
     const { spot } = portfolioRows(scenario());
     assert.deepEqual(
-      spot.map((row) => [row.mint, row.symbol, row.valueUsd]),
-      [
-        ['So11111111111111111111111111111111111111112', 'SOL', 5310.25],
-        ['ExampleMint111111111111111111111111111111111', null, 12.5],
-      ],
+      spot.map((row) => [row.chain, row.valueUsd]),
+      [['solana', 5322.75]],
     );
     assert.ok(spot.every((row) => !('summaryLine' in row)));
     assert.deepEqual(
       spot.map((row) => row.group),
-      ['spot', 'spot'],
+      ['spot'],
     );
   });
 
   it('values under $1 are hidden as dust, $1 exactly is kept', () => {
     const s = scenario();
     assert.equal(DUST_USD, 1);
-    s.apps.spot.summary = {
-      tokenCount: 3,
-      tokens: [
-        { mint: 'A', symbol: 'A', iconUrl: null, valueUsd: 0.99 },
-        { mint: 'B', symbol: 'B', iconUrl: null, valueUsd: 1 },
-        { mint: 'C', symbol: 'C', iconUrl: null, valueUsd: 2.5 },
-      ],
-    };
-    const { spot } = portfolioRows(s);
-    assert.deepEqual(
-      spot.map((row) => [row.mint, row.valueUsd]),
-      [
-        ['C', 2.5],
-        ['B', 1],
-      ],
-    );
+    s.apps.spot.valueUsd = 0.99;
+    assert.deepEqual(portfolioRows(s).spot, []);
+    s.apps.spot.valueUsd = 1;
+    assert.deepEqual(portfolioRows(s).spot, [{ group: 'spot', chain: 'solana', valueUsd: 1 }]);
+    // A null (failed) value is not dust: the row stays so the value slot
+    // can show the no-data glyph (#770).
+    s.apps.spot.valueUsd = null;
+    assert.deepEqual(portfolioRows(s).spot, [{ group: 'spot', chain: 'solana', valueUsd: null }]);
   });
 
   it('not_connected app produces no row (the rule under Rule / change)', () => {
@@ -161,21 +150,7 @@ describe('portfolioRows', () => {
 
 describe('topFive', () => {
   it('cuts to the top 5 in order and counts the rest', () => {
-    const { spot } = portfolioRows((() => {
-      const s = scenario();
-      s.apps.spot.summary = {
-        tokenCount: 7,
-        tokens: [50, 40, 30, 25, 20, 15, 0.5].map((valueUsd, i) => ({
-          mint: `mint-${i}`,
-          symbol: `T${i}`,
-          iconUrl: null,
-          valueUsd,
-        })),
-      };
-      return s;
-    })());
-    assert.equal(spot.length, 6); // 0.5 is dust
-    const cut = topFive(spot);
+    const cut = topFive([50, 40, 30, 25, 20, 15].map((valueUsd) => ({ valueUsd })));
     assert.deepEqual(
       cut.top.map((row) => row.valueUsd),
       [50, 40, 30, 25, 20],

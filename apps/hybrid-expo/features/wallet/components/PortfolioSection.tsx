@@ -31,9 +31,11 @@
  * the same entries (#841 adds Map): the header's Table | Map | Cards switch
  * (#840, the design's ".vs" in frame "Portfolio · Map") carries and
  * remembers the choice, and its disabled segments reopen as Table via
- * `portfolio-view`'s parse. Spot rows open
- * `/spot` (the venue's current profile route); app rows open theirs via
- * callbacks, like the old rows below that #770 removes.
+ * `portfolio-view`'s parse. The Spot segment lists one row per chain —
+ * v1: Solana only, no EVM row (issue #770) — labelled "Spot", opening
+ * `/spot`, the venue's current profile route (#844 moves that tap to the
+ * token list); app rows open theirs via callbacks, like the old rows below
+ * that #905 removes.
  *
  * #843 keeps the table still while the sheet is dragged: every row is a `memo`
  * component on its data props (the press handlers travel through stable
@@ -48,6 +50,7 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 import { semantic, tokens } from '@/theme';
+import { NO_DATA } from '@/lib/format';
 import { walletSummaryFixture, type WalletSummary } from '@myboon/shared/wallet-summary';
 import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import {
@@ -303,7 +306,9 @@ export const PortfolioSection = memo(function PortfolioSection({
       }
       list.push(...[...listed].sort((a, b) => b.valueUsd - a.valueUsd), ...failed);
     } else {
-      for (const row of state.spotRows) list.push({ kind: 'spot', row, valueUsd: row.valueUsd });
+      // `?? 0` is for the sort only, like the failed app rows above; the
+      // row's own value slot shows the no-data glyph for null (#770).
+      for (const row of state.spotRows) list.push({ kind: 'spot', row, valueUsd: row.valueUsd ?? 0 });
     }
   }
   const limit = showAll ? Math.max(list.length, 1) : 5;
@@ -324,19 +329,16 @@ export const PortfolioSection = memo(function PortfolioSection({
     if (entry.kind === 'spot') {
       const stale = state?.byApp.spot.status === 'stale';
       return {
-        key: `spot:${entry.row.mint}`,
-        name: entry.row.symbol ?? 'Token',
-        mark: {
-          uri: display?.apps.spot.summary?.tokens.find((token) => token.mint === entry.row.mint)?.iconUrl ?? null,
-          letter: (entry.row.symbol ?? '?').trim().charAt(0).toUpperCase() || '?',
-        },
+        key: `spot:${entry.row.chain}`,
+        name: 'Spot',
+        mark: { uri: null, letter: 'S' },
         color: tokens.walletBrand.spot,
         state: stale ? 'stale' : 'ok',
-        value: formatUsd(entry.row.valueUsd),
+        value: entry.row.valueUsd === null ? NO_DATA : formatUsd(entry.row.valueUsd),
         chip: null,
         chipNegative: false,
         age: ageLabel(state?.byApp.spot.asOf ?? null),
-        accessibilityLabel: `Open ${entry.row.symbol ?? 'token'} in Spot`,
+        accessibilityLabel: 'Open Spot',
         onOpen: onOpenSpot,
         onRetry: retry,
         spinner: rowSpinner(stale),
@@ -454,11 +456,14 @@ export const PortfolioSection = memo(function PortfolioSection({
           if (entry.kind === 'spot') {
             return (
               <PortfolioSpotRow
-                key={`spot:${entry.row.mint}`}
-                name={entry.row.symbol ?? 'Token'}
-                openLabel={`Open ${entry.row.symbol ?? 'token'} in Spot`}
-                valueText={formatUsd(entry.row.valueUsd)}
+                key={`spot:${entry.row.chain}`}
+                valueText={entry.row.valueUsd === null ? NO_DATA : formatUsd(entry.row.valueUsd)}
                 stale={spotStale}
+                // The freshness label ticks with the 30s age tick, so this
+                // string — not the row object — is what invalidates the memo.
+                ageText={ageLabel(state?.byApp.spot.asOf ?? null)}
+                spin={loading}
+                retry={retry}
                 onPress={openSpotRow}
               />
             );
@@ -511,20 +516,27 @@ export const PortfolioSection = memo(function PortfolioSection({
  * One table row, memo'd on its data only (#843): while the sheet is dragged
  * nothing here re-renders, and a refresh or the age tick that lands
  * mid-drag re-renders just the rows whose own displayed values changed.
- * App names come from APP_NAME, and the press handlers are the section's
- * stable dispatchers, so a row's props stay primitives or stable identity.
+ * The press handlers are the section's stable dispatchers, so a row's
+ * props stay primitives or stable identity.
+ *
+ * One Spot chain row (#770): the segment lists one row per chain, labelled
+ * "Spot", and the tap opens `/spot` (#844 moves it to the token list). A
+ * stale value is dimmed and keeps its age with the same Retry the app rows
+ * show (#863) — one stale rule, retried through the whole-summary refetch.
  */
 const PortfolioSpotRow = memo(function PortfolioSpotRow({
-  name,
-  openLabel,
   valueText,
   stale,
+  spin,
+  ageText,
+  retry,
   onPress,
 }: {
-  name: string;
-  openLabel: string;
   valueText: string;
   stale: boolean;
+  spin: boolean;
+  ageText: string;
+  retry: () => void;
   onPress: () => void;
 }) {
   return (
@@ -532,17 +544,41 @@ const PortfolioSpotRow = memo(function PortfolioSpotRow({
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        accessibilityLabel={openLabel}
+        accessibilityLabel="Open Spot"
         style={({ pressed }) => [styles.rowMain, pressed && styles.rowPressed]}
       >
         <View style={styles.nameCol}>
           <Text numberOfLines={1} style={[styles.name, { color: tokens.walletBrand.spot }]}>
-            {name}
+            Spot
           </Text>
         </View>
-        <Text style={[styles.value, stale && styles.rowStaleValue]}>{valueText}</Text>
+        <View style={styles.valueCol}>
+          <Text style={[styles.value, stale && styles.rowStaleValue]}>{valueText}</Text>
+          {stale ? (
+            <View style={styles.ageRow}>
+              {/* Only the failed venue spins while the (single) summary call
+                  is in flight — #778 review note 3. */}
+              {spin ? <RetrySpinner /> : null}
+              <Text style={styles.ageLabel}>{ageText}</Text>
+            </View>
+          ) : null}
+        </View>
       </Pressable>
-      <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+      {stale ? (
+        <View style={styles.retryCol}>
+          <Pressable
+            onPress={retry}
+            accessibilityRole="button"
+            accessibilityLabel="Retry Spot"
+            hitSlop={8}
+            style={({ pressed }) => [styles.retryBtn, pressed && styles.rowPressed]}
+          >
+            <Text style={styles.retryLabel}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <MaterialIcons name="chevron-right" size={14} color={semantic.text.faint} />
+      )}
     </View>
   );
 });
