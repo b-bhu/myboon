@@ -1,21 +1,37 @@
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
-import { useCallback, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { usePrivyWallet } from '@/hooks/usePrivyWallet';
+import {
+  clearMwaAccount,
+  getMwaAccountCleared,
+  pickWalletSession,
+  readMwaAddress,
+  restoreMwaAccount,
+  subscribeMwaAccountCleared,
+  type WalletSource,
+} from '@/hooks/walletSession';
 
-export type WalletSource = 'privy' | 'mwa';
+export type { WalletSource };
 
 export function useWallet() {
   const privy = usePrivyWallet();
   const { account, connect, disconnect, store, signMessage, signTransaction, signAndSendTransaction, connection } =
     useMobileWallet();
-  const [mwaAccountCleared, setMwaAccountCleared] = useState(false);
+  // Shared across every useWallet() consumer (hooks/walletSession.ts): a
+  // disconnect on the connection sheet is visible on Home in the same tick.
+  const mwaAccountCleared = useSyncExternalStore(
+    subscribeMwaAccountCleared,
+    getMwaAccountCleared,
+    getMwaAccountCleared,
+  );
   const connectMwa = useCallback(async () => {
-    setMwaAccountCleared(false);
+    restoreMwaAccount();
     await connect();
   }, [connect]);
   const disconnectMwa = useCallback(async () => {
-    // Immediate UI guard; store.persist(null) clears the durable cache below.
-    setMwaAccountCleared(true);
+    // Immediate UI guard, shared app-wide; store.persist(null) clears the
+    // durable cache below.
+    clearMwaAccount();
     try {
       await disconnect();
     } finally {
@@ -56,9 +72,9 @@ export function useWallet() {
     };
   }
 
-  // MWA wallet state
-  const raw = mwaAccountCleared ? null : account?.address;
-  const mwaAddress = raw ? (typeof raw === 'string' ? raw : raw.toBase58()) : null;
+  // MWA wallet state. The read is safe: a missing, non-string, or unsafe
+  // `account.address` is no external address (hooks/walletSession.ts).
+  const mwaAddress = mwaAccountCleared ? null : readMwaAddress(account);
 
   // A connected external wallet (Phantom / Solflare via MWA) wins over a Privy embedded
   // wallet: the user connected it deliberately and it is the Solana account they expect to
@@ -72,12 +88,23 @@ export function useWallet() {
   // session — so no cached MWA account is ever exposed during the hydration window, exactly
   // as before. Stale-vs-live is resolved the same way it is for MWA-only users: the first
   // signing call re-authorizes through `transact` and fails if the cache is dead.
-  const preferMwa = !!mwaAddress && !privy.isPreparing;
+  //
+  // The privy-vs-MWA pick itself is `pickWalletSession()` (hooks/walletSession.ts):
+  // the shared disconnect clears the external candidate, so after a disconnect a
+  // new email/Google login selects the Privy wallet, never the stale external one.
+  const session = pickWalletSession({
+    mwaAccountCleared,
+    mwaAddress,
+    privyIsPrivyUser: privy.isPrivyUser,
+    privyIsPreparing: privy.isPreparing,
+    privyConnected: privy.connected,
+    privyAddress: privy.address,
+  });
 
-  if (privy.isPrivyUser && !preferMwa) {
+  if (session.source === 'privy') {
     return {
       connected: privy.connected,
-      address: privy.connected ? privy.address : null,
+      address: session.address,
       shortAddress: privy.connected ? privy.shortAddress : null,
       // Explicit Solana activation for someone already signed into Privy
       // (`useChainSigner`). This creates the embedded wallet. The connection
@@ -106,7 +133,7 @@ export function useWallet() {
 
   // Fall back to MWA (Phantom / Solflare)
   return {
-    connected: !!raw,
+    connected: !!mwaAddress,
     address: mwaAddress,
     shortAddress: mwaAddress
       ? `${mwaAddress.slice(0, 4)}···${mwaAddress.slice(-4)}`

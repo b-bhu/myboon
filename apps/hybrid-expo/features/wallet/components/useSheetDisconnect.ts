@@ -2,15 +2,16 @@
  * useSheetDisconnect — log out and disconnect for the connected sheet.
  *
  * Moved out of ConnectionSheet.tsx (#737). Disconnecting clears the OTP
- * session so a reopened sheet starts fresh; an external session disconnects
- * the adapter and deactivates the chain instead of touching Privy.
+ * session so a reopened sheet starts fresh; an external disconnect is a full
+ * sign-out (#947): adapter disconnect, chain deactivation, then Privy logout —
+ * the same runFullSignOut the Privy-linked logout uses.
  *
  * Model: docs/modules/wallet/specs/wallet_connectivity.md ("The connection modal")
  */
 
 import { useCallback, type Dispatch, type SetStateAction } from 'react';
 import { emptyOtpSession, type OtpCodeSession } from '@/features/wallet/components/otp-resend';
-import { selectMwaDisconnect } from '@/features/wallet/signOut';
+import { runFullSignOut, selectMwaDisconnect } from '@/features/wallet/signOut';
 import type { Chain } from '@/features/chain/chain.contract';
 import type { ChainActivation } from '@/features/chain/activation';
 import { type ConnectFlowEvent, type ConnectFlowState } from '@/features/wallet/components/connect.flow';
@@ -72,8 +73,14 @@ export function useSheetDisconnect({
     setActionError(null);
     try {
       if (flow.linked === 'external') {
-        if (solana.disconnect) await solana.disconnect();
-        await deactivate('solana');
+        // One shared sign-out (#947): adapter disconnect, clear the Solana
+        // activation, then Privy logout. A failed adapter disconnect still
+        // logs out — that order is locked by signOut.mwa.test.ts.
+        await runFullSignOut({
+          disconnectMwa: selectMwaDisconnect(solana),
+          clearActivation: () => deactivate('solana'),
+          logout: privy.disconnect,
+        });
       } else if (privy.isPrivyUser) {
         await privy.disconnect(selectMwaDisconnect(solana));
       } else if (solana.disconnect) {

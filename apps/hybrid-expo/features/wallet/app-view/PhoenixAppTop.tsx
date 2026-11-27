@@ -12,15 +12,17 @@
  * States (issue): loading with no summary yet → a skeleton block, no
  * numbers. Failed with no summary, or the Phoenix slot unavailable with no
  * figures → "Couldn't load Phoenix" with the funds-are-safe line and a gold
- * Retry that calls the hook's retry, cells showing NO_DATA. A refresh
- * failing after a good summary keeps the last figures on screen, dimmed
- * (design ".held" 60%), with the same Retry — they are never blanked.
+ * Retry that calls the hook's retry, cells showing NO_DATA. A retry from a
+ * failed state keeps the banner and the dashes — the skeleton is only the
+ * first load — and shows a small spinner on the button while it runs (#865).
+ * A refresh failing after a good summary keeps the last figures on screen,
+ * dimmed (design ".held" 60%), with the same Retry — they are never blanked.
  * Phoenix `not_connected`, or no addresses at all → nothing renders.
  */
 
 import { memo } from 'react';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { semantic, tokens } from '@/theme';
@@ -43,11 +45,19 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
   const name = venue === 'pacifica' ? 'Pacifica' : 'Phoenix';
   const { summary, loading, error, retry } = useWalletSummary(solana, evm);
 
+  // One retry at a time: tapping Retry while a retry runs does nothing.
+  const retryOnce = () => {
+    if (loading) return;
+    retry();
+  };
+
   // No addresses at all: the hook made no call, nothing to show.
   if (!summary && !loading && error === null) return null;
 
-  // Loading with no summary yet: skeleton cells, no numbers (design "load").
-  if (!summary && loading) return <Skeleton />;
+  // Loading with no summary yet and no error yet: the first load — skeleton
+  // cells, no numbers (design "load"). A retry from a failed state keeps the
+  // banner and the dashes instead (#865).
+  if (!summary && loading && error === null) return <Skeleton />;
 
   const phoenix = (venue === 'pacifica' ? summary?.apps.pacifica : summary?.apps.phoenix) ?? null;
 
@@ -59,16 +69,19 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
   // Failed with no summary (the hook returned an error and nothing else),
   // or the Phoenix slot itself failing with no figures to show: the banner
   // over NO_DATA cells — the design keeps the stats card and dashes the
-  // values, the block never opens empty.
+  // values, the block never opens empty. The failure render needs no slot:
+  // when the summary call itself fails, the banner and dashes stand in for
+  // the whole block (#865).
   const failedNoFigures =
     (!summary && error !== null) ||
     (phoenix?.status === 'unavailable' && phoenix.valueUsd === null);
 
-  if (!phoenix || (!figures && !failedNoFigures)) return null;
+  if (!failedNoFigures && !phoenix) return null;
 
   // A refresh failing after a good summary holds the figures (the hook never
-  // blanks them); they stay dimmed with the Retry, not blanked.
-  const stale = error !== null;
+  // blanks them); they stay dimmed with the Retry, not blanked. The failed
+  // state shows the design's plain dashes instead — no held dimming there.
+  const stale = error !== null && figures !== null;
 
   const cells = [
     { label: 'Balance', value: figures?.balance ?? NO_DATA },
@@ -77,7 +90,9 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
 
   return (
     <View style={styles.root}>
-      {failedNoFigures || stale ? <FailureBanner name={name} onRetry={retry} /> : null}
+      {failedNoFigures || stale ? (
+        <FailureBanner name={name} retrying={loading} onRetry={retryOnce} />
+      ) : null}
       <View style={[styles.stats, stale && styles.held]}>
         {cells.map((cell) => (
           <View key={cell.label} style={styles.cell}>
@@ -105,7 +120,15 @@ function Skeleton() {
 }
 
 /** Mock ".bn" failure banner: "Couldn't load Phoenix" + funds line + gold Retry. */
-function FailureBanner({ name, onRetry }: { name: string; onRetry: () => void }) {
+function FailureBanner({
+  name,
+  retrying,
+  onRetry,
+}: {
+  name: string;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
   return (
     <View style={styles.banner}>
       <MaterialIcons name="error-outline" size={20} color={semantic.sentiment.negative} />
@@ -122,7 +145,11 @@ function FailureBanner({ name, onRetry }: { name: string; onRetry: () => void })
         hitSlop={8}
         style={({ pressed }) => [styles.retry, pressed && styles.pressed]}
       >
-        <Text style={styles.retryLabel}>{'Retry →'}</Text>
+        {retrying ? (
+          <ActivityIndicator size="small" color={tokens.colors.primaryDim} />
+        ) : (
+          <Text style={styles.retryLabel}>{'Retry →'}</Text>
+        )}
       </Pressable>
     </View>
   );

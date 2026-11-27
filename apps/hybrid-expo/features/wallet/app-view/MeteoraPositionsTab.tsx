@@ -12,7 +12,7 @@
  * replaces the mock's "Bin N"; the range bar renders with no marker (the
  * in-range state shows through the In range / Out of range tag).
  *
- * States: loading with no list yet → nothing (the skeleton is #859);
+ * States: loading with no list yet → three skeleton cards (#859);
  * loaded and empty → the plain empty note, no button (the shared empty
  * block with the Deposit button is #860); failed → the note with a Retry
  * that calls the hook's retry (#865 adds the shared failure banner).
@@ -27,6 +27,7 @@ import { useRouter } from 'expo-router';
 
 import { NO_DATA, formatPrice } from '@/lib/format';
 import { semantic, tokens } from '@/theme';
+import { AppSkeletonCards } from './AppSkeletonCards';
 import { MeteoraManageSheet } from './MeteoraManageSheet';
 import { signedUsd, usd } from './meteora-top';
 import type { WalletMeteoraPool, WalletMeteoraPosition } from '@myboon/shared/wallet-summary';
@@ -55,9 +56,11 @@ export const MeteoraPositionsTab = memo(function MeteoraPositionsTab({
   const router = useRouter();
   const [managed, setManaged] = useState<WalletMeteoraPosition | null>(null);
 
-  // Loading (skeleton is #859), or nothing to fetch at all (no Solana
-  // address — the hook made no call): no card and no Add liquidity row.
-  if (positions === null && (loading || (error === null))) return null;
+  // Loading with none held: three skeleton cards, no Add liquidity row
+  // (#859). Nothing to fetch at all (no Solana address — the hook made
+  // no call): no card and no row.
+  if (positions === null && loading) return <AppSkeletonCards />;
+  if (positions === null && error === null) return null;
 
   // Failed before any good load: the note and the hook's retry. A refresh
   // failing after a good list keeps that list on screen (#901's trust rule),
