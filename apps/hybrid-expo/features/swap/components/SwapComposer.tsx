@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import type { RefObject } from 'react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
@@ -77,6 +78,15 @@ export type SwapComposerProps = {
   inWallet?: boolean;
   /** Pay token came from a Spot row (#906): tag it "From Spot" and lock the pay pill. */
   payFromSpot?: boolean;
+  /**
+   * #805: the Wallet's keyboard lift reads the composer at run time — the
+   * slider row's window box (this row, all slide states) and the amount
+   * field's top edge. Only the Wallet passes these; every other surface is
+   * unchanged.
+   */
+  sliderRowRef?: RefObject<View | null>;
+  onSliderRowLayout?: () => void;
+  amountFieldRef?: RefObject<TextInput | null>;
 };
 
 export function SwapComposer({
@@ -88,6 +98,9 @@ export function SwapComposer({
   walletActions = true,
   inWallet = false,
   payFromSpot = false,
+  sliderRowRef,
+  onSliderRowLayout,
+  amountFieldRef,
 }: SwapComposerProps) {
   const runtimeWalletSheet = useWalletSheet();
   const walletSheet = walletSheetOverride ?? runtimeWalletSheet;
@@ -97,6 +110,17 @@ export function SwapComposer({
   const reviewSession = useRef(c.wallet.sessionKey ?? c.wallet.address);
   const [comingSoon, setComingSoon] = useState<string | null>(null);
   const payInputRef = useRef<TextInput>(null);
+  // #805: when the Wallet passes a measure ref, the same amount node fills it.
+  const attachPayInput = useCallback(
+    (node: TextInput | null) => {
+      payInputRef.current = node;
+      if (amountFieldRef) amountFieldRef.current = node;
+    },
+    [amountFieldRef],
+  );
+  // AssetSwap types this slot as a RefObject; the Wallet rides a callback on
+  // the same node it already drives focus with (#805).
+  const payInputSlot = (amountFieldRef ? attachPayInput : payInputRef) as RefObject<TextInput | null>;
   const actionHeadingRef = useRef<View>(null);
   const restorePayFocus = useRef(false);
   const gesture = useRef<ReverseGestureController | null>(null);
@@ -362,7 +386,7 @@ export function SwapComposer({
         inputToken={c.inputToken} outputToken={c.outputToken} amount={c.amount}
         outputAmount={c.outputUi} inputUsd={c.inputUsd} outputUsd={c.outputUsd}
         inputBalance={c.inputBalanceAtomic} outputBalance={c.outputBalanceAtomic}
-        busy={c.interactionBusy} payInputRef={payInputRef}
+        busy={c.interactionBusy} payInputRef={payInputSlot}
         inputLocked={c.mode === 'sell' || payFromSpot} outputLocked={c.mode === 'buy'}
         canReverse={c.mode === 'swap' && !payFromSpot} payTag={payFromSpot ? 'From Spot' : undefined}
         onAmount={(value) => { cancelGesture(); attemptedQuote.current = null; c.setManualAmount(value); }}
@@ -414,6 +438,9 @@ export function SwapComposer({
             transaction/RPC diagnostics out of the composer. */}
         {c.simulationWarning ? <Text selectable accessibilityRole="alert" style={styles.inlineWarning}>{c.simulationWarning}</Text> : null}
         {c.phase === 'unknown' && c.resultMessage ? <Text selectable style={styles.inlineWarning}>{c.resultMessage}</Text> : null}
+        {/* #805: this row is the slider the Wallet's keyboard lift measures;
+            it covers every slider state (swipe, statuses, while typing). */}
+        <View ref={sliderRowRef} collapsable={false} onLayout={onSliderRowLayout}>
         {canConfirm ? <SwipeToConfirm key={c.reviewOrder?.requestId} receiveAmount={c.outputUi} outputToken={c.outputToken}
           onComplete={() => { cancelGesture(); Keyboard.dismiss(); void c.confirmTrade(); }} /> :
           slide ? <SlideStatus slide={slide} /> :
@@ -428,6 +455,7 @@ export function SwapComposer({
               {c.phase === 'confirmed' ? <Text selectable style={styles.successValue}>Received {c.outputUi} {c.outputToken.symbol}</Text> : null}
             </View>
           </Pressable>}
+        </View>
         <>{c.phase === 'confirmed' && c.resultMessage ? <Text accessibilityLiveRegion="polite" style={styles.srStatus}>{c.resultMessage}</Text> : null}</>
       </AssetSwap>
       {comingSoon ? <Text accessibilityLiveRegion="polite" style={styles.feedback}>{comingSoon}</Text> : null}

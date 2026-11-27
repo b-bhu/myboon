@@ -25,7 +25,7 @@ function host(name: string) {
   return Component;
 }
 
-function loadOverview() {
+function loadOverview(lift: { keyboardLiftPx?: number } = {}) {
   const source = ts.transpileModule(
     readFileSync(new URL('./HomeWalletOverview.tsx', import.meta.url), 'utf8'),
     {
@@ -64,6 +64,16 @@ function loadOverview() {
       };
     }, []);
     return React.createElement('WalletActionPanel', props);
+  }
+  // #805: the keyboard hook is mocked, so this harness never loads react-native
+  // or the keyboard library. Stable identities keep MemoActionPanel's memo
+  // behaviour exactly as in production (the real hook returns stable refs too).
+  const keyboardLiftStyle = { transform: [{ translateY: lift.keyboardLiftPx ? -lift.keyboardLiftPx : 0 }] };
+  const sliderRowRef = { current: null };
+  const amountFieldRef = { current: null };
+  const onSliderRowLayout = () => {};
+  function useWalletKeyboardLift() {
+    return { keyboardLiftStyle, sliderRowRef, amountFieldRef, onSliderRowLayout };
   }
   const Animated = {
     View: host('AnimatedView'),
@@ -130,6 +140,7 @@ function loadOverview() {
       swapTheme: { navy: '#000', gold: '#fff', dim: '#777', border: '#333', text: '#111', card: '#eee', panelOverlap: 24, composerInset: 14 },
     },
     '@/features/wallet/WalletActionPanel': { WalletActionPanel },
+    '@/features/wallet/useWalletKeyboardLift': { useWalletKeyboardLift },
     '@/features/wallet/components/ReceivePanel': { ReceivePanel: () => null },
     '@/features/wallet/components/WalletNotConnectedPanel': { WalletNotConnectedPanel: () => null },
     '@/features/wallet/components/WalletModeSwitch': { WalletModeSwitch: ModeSwitchHost },
@@ -295,4 +306,41 @@ test('wallet mode shell: the switch renders above a fixed 430 action body in the
   });
   assert.equal(renderer.root.findAllByType(loaded.View)[2].props.style.height, 430);
   assert.equal(loaded.actionRenders.length, rendersBefore);
+});
+
+/** The lift wrapper's translateY, read from the rendered AnimatedView tree. */
+function panelLift(loaded: ReturnType<typeof loadOverview>, renderer: ReactTestRenderer): number | undefined {
+  const styles = renderer.root.findAllByType(loaded.AnimatedView).flatMap((node) => {
+    const found: Record<string, unknown>[] = [];
+    const visit = (style: unknown) => {
+      if (Array.isArray(style)) style.forEach(visit);
+      else if (style && typeof style === 'object') found.push(style as Record<string, unknown>);
+    };
+    visit(node.props.style);
+    return found;
+  });
+  const liftStyle = styles.find(
+    (style) => 'transform' in style && !('borderTopLeftRadius' in style),
+  );
+  return liftStyle ? (liftStyle.transform as { translateY: number }[])[0]?.translateY : undefined;
+}
+
+test('wallet keyboard lift: a keyboard overlapping the slider lifts the panel block by the overlap', async () => {
+  const loaded = loadOverview({ keyboardLiftPx: 152 });
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(loaded.Overview, overviewProps()));
+  });
+  assert.equal(panelLift(loaded, renderer), -152);
+  // The lift is a transform only: the action frame keeps its size.
+  assert.equal(renderer.root.findAllByType(loaded.View)[2].props.style.height, 430);
+});
+
+test('wallet keyboard lift: a keyboard with no overlap leaves the panel at rest', async () => {
+  const loaded = loadOverview({ keyboardLiftPx: 0 });
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(loaded.Overview, overviewProps()));
+  });
+  assert.equal(panelLift(loaded, renderer), 0);
 });

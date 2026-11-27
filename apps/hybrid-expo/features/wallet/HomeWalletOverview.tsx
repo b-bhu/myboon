@@ -24,6 +24,7 @@ import {
   type WalletActionMode,
 } from '@/features/wallet/wallet-mode';
 import { WalletActionPanel, type SwapPrefill } from '@/features/wallet/WalletActionPanel';
+import { useWalletKeyboardLift } from '@/features/wallet/useWalletKeyboardLift';
 import { AppView } from '@/features/wallet/app-view/AppView';
 import {
   initialWalletAppView,
@@ -183,6 +184,15 @@ export function HomeWalletOverview({
   const wasActive = useRef(active);
   const previousSurfaceVersion = useRef(surfaceVersion);
   const { width } = useWindowDimensions();
+  // #805: the amount keyboard's live height lifts the action panel exactly far
+  // enough for the slider row to stay above the keyboard. The panel block is
+  // translated on the UI thread; the frame size never changes.
+  const {
+    keyboardLiftStyle,
+    sliderRowRef,
+    onSliderRowLayout,
+    amountFieldRef,
+  } = useWalletKeyboardLift();
   // The action body is one fixed frame in every mode and state (430px at
   // 390x844, issue #715); every mode's body is built to fit it (issue #803),
   // so the frame never scrolls its content — the ScrollView here stays only
@@ -310,6 +320,9 @@ export function HomeWalletOverview({
         importantForAccessibility={panelCovered ? 'no-hide-descendants' : 'auto'}
       >
         <MemoModeSwitch mode={mode} locked={tradeBusy} onSelect={setMode} />
+        {/* The lift wrapper carries the mode switch and the action body
+            together, so the raised panel never slides under the switch. */}
+        <Animated.View style={keyboardLiftStyle}>
         <View style={styles.actionBody}>
           <ScrollView
             accessibilityElementsHidden={panelCovered}
@@ -340,10 +353,14 @@ export function HomeWalletOverview({
                 surfaceKey={`${surfaceVersion}`}
                 onBusyChange={setTradeBusy}
                 swapPrefill={swapPrefill}
+                sliderRowRef={sliderRowRef}
+                onSliderRowLayout={onSliderRowLayout}
+                amountFieldRef={amountFieldRef}
               />
             )}
           </ScrollView>
         </View>
+        </Animated.View>
       </View>
 
       <Animated.View

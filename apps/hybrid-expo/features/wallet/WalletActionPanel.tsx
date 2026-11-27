@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import type { RefObject } from 'react';
+import type { TextInput, View } from 'react-native';
 import { SwapComposer } from '@/features/swap/components/SwapComposer';
 import { useSwapController, type SwapControllerOptions } from '@/features/swap/useSwapController';
 import { nextSwapPrefillStep } from '@/features/wallet/swap-prefill';
@@ -9,13 +11,16 @@ export { SwapComposer as WalletActionPanelView } from '@/features/swap/component
 /** A Spot token the Wallet's Swap mode opens with as the pay card (#906). */
 export type SwapPrefill = { mint: string; source: 'spot' };
 
-export function WalletActionPanel({ active, controllerActive = active, surfaceKey, onBusyChange, controllerOptions, swapPrefill = null }: {
+export function WalletActionPanel({ active, controllerActive = active, surfaceKey, onBusyChange, controllerOptions, swapPrefill = null, sliderRowRef, onSliderRowLayout, amountFieldRef }: {
   active: boolean;
   controllerActive?: boolean;
   surfaceKey: string;
   onBusyChange: (busy: boolean) => void;
   controllerOptions?: SwapControllerOptions['controllerOptions'];
   swapPrefill?: SwapPrefill | null;
+  sliderRowRef?: RefObject<View | null>;
+  onSliderRowLayout?: () => void;
+  amountFieldRef?: RefObject<TextInput | null>;
 }) {
   const prefillMint = swapPrefill?.mint ?? null;
   const controller = useSwapController({
@@ -44,5 +49,6 @@ export function WalletActionPanel({ active, controllerActive = active, surfaceKe
   }, [step, openPicker, selectToken, selectedToken, prefillMint]);
   return <SwapComposer active={active} surfaceKey={surfaceKey} onBusyChange={onBusyChange}
     controller={controller} walletSheet={controllerOptions?.walletSheet} inWallet
-    payFromSpot={prefillMint !== null} />;
+    payFromSpot={prefillMint !== null}
+    sliderRowRef={sliderRowRef} onSliderRowLayout={onSliderRowLayout} amountFieldRef={amountFieldRef} />;
 }
