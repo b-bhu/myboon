@@ -16,7 +16,8 @@
  * failed state keeps the banner and the dashes — the skeleton is only the
  * first load — and shows a small spinner on the button while it runs (#865).
  * A refresh failing after a good summary keeps the last figures on screen,
- * dimmed (design ".held" 60%), with the same Retry — they are never blanked.
+ * dimmed (design ".held" 60%), under the shared "Updating {app}" banner
+ * with the held numbers' age (AppUpdatingBanner, #864) — never blanked.
  * Phoenix `not_connected`, or no addresses at all → nothing renders.
  */
 
@@ -28,6 +29,8 @@ import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { semantic, tokens } from '@/theme';
 import { NO_DATA } from '@/lib/format';
 import { phoenixTopFigures } from './phoenix-top';
+import { appIsStale, staleAgeText } from './app-stale';
+import { AppUpdatingBanner } from './AppUpdatingBanner';
 import type { PerpVenue } from './perp-positions';
 
 export const PhoenixAppTop = memo(function PhoenixAppTop({
@@ -79,9 +82,11 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
   if (!failedNoFigures && !phoenix) return null;
 
   // A refresh failing after a good summary holds the figures (the hook never
-  // blanks them); they stay dimmed with the Retry, not blanked. The failed
-  // state shows the design's plain dashes instead — no held dimming there.
-  const stale = error !== null && figures !== null;
+  // blanks them); they stay dimmed under the "Updating {app}" banner with the
+  // held numbers' age (#864). The failed state keeps the design's plain
+  // dashes instead — no held dimming there.
+  const stale = appIsStale(summary, error, venue);
+  const ageText = summary ? staleAgeText(summary.fetchedAt, Date.now()) : '';
 
   const cells = [
     { label: 'Balance', value: figures?.balance ?? NO_DATA },
@@ -90,8 +95,10 @@ export const PhoenixAppTop = memo(function PhoenixAppTop({
 
   return (
     <View style={styles.root}>
-      {failedNoFigures || stale ? (
+      {failedNoFigures ? (
         <FailureBanner name={name} retrying={loading} onRetry={retryOnce} />
+      ) : stale ? (
+        <AppUpdatingBanner name={name} ageText={ageText} loading={loading} onRetry={retryOnce} />
       ) : null}
       <View style={[styles.stats, stale && styles.held]}>
         {cells.map((cell) => (
