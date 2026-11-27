@@ -269,6 +269,22 @@ jobs:
       - run: pnpm --filter @myboon/api test:wallet-move
       - run: pnpm --filter @myboon/api typecheck
 
+  # #897 Backend ESLint, first step warnings-only. Non-blocking by design:
+  # pnpm lint reports warnings and exits 0, this job is not a ci-ok
+  # dependency, and continue-on-error keeps even a lint crash from failing CI.
+  backend-lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+
   # Single stable PR check: green when every job that actually ran succeeded.
   # Skipped jobs (paths not touched / filtered out) do not block it. No checkout
   # needed; it only inspects the needs results.
