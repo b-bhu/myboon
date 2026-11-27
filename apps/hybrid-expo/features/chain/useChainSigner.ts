@@ -150,8 +150,11 @@ export function useChainSigner(requirement: ChainRequirement): ChainSignerResult
     try {
       if (!isSolana) {
         if (!evm.isProvisioned) {
-          // Throws if the user is not logged into Privy. The caller opens the
-          // connection modal on `needs_connection` before reaching here.
+          // Provision on the existing Privy account — never a new login. For a
+          // SIWS wallet-login user (#948) opening Polymarket this is what
+          // attaches the EVM wallet to that same account: they are Privy
+          // authenticated, so `provision()` succeeds with no email or Google
+          // sign-in. Email/Google sessions are unchanged.
           await evm.provision();
         }
         await activate('evm');

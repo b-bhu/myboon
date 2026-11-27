@@ -89,6 +89,13 @@ export type WalletSessionInput = {
   mwaAddress: string | null;
   privyIsPrivyUser: boolean;
   privyIsPreparing: boolean;
+  /**
+   * The Privy session was signed in with the external wallet (SIWS, #948).
+   * That account never receives an embedded Solana wallet — `createOnLogin`
+   * is 'off' and nothing creates one for it — so its "preparing" state is
+   * permanent by design and must not be waited out.
+   */
+  privyWalletLogin: boolean;
   privyConnected: boolean;
   privyAddress: string | null;
 };
@@ -100,7 +107,12 @@ export type WalletSessionPick = {
 
 export function pickWalletSession(input: WalletSessionInput): WalletSessionPick {
   const mwaAddress = input.mwaAccountCleared ? null : input.mwaAddress;
-  const preferMwa = !!mwaAddress && !input.privyIsPreparing;
+  // For a wallet-login account (#948) "no embedded wallet yet" never resolves:
+  // the external wallet is the main Solana account the moment it is there.
+  // An email/Google account keeps the hydration guard — its embedded wallet
+  // does arrive, and a stale cached external account must not leak meanwhile.
+  const settledForSolana = !input.privyIsPreparing || input.privyWalletLogin;
+  const preferMwa = !!mwaAddress && settledForSolana;
   if (input.privyIsPrivyUser && !preferMwa) {
     return { source: 'privy', address: input.privyConnected ? input.privyAddress : null };
   }

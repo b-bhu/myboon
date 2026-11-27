@@ -24,9 +24,11 @@ export function useWallet() {
     getMwaAccountCleared,
     getMwaAccountCleared,
   );
-  const connectMwa = useCallback(async () => {
+  // Resolves with the connected external address — `connect()` resolves the
+  // adapter account, and the SIWS message is keyed to that address (#948).
+  const connectMwa = useCallback(async (): Promise<string | null> => {
     restoreMwaAccount();
-    await connect();
+    return readMwaAddress(await connect());
   }, [connect]);
   const disconnectMwa = useCallback(async () => {
     // Immediate UI guard, shared app-wide; store.persist(null) clears the
@@ -57,7 +59,7 @@ export function useWallet() {
       connect: async () => {},
       // Already-have must not share `connect`. That one creates a Privy wallet
       // when a Privy session is signed in. See the privy branch below.
-      connectExternal: async () => {},
+      connectExternal: async () => fakeAddress,
       disconnect: async () => {},
       signMessage: async () => new Uint8Array(64).fill(1),
       signTransaction: async <T,>(transaction: T) => transaction,
@@ -97,6 +99,9 @@ export function useWallet() {
     mwaAddress,
     privyIsPrivyUser: privy.isPrivyUser,
     privyIsPreparing: privy.isPreparing,
+    // SIWS sign-in (#948): a wallet-login Privy account never gets an embedded
+    // Solana wallet, so its external wallet is picked as soon as it exists.
+    privyWalletLogin: privy.authMethod === 'wallet',
     privyConnected: privy.connected,
     privyAddress: privy.address,
   });
