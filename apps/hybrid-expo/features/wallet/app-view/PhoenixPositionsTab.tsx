@@ -9,19 +9,19 @@
  * closes nothing in the Wallet. "Edit TP/SL" opens PhoenixTpslSheet (#851).
  *
  * States: loading with no list yet → three skeleton cards (#859);
- * loaded and empty → the plain empty note, no button (the shared empty
- * block with the Deposit button is #860); failed with no list → the note
- * with a Retry that calls the hook's retry. A failed refresh after a good
+ * loaded and empty → the shared AppEmptyState (#860), no button; failed
+ * with no list → the note with a Retry that calls the hook's retry. A
+ * failed refresh after a good
  * load keeps the cards (the hook holds the list). Orders and History are
  * rendered by AppView through PortfolioTabBody.
  */
 
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { memo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { semantic, tokens } from '@/theme';
+import { AppEmptyState } from './AppEmptyState';
 import { AppSkeletonCards } from './AppSkeletonCards';
 import { perpCardFigures } from './phoenix-positions';
 import { PhoenixTpslSheet } from './PhoenixTpslSheet';
@@ -73,13 +73,7 @@ export const PhoenixPositionsTab = memo(function PhoenixPositionsTab({
   }
 
   if (positions.length === 0) {
-    return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="inbox" size={32} color={semantic.text.faint} />
-        <Text style={styles.emptyTitle}>{'No open positions'}</Text>
-        <Text style={styles.emptyLine}>{'Positions you open in a market screen show up here.'}</Text>
-      </View>
-    );
+    return <AppEmptyState title="No open positions" line="Positions you open in a market screen show up here." />;
   }
 
   return (
@@ -314,10 +308,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     letterSpacing: 0.8,
   },
-  // Plain empty note (".emp" look, no button) and the failed note.
-  emptyWrap: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 },
-  emptyTitle: { color: semantic.text.primary, fontSize: 18, fontWeight: '600', marginTop: 12 },
-  emptyLine: { color: semantic.text.dim, fontSize: 14 },
+  // The failed note.
   errorWrap: { alignItems: 'center', gap: 8, paddingVertical: 24 },
   errorText: { color: semantic.text.dim, fontSize: 12, textAlign: 'center' },
   retry: { paddingVertical: 2 },
