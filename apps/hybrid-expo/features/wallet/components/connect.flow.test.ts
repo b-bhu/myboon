@@ -473,7 +473,7 @@ describe('ConnectionSheet wires the external path off Privy', () => {
     assert.ok(somewhere(sources, 'connectExternal'));
   });
 
-  it('the external handler does not log in, wait for, or create a Privy wallet', () => {
+  it('the external handler signs in with the wallet (SIWS) and never waits for or creates a Privy wallet', () => {
     let found = false;
     for (const { file, text } of sources) {
       const start = text.indexOf('const handleExternalWallet');
@@ -483,8 +483,11 @@ describe('ConnectionSheet wires the external path off Privy', () => {
       if (end < 0) end = text.length;
       const body = text.slice(start, end);
       const banned = /waitForWallet|\.provision\(|loginWith|sendEmailOTP|Phantom|Seeker/.test(body);
-      assert.equal(banned, false, `${file}: the external handler logs in or creates a Privy wallet`);
+      assert.equal(banned, false, `${file}: the external handler waits for or creates a Privy wallet`);
       assert.match(body, /connectExternal\(\)/);
+      // #948: SIWS is what makes the wallet the Privy account — the only
+      // sign-in the external path may run, chosen inside hooks/usePrivySiws.
+      assert.match(body, /siws\.authenticate\(/);
       assert.match(body, /external_mwa|activate\('solana'\)/);
     }
     assert.ok(found, 'no scanned module contains the external wallet handler');

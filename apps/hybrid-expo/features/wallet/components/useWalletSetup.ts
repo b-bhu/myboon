@@ -15,6 +15,7 @@ import { classifyWalletSetupError, isUserCancelled, type ConnectFlowEvent, type 
 import type { Chain } from '@/features/chain/chain.contract';
 import type { ChainActivation } from '@/features/chain/activation';
 import type { usePrivyEvmWallet } from '@/features/chain/usePrivyEvmWallet';
+import type { PrivySiwsState } from '@/hooks/usePrivySiws';
 import type { PrivyWalletState } from '@/hooks/usePrivyWallet';
 import type { useWallet } from '@/hooks/useWallet';
 
@@ -23,6 +24,7 @@ export function useWalletSetup({
   dispatch,
   privy,
   evm,
+  siws,
   activate,
   onClose,
   onConnected,
@@ -35,6 +37,8 @@ export function useWalletSetup({
   dispatch: (event: ConnectFlowEvent) => void;
   privy: PrivyWalletState;
   evm: ReturnType<typeof usePrivyEvmWallet>;
+  /** The external wallet's SIWS round trip (hooks/usePrivySiws). */
+  siws: PrivySiwsState;
   activate: ChainActivation['activate'];
   onClose: () => void;
   onConnected: (() => void) | undefined;
@@ -62,14 +66,23 @@ export function useWalletSetup({
   }, [activate, chain, evm, finishActivated, privy]);
 
   const handleExternalWallet = useCallback(async () => {
-    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet.
-    // connectExternal is that call. This path does not sign in or create a wallet.
+    // Mobile Wallet Adapter (external_mwa). The system chooser picks the wallet
+    // (`connectExternal` resolves its address), then the SIWS round trip signs
+    // the Privy session in with that wallet (#948): a wallet-only user gets one
+    // Privy account keyed to the address, an existing email/Google user gets
+    // the wallet linked onto the session they are in. This path never waits
+    // for or provisions an embedded Solana wallet — see the scan rule in
+    // connect.flow.test.ts and hooks/siwsAuthentication.ts.
     if (busy || chain !== 'solana') return;
     setActionError(null);
     dispatch({ type: 'choose_external' });
     setBusy(true);
     try {
-      await solana.connectExternal();
+      const address = await solana.connectExternal();
+      if (siws.authenticate) {
+        if (!address) throw new Error('Sign-In With Solana needs the connected wallet address.');
+        await siws.authenticate({ address });
+      }
       await activate('solana');
       finishActivated('external');
     } catch (error: unknown) {
@@ -84,7 +97,7 @@ export function useWalletSetup({
     } finally {
       setBusy(false);
     }
-  }, [activate, busy, chain, dispatch, finishActivated, setActionError, setBusy, solana]);
+  }, [activate, busy, chain, dispatch, finishActivated, setActionError, setBusy, siws, solana]);
 
   const handleRetryWallet = useCallback(async () => {
     if (busy) return;

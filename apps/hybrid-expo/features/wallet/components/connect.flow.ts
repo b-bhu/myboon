@@ -49,6 +49,14 @@ export type ConnectFlowEvent =
       privyAuthenticated: boolean;
       /** A Privy embedded wallet already exists on some chain. */
       hasEmbeddedWallet: boolean;
+      /**
+       * The Privy session was signed in with the external wallet (SIWS, #948).
+       * Such an account never receives an embedded Solana wallet, so "no
+       * embedded wallet" is not an outstanding setup — the entry step is,
+       * and the retry button's `waitForWallet()`/create() never runs for it.
+       * Omitted (falsy) for email/Google sessions.
+       */
+      walletLogin?: boolean;
     }
   | { type: 'back' }
   | { type: 'code_sent' }
@@ -345,7 +353,7 @@ export function reduceConnectFlow(state: ConnectFlowState, event: ConnectFlowEve
           externalError: null,
         };
       }
-      if (event.privyAuthenticated && (state.setupOutstanding || !event.hasEmbeddedWallet)) {
+      if (event.privyAuthenticated && (state.setupOutstanding || (!event.hasEmbeddedWallet && !event.walletLogin))) {
         return {
           ...state,
           step: { kind: 'fail_setup' },

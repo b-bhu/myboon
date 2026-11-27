@@ -23,6 +23,8 @@ export function useConnectFlow(
     linked: LinkedKind | null;
     privyAuthenticated: boolean;
     hasEmbeddedWallet: boolean;
+    /** SIWS wallet-login session (#948) — see the `open` event. */
+    walletLogin: boolean;
     privyReady: boolean;
   },
 ) {
@@ -35,6 +37,7 @@ export function useConnectFlow(
     linked: session.linked,
     privyAuthenticated: session.privyAuthenticated,
     hasEmbeddedWallet: session.hasEmbeddedWallet,
+    walletLogin: session.walletLogin,
   };
 
   if (!visible) {

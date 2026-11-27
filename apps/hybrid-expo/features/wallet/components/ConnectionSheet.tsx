@@ -3,9 +3,11 @@
  *
  * The first step is an email field and Continue (Privy email OTP), with
  * Connect external wallet underneath on Solana. That action calls
- * `connectExternal` (Mobile Wallet Adapter) and never creates a Privy wallet.
- * Login and wallet setup are separate tries: a bad code stays on the code
- * step, and a failed `waitForWallet` / `create()` retries only the wallet.
+ * `connectExternal` (Mobile Wallet Adapter) and then signs the Privy session
+ * in with that wallet via SIWS (#948) — one Privy account keyed to the wallet
+ * address, never an embedded Solana wallet. Login and wallet setup are
+ * separate tries: a bad code stays on the code step, and a failed
+ * `waitForWallet` / `create()` retries only the wallet.
  *
  * Visual language follows the connect mock (`docs/mockups/wallet-connect`)
  * using this app's theme tokens. Auth, clipboard, and export are the real
@@ -57,6 +59,7 @@ import { useWalletSetup } from '@/features/wallet/components/useWalletSetup';
 import { useSheetDisconnect } from '@/features/wallet/components/useSheetDisconnect';
 import { useCopyAddress } from '@/features/wallet/components/useCopyAddress';
 import { usePrivyExport } from '@/features/wallet/components/usePrivyExport';
+import { usePrivySiws } from '@/hooks/usePrivySiws';
 import {
   ConnectedStep,
   ConfirmDisconnectStep,
@@ -81,6 +84,7 @@ export function ConnectionSheet({
   const privy = usePrivyWallet();
   const evm = usePrivyEvmWallet();
   const solana = useWallet();
+  const siws = usePrivySiws();
   const { activate, deactivate } = useChainActivation();
 
   const linked: LinkedKind | null = chain === 'solana'
@@ -95,6 +99,7 @@ export function ConnectionSheet({
     linked,
     privyAuthenticated: privy.isPrivyUser,
     hasEmbeddedWallet: Boolean((privy.connected && privy.address) || (evm.isProvisioned && evm.address)),
+    walletLogin: privy.authMethod === 'wallet',
     privyReady: privy.isReady,
   });
 
@@ -116,6 +121,7 @@ export function ConnectionSheet({
     dispatch,
     privy,
     evm,
+    siws,
     activate,
     onClose,
     onConnected,

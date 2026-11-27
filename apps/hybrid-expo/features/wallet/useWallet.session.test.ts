@@ -20,6 +20,7 @@ function sessionInput(overrides: Partial<WalletSessionInput> = {}): WalletSessio
     mwaAddress: EXTERNAL,
     privyIsPrivyUser: false,
     privyIsPreparing: false,
+    privyWalletLogin: false,
     privyConnected: false,
     privyAddress: null,
     ...overrides,
@@ -104,6 +105,60 @@ test('before Privy settles, the hydration window still reports a disconnected Pr
   // cached external account leaks while Privy is still preparing.
   assert.deepEqual(
     pickWalletSession(sessionInput({ privyIsPrivyUser: true, privyIsPreparing: true, mwaAccountCleared: true })),
+    { source: 'privy', address: null },
+  );
+});
+
+// --- #948: a SIWS wallet-login account's external wallet is the main one. ---
+
+test('a wallet-login account selects the external wallet immediately, while it is still "preparing"', () => {
+  resetMwaSessionForTests();
+
+  // A SIWS account never receives an embedded Solana wallet, so isPreparing
+  // (authenticated && no embedded wallet) is permanent by design. Waiting it
+  // out would mean the connected external wallet is never picked.
+  assert.deepEqual(
+    pickWalletSession(sessionInput({
+      privyIsPrivyUser: true,
+      privyIsPreparing: true,
+      privyWalletLogin: true,
+      privyConnected: false,
+      privyAddress: null,
+    })),
+    { source: 'mwa', address: EXTERNAL },
+  );
+});
+
+test('a wallet-login account without an external address reports the disconnected Privy session', () => {
+  resetMwaSessionForTests();
+
+  // Before the adapter rehydrates there is no address to show: the honest
+  // answer is the (wallet-login) session with no Solana address, and the
+  // external wallet becomes the main account the moment the address appears.
+  assert.deepEqual(
+    pickWalletSession(sessionInput({
+      privyIsPrivyUser: true,
+      privyIsPreparing: true,
+      privyWalletLogin: true,
+      privyConnected: false,
+      privyAddress: null,
+      mwaAddress: null,
+    })),
+    { source: 'privy', address: null },
+  );
+});
+
+test('an email account mid-hydration still waits, even though a wallet account exists on Privy', () => {
+  resetMwaSessionForTests();
+
+  // Control: walletLogin alone must not weaken the email/Google guard — a
+  // stale cached external account still loses to the hydration window.
+  assert.deepEqual(
+    pickWalletSession(sessionInput({
+      privyIsPrivyUser: true,
+      privyIsPreparing: true,
+      privyWalletLogin: false,
+    })),
     { source: 'privy', address: null },
   );
 });
