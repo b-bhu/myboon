@@ -2,11 +2,15 @@
 # item_key was removed from the current snapshot, but gitleaks scans the
 # whole PR history and still flags the earlier commit. Those values are
 # public entity-manager dedupe keys, not credentials.
+# #745: PUSD_TOKEN_ADDRESS is a Polygon contract address (a public on-chain
+# identifier), but generic-api-key trips on the "token" + hex-value shape.
 title = "myboon"
 
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Catch-up POC snapshot (public entity-manager item_key values in an earlier PR commit)"
+description = "Catch-up POC item_key values and public Polygon contract addresses, not credentials"
 paths = ['''(^|/)packages/collectors/artifacts/catch-up-poc/snapshot\.json$''']
+# Matches regardless of whether the captured secret keeps the 0x prefix.
+regexes = ['''(0x)?c011a7e12a19f7b1f670d46f03b03f3342e82dfb''']
