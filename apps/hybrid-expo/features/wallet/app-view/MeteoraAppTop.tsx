@@ -15,7 +15,8 @@
  * failed state keeps the banner and the dashes — the skeleton is only the
  * first load — and shows a small spinner on the button while it runs. A
  * refresh failing after a good summary keeps the last figures on screen,
- * dimmed (design ".held" 60%), with the same Retry — they are never blanked.
+ * dimmed (design ".held" 60%), under the shared "Updating Meteora" banner
+ * with the held numbers' age (AppUpdatingBanner, #864) — never blanked.
  */
 
 import { memo } from 'react';
@@ -26,6 +27,8 @@ import { useWalletSummary } from '@/features/wallet/useWalletSummary';
 import { semantic, tokens } from '@/theme';
 import { NO_DATA } from '@/lib/format';
 import { meteoraTopFigures } from './meteora-top';
+import { appIsStale, staleAgeText } from './app-stale';
+import { AppUpdatingBanner } from './AppUpdatingBanner';
 
 export const MeteoraAppTop = memo(function MeteoraAppTop({
   solana,
@@ -70,9 +73,11 @@ export const MeteoraAppTop = memo(function MeteoraAppTop({
 
   const figures = meteoraTopFigures(summary);
   // A refresh failing after a good summary holds the figures (the hook never
-  // blanks them); they stay dimmed with the Retry, not blanked. The failed
-  // state shows the design's plain dashes instead — no held dimming there.
-  const stale = error !== null && figures !== null;
+  // blanks them); they stay dimmed under the "Updating Meteora" banner with
+  // the held numbers' age (#864). The failed state keeps the design's plain
+  // dashes instead — no held dimming there.
+  const stale = appIsStale(summary, error, 'meteora');
+  const ageText = summary ? staleAgeText(summary.fetchedAt, Date.now()) : '';
   const pnl = summary?.apps.meteora.summary?.totalPnlUsd ?? null;
   const pnlTone = pnl === null ? null : pnl < 0 ? 'down' : 'up';
 
@@ -84,8 +89,10 @@ export const MeteoraAppTop = memo(function MeteoraAppTop({
 
   return (
     <View style={styles.root}>
-      {failedNoFigures || stale ? (
+      {failedNoFigures ? (
         <FailureBanner retrying={loading} onRetry={retryOnce} />
+      ) : stale ? (
+        <AppUpdatingBanner name="Meteora" ageText={ageText} loading={loading} onRetry={retryOnce} />
       ) : null}
       <View style={[styles.stats, stale && styles.held]}>
         {cells.map((cell) => (
