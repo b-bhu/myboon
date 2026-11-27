@@ -167,7 +167,12 @@ export function createApp(config: ApiConfig, options: { rpcRateLimiter?: RpcRate
   app.route('/perps/phoenix', createPhoenixRoutes({ upstream: phoenixUpstream }))
   app.route('/spot', createSpotRoutes({ heliusRpcUrl: config.heliusRpcUrl, balances: spotBalances }))
   app.route('/wallet', createWalletSummaryRoutes({
-    service: createWalletSummaryService({ venues: walletVenues({ phoenix: phoenixUpstream }) }),
+    service: createWalletSummaryService({
+      venues: walletVenues({
+        phoenix: phoenixUpstream,
+        polygonRpcUrl: config.polygonRpcUrl,
+      }),
+    }),
     phoenixPositions: createPhoenixPositionsReader(phoenixUpstream),
     phoenixOrders: createPhoenixOrdersReader(phoenixUpstream),
     // Per-IP rate-limit identity follows /rpc: TRUST_PROXY_HEADERS only (#743).
