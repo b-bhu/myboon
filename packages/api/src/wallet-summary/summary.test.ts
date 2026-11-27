@@ -79,11 +79,14 @@ test('GET /wallet/summary with only solana returns stubs and Polymarket not_conn
 
 test('GET /wallet/summary still answers when one venue throws', async () => {
   // Replace phoenix with a venue that throws; the others must still return.
-  // The real spot (#742), meteora (#726) and pacifica (#728) venues are left
-  // out too, so their upstream calls cannot log a failure into this test's
-  // console-error count.
+  // The real spot (#742), meteora (#726), pacifica (#728) and polymarket
+  // (#745) venues are left out too, so their upstream calls cannot log a
+  // failure into this test's console-error count (each is covered in its
+  // own venues/*.test.ts).
   const venues: WalletVenue[] = walletVenues().filter(
-    (venue) => venue.id !== 'phoenix' && venue.id !== 'spot' && venue.id !== 'meteora' && venue.id !== 'pacifica',
+    (venue) =>
+      venue.id !== 'phoenix' && venue.id !== 'spot' && venue.id !== 'meteora' &&
+      venue.id !== 'pacifica' && venue.id !== 'polymarket',
   )
   venues.push({ id: 'phoenix', fetch: async () => { throw new Error('phoenix upstream 503') } })
 

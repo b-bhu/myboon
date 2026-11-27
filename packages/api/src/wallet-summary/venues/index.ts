@@ -1,24 +1,25 @@
 /**
  * The app registry for /wallet/summary (#725): one list entry per app.
- * Every app is a stub until its own issue lands (#714 checklist tracks
- * which) and answers `unavailable` / `not_available_yet`; Polymarket
- * answers `not_connected` when no `evm` address was sent. Later issues
- * add one file and one list entry per app — nothing else changes.
+ * Polymarket (#745) is the latest real venue; later issues add one file and
+ * one list entry per app — nothing else changes.
  */
 import { createPhoenixConfig, createPhoenixUpstream, type PhoenixUpstream } from '../../phoenix/index.js'
-import { notConnectedApp, unavailableApp, type WalletVenue } from '../service.js'
+import { createPolymarketVenue } from './polymarket.js'
+import type { WalletVenue } from '../service.js'
 import { meteoraVenue } from './meteora.js'
 import { pacificaVenue } from './pacifica.js'
 import { createPhoenixVenue } from './phoenix.js'
 import { spotVenue } from './spot.js'
 
 export function walletVenues(
-  options: { phoenix?: PhoenixUpstream } = {},
+  options: { phoenix?: PhoenixUpstream; polygonRpcUrl?: string } = {},
 ): WalletVenue[] {
   return [
-    // Polymarket: EVM-only. Its summary needs the `evm` address (#742 et al.
-    // in the #714 checklist); without it this person has no account there.
-    { id: 'polymarket', fetch: async ({ evm }) => (evm ? unavailableApp() : notConnectedApp()) },
+    // Polymarket: EVM-only (#745). The summary keys on the `evm` address,
+    // already resolved to the deposit wallet (the server never derives it);
+    // without it this person has no account there. Cash comes from the
+    // Polygon RPC (the on-chain pUSD number), positions from Data API v2.
+    createPolymarketVenue({ polygonRpcUrl: options.polygonRpcUrl }),
     // Phoenix perps account: Solana side (#744), read through the same
     // trader-state reader the Phoenix routes serve.
     createPhoenixVenue(options.phoenix ?? createPhoenixUpstream(createPhoenixConfig())),
