@@ -13,20 +13,20 @@
  * in-range state shows through the In range / Out of range tag).
  *
  * States: loading with no list yet → three skeleton cards (#859);
- * loaded and empty → the plain empty note, no button (the shared empty
- * block with the Deposit button is #860); failed → the note with a Retry
- * that calls the hook's retry (#865 adds the shared failure banner).
+ * loaded and empty → the shared AppEmptyState (#860), no button; failed →
+ * the note with a Retry that calls the hook's retry (#865 adds the shared
+ * failure banner).
  * Orders and History are rendered by AppView through PortfolioTabBody;
  * Manage opens the Manage sheet for its card (#903).
  */
 
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { memo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { NO_DATA, formatPrice } from '@/lib/format';
 import { semantic, tokens } from '@/theme';
+import { AppEmptyState } from './AppEmptyState';
 import { AppSkeletonCards } from './AppSkeletonCards';
 import { MeteoraManageSheet } from './MeteoraManageSheet';
 import { signedUsd, usd } from './meteora-top';
@@ -82,16 +82,8 @@ export const MeteoraPositionsTab = memo(function MeteoraPositionsTab({
     );
   }
 
-  // Loaded and empty: the plain note, no button (the shared empty block with
-  // the Deposit button is #860).
   if (positions.length === 0) {
-    return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="inbox" size={32} color={semantic.text.faint} />
-        <Text style={styles.emptyTitle}>{'No open positions'}</Text>
-        <Text style={styles.emptyLine}>{'Positions you open in a market screen show up here.'}</Text>
-      </View>
-    );
+    return <AppEmptyState title="No open positions" line="Positions you open in a market screen show up here." />;
   }
 
   return (
@@ -367,10 +359,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   manageText: { color: tokens.colors.accent, fontSize: 14, fontWeight: '600' },
-  // Plain empty note (".emp" look, no button) and the failed note.
-  emptyWrap: { alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 },
-  emptyTitle: { color: semantic.text.primary, fontSize: 18, fontWeight: '600', marginTop: 12 },
-  emptyLine: { color: semantic.text.dim, fontSize: 14 },
+  // The failed note.
   errorWrap: { alignItems: 'center', gap: 8, paddingVertical: 24 },
   errorText: { color: semantic.text.dim, fontSize: 12, textAlign: 'center' },
   retry: { paddingVertical: 2 },
